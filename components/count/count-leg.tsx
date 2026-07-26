@@ -11,7 +11,14 @@ import {
 import { resolveBarcodeAction, searchProductsAction } from "@/app/actions/catalog";
 import type { LocationSummary, ProductSummary } from "@/lib/domain/catalog";
 import type { CountLineDetail } from "@/lib/domain/counts";
-import { newWriteId, enqueue, dequeue, markAttempt, pendingFor } from "@/lib/count-queue";
+import {
+  newWriteId,
+  enqueue,
+  dequeue,
+  markAttempt,
+  pendingFor,
+  type QueuedWrite,
+} from "@/lib/count-queue";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { CardStack } from "@/components/ui/card";
@@ -89,19 +96,69 @@ export function CountLeg({
     setPendingWrites((await pendingFor(countId)).length);
   }, [countId]);
 
-  // Read whatever is still queued from a previous session. IndexedDB is an
-  // external system, so this is a genuine sync-on-mount rather than derived
-  // state — a leg reopened after a dropped connection must show the writes
-  // still waiting, not a reassuring "Synced".
+  /** Send one queued write, reusing its stored id. Returns false if the network is still down. */
+  const sendQueued = useCallback(async (write: QueuedWrite): Promise<boolean> => {
+    const body = { ...write.payload, clientLineId: write.id };
+    try {
+      const result =
+        write.kind === "scan"
+          ? await scanCountLineAction(body)
+          : write.kind === "increment"
+            ? await incrementCountLineAction(body)
+            : await setCountLineQuantitiesAction(body);
+
+      if (result.ok) {
+        await dequeue(write.id);
+        return true;
+      }
+      // A rejection from the server is an answer, not a network failure. The
+      // write will never succeed on replay (a closed count, a validation
+      // error), so it stays queued with its reason recorded rather than
+      // being retried forever against a server that has already decided.
+      await markAttempt(write.id, result.error.message);
+      return true;
+    } catch {
+      // The fetch itself threw — still offline. Leave the write queued with
+      // its ORIGINAL id: that id is what makes the eventual resend safe if
+      // this request actually did reach the server before the connection
+      // dropped. Minting a new one here would double-count.
+      await markAttempt(write.id, "Offline — will retry");
+      return false;
+    }
+  }, []);
+
+  /**
+   * Drain the queue in creation order. Order matters: writes to the same line
+   * must replay as they were made, or a SET followed by an ADD replays as an
+   * ADD followed by a SET and lands on a different number.
+   *
+   * Stops at the first network failure rather than grinding through the rest
+   * — if one request can't reach the server, neither can the next, and
+   * burning through the queue would just mark every write failed.
+   */
+  const flush = useCallback(async () => {
+    for (const write of await pendingFor(countId)) {
+      const reachable = await sendQueued(write);
+      if (!reachable) break;
+    }
+    await refreshPending();
+  }, [countId, sendQueued, refreshPending]);
+
+  // Drain on mount — a leg reopened after a dropped connection must actually
+  // send what is still waiting, not merely display a count of it — and again
+  // whenever the browser says the network is back.
   useEffect(() => {
-    let cancelled = false;
-    void pendingFor(countId).then((writes) => {
-      if (!cancelled) setPendingWrites(writes.length);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [countId]);
+    // `flush` is async: it talks to IndexedDB and the network and only
+    // touches state in a promise continuation, which the rule's static
+    // analysis can't see. This is external-system synchronization — the
+    // carve-out the rule's own docs describe — not derived state. The queue
+    // must actually be drained on mount, not merely counted.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void flush();
+    const onOnline = () => void flush();
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, [flush]);
 
   /**
    * Every count-line write goes through here.
@@ -137,12 +194,28 @@ export function CountLeg({
       await refreshPending();
 
       const body = { ...payload, clientLineId: id };
-      const result =
-        kind === "scan"
-          ? await scanCountLineAction(body)
-          : kind === "increment"
-            ? await incrementCountLineAction(body)
-            : await setCountLineQuantitiesAction(body);
+      let result: Awaited<ReturnType<typeof incrementCountLineAction>>;
+      try {
+        result =
+          kind === "scan"
+            ? await scanCountLineAction(body)
+            : kind === "increment"
+              ? await incrementCountLineAction(body)
+              : await setCountLineQuantitiesAction(body);
+      } catch {
+        // The fetch threw — offline, which is the case this queue exists for.
+        // The write is already durably enqueued under `id`, the optimistic row
+        // is already on screen, and `flush` will resend it with that same id
+        // when the network returns. So this is NOT an error state: nothing was
+        // lost and the counter should keep going. Saying "something went
+        // wrong" here would push someone into re-entering a bottle that is
+        // already recorded, which is how a queue designed to prevent lost
+        // counts starts causing double ones.
+        await markAttempt(id, "Offline — will retry");
+        await refreshPending();
+        setBusy(false);
+        return true;
+      }
 
       if (result.ok) {
         await dequeue(id);
@@ -613,6 +686,9 @@ function SyncIndicator({ pending }: { pending: number }) {
           Synced
         </>
       )}
+      {/* Visible on purpose (spec §11): a dropped access point should be
+          visible rather than silent. "12 pending" tells someone the walk-in
+          killed the WiFi; nothing at all tells them everything is fine. */}
     </div>
   );
 }
