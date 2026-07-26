@@ -165,3 +165,63 @@ close them have been typechecked but, like everything else, never run.
 - `getCountTotals` runs `computeCountTotals` against the pool while
   `closeCount` runs the same function inside its `FOR UPDATE` transaction.
   Confirm the two agree on a count with unpriced lines.
+
+## 9. The offline write queue has never been exercised in a browser
+
+**Trigger: the first real count. Do this deliberately — turn the WiFi off
+mid-scan rather than waiting to find out in the walk-in.**
+
+`lib/count-queue.ts` + `flush()` in `components/count/count-leg.tsx` were
+written, reviewed, and corrected once already (the queue originally had no
+drain path at all), but the whole mechanism has only ever been reasoned
+about. What to verify, in one pass:
+
+- Turn WiFi off, count three bottles, confirm the chip reads "3 pending"
+  and the rows still appear.
+- Turn WiFi back on and confirm the `online` listener fires and drains them.
+- Kill the app with writes queued, reopen it, and confirm the mount-time
+  flush sends them.
+- The one that matters most: confirm a write that reached the server *just
+  before* the connection dropped does not apply twice when the queue
+  resends it. That is what the `client_line_id` on the queue record is for,
+  and it is the failure this whole design exists to prevent.
+
+Walk-ins are metal boxes and routinely kill WiFi (spec §11 says to test
+this) — so this is the room where the queue either works or the count is
+wrong.
+
+## 10. `scanCountLine` is fully built and unreachable from the UI
+
+**Trigger: when someone times a real count and wants it faster.**
+
+`scanCountLineAction` / `lib/domain/counts.ts`'s `scanCountLine` resolve a
+barcode server-side and apply a pack-level-aware +1 in a single call, and
+its own doc comment calls it "the primary write path during a live count."
+Nothing calls it. The UI implements CLAUDE.md's stated core loop instead —
+scan → resolve → tap tenths or type a quantity → next — which needs the
+read (`resolveBarcodeAction`) plus `incrementCountLine`, not this.
+
+So this isn't a bug, it's an unused door: a rapid-fire "each scan is one
+more of this" mode for sealed backstock, where the quantity is always 1 and
+the entry screen is pure overhead. That could be a real speed win on the
+60–75% of units that are sealed. **Decide it against a timed count, not in
+the abstract** — and if the answer is no, delete the action rather than
+leaving a hardened write path that nothing exercises.
+
+## 11. Two location count modes were assigned without the owner
+
+**Trigger: before the first real count — one question, ask it.**
+
+`location.count_mode` is new (`tenths` | `quantity`), because CLAUDE.md says
+the input mode is "driven entirely by location" and there was nowhere to put
+that. Three assignments come straight from the owner's own notes in
+`locations.csv`: Speed Rail and Back Bar are `tenths`, Storeroom is
+`quantity`. Two were inferred and need confirming:
+
+- **Wine Rack → `tenths`.** Assumes wine by the glass means open bottles
+  with fill levels. If the rack is actually sealed stock, this is wrong.
+- **Walk-In → `quantity`.** From its note, "Packaged beer." If open kegs
+  live in there, it needs `tenths` instead.
+
+Getting one wrong is not silent — the screen visibly offers the wrong
+input — but it is annoying enough mid-count to be worth one question first.
