@@ -5,6 +5,10 @@ Beverage inventory for a single bar/restaurant in Arizona. Get a handle on your 
 **Read `docs/spec.md` before any non-trivial work.** It is the source of truth for scope,
 data model, and rationale. This file is the short version.
 
+**Read `docs/open-items.md` too.** It lists what is deliberately unfinished and, more
+importantly, the trigger that says when each item becomes due. Most are correct to
+ignore until then.
+
 ---
 
 ## What we are building
@@ -77,6 +81,11 @@ plausible and are wrong, which is the worst failure mode this app has.
    middleware. Several Next.js CVEs are middleware bypasses; defence in depth makes them
    non-events.
 8. **Cost and margin data is gated by role.** Staff never see it.
+9. **Draft depletion is grossed up by the waste factor.** A 16 oz pour draws
+   `16 / (1 - waste_factor)` ≈ 17.8 oz from the keg. Theoretical usage that ignores this
+   makes every keg look ~10% short and turns the variance report into false positives.
+   Applies to *theoretical depletion only* — never to counted inventory, which is measured
+   as it actually is.
 
 ---
 
@@ -95,8 +104,42 @@ plausible and are wrong, which is the worst failure mode this app has.
 - **Handle** — a 1.75L bottle
 - **86** — out of stock
 - **Ullage** — the empty space in a partly-full vessel
+- **Half barrel / quarter barrel / sixtel** — keg sizes: 1984 oz, 992 oz, 660.5 oz
+- **Waste factor** — beer lost to foam, line cleaning, and the first and last pour
 
 ---
+
+## The catalog
+
+`docs/handlebar-catalog.xlsx` is the seed, built from the owner's two prior spreadsheets.
+**97 products:** 62 spirits, 16 bottled beers, 9 draft kegs, 5 wines, 2 liqueurs, 3 NA.
+
+Things to know about it:
+
+- **Costs are not filled in yet.** They come from supplier invoices. Nothing that depends
+  on valuation can be tested until they are.
+- **Spirits default to 750 ml.** Anything also stocked as a 1.75L handle needs its own
+  row — different barcode, different case cost, different pour economics.
+- **`upc` is deliberately blank.** It fills through scan-to-enroll during the first count.
+- Wines are currently varietals (`Merlot`, `Chardonnay`) rather than specific bottles.
+  They need a producer before they can be costed or scanned.
+- The **Draft Economics** tab holds the owner's own pour model: 16 oz and 22 oz serving
+  sizes, per-keg waste factor, margin per pour. It is the manual prototype of the Phase 2
+  variance report — read it before building that.
+
+## Draft beer
+
+Draft is simpler than it looks and should not be special-cased:
+
+- A keg is a Product with `unit_type: keg` and `size_ml` set to its volume
+  (half barrel 58,674 · quarter barrel 29,337 · sixtel 19,533).
+- A tapped keg records as a decimal in `partial_fills`, same as a bottle.
+- Tap lines can be modelled as Locations (`Tap 1`, `Tap 2`) — no schema change needed.
+- **Draft menu items map one-to-one to products.** A 16 oz Coors Light is one Toast item,
+  one product, one pour size. This makes the Phase 2 recipe map nearly free for draft;
+  cocktails are where the tedious work lives.
+- Eyeballing a keg's level is not possible. Tenths is the MVP answer. Weight
+  (`empty_weight_g`, `full_weight_g`) is the accurate method, deferred.
 
 ## Working agreements
 
@@ -107,12 +150,42 @@ plausible and are wrong, which is the worst failure mode this app has.
   infusions, and some wine have no usable barcode.
 - **Count-line writes are optimistic.** UI updates immediately, saves in the background,
   pending writes queue in IndexedDB. The server stays authoritative.
+- **One fresh `client_line_id` UUID per write attempt — never one per count line.**
+  Idempotency lives in the append-only `count_line_write` ledger, whose unique index on
+  `client_line_id` makes a replayed write roll back and return success. Reuse an id only
+  when literally resending the same failed request. Reusing one id per line instead would
+  make every legitimate second scan of a bottle a silently swallowed no-op — the count
+  comes out short with no error anywhere, which is quieter and worse than the
+  double-count this ledger replaced.
 - **Dim-bar UI.** High contrast, large tap targets, dark mode, one-handed operation.
   The other hand is holding a bottle.
 - Migrations go through drizzle-kit. No hand-edited schema drift.
 - Conventional commits. Small, reviewable changes.
 
 ---
+
+## Schema delta not yet in docs/spec.md §8
+
+One column must be added to `Product` before the schema is built:
+
+```
+waste_factor   DECIMAL(4,3)   NOT NULL DEFAULT 0.000
+```
+
+Draft products get `0.100`. Bottles and wine stay `0.000`. Theoretical depletion then
+computes as `pour_ml / (1 - waste_factor)`. One column now versus a migration and a
+recount later. Update §8 of the spec when you touch it.
+
+## Open questions — ask, don't assume
+
+1. **Shelf life.** The owner's previous sheet tracked *Discard Date*, *Days Until Discard*,
+   and *Status*. Nothing in the current spec covers it. If it was load-bearing (opened
+   vermouth, cream liqueurs), it needs a home before the schema hardens.
+2. **Par scope.** Undecided whether par is per product or per location. `ProductPar` is
+   built with a nullable `location_id` so this can stay unanswered — write null rows for now.
+3. **Open vs sealed split.** How many of the 95 units are open bottles versus sealed
+   backstock is still unknown. It drives the counting-speed estimates.
+4. **Count cadence.** Weekly gives usable variance; monthly barely does. Not yet fixed.
 
 ## The team
 
