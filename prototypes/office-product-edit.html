@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1440, initial-scale=1" />
+<title>Handlebar — Edit product</title>
+<!--
+  Standalone back-office prototype. No build step, no network. Light theme
+  only (back office renders with no .dark class). Designed at 1440px.
+  See the annotation block at the bottom of this file for design decisions
+  and open questions.
+-->
+<style>
+  :root {
+    --radius: 1rem;
+    --background: #f7f7f5;
+    --foreground: #111111;
+    --card: #ffffff;
+    --card-foreground: #111111;
+    --muted: #efefec;
+    --muted-foreground: #6b6b6b;
+    --primary: #0a0a0a;
+    --primary-foreground: #ffffff;
+    --secondary: #efefec;
+    --secondary-foreground: #111111;
+    --accent: #2563eb;
+    --accent-foreground: #ffffff;
+    --destructive: #c4304f;
+    --destructive-foreground: #ffffff;
+    --border: #e4e4e1;
+    --input: #8c8c8c;
+    --ring: #2563eb;
+    --header: #0a0a0a;
+    --header-foreground: #ffffff;
+    --success: #1f7a3d;
+    --success-bg: #e4f5e6;
+    --warning: #92600a;
+    --warning-bg: #fdf0dc;
+    --negative: #b8305a;
+    --negative-bg: #fde8ec;
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--background); color: var(--foreground);
+    font-family: var(--font-sans); font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased; min-width: 1280px;
+  }
+  h1, h2, h3, p, ol, ul { margin: 0; padding: 0; list-style: none; }
+  button, input, select, textarea, label { font: inherit; color: inherit; }
+  button { cursor: pointer; background: none; border: none; }
+  svg { display: block; }
+
+  a, button, input, select, [role="button"], [tabindex] { outline-offset: 2px; }
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
+  [role="button"]:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+  .flex { display: flex; } .grid { display: grid; } .flex-col { flex-direction: column; }
+  .items-center { align-items: center; } .items-start { align-items: flex-start; }
+  .justify-between { justify-content: space-between; } .flex-1 { flex: 1 1 0%; }
+  .flex-wrap { flex-wrap: wrap; } .min-w-0 { min-width: 0; } .truncate { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .gap-1 { gap: .25rem; } .gap-1_5 { gap: .375rem; } .gap-2 { gap: .5rem; } .gap-3 { gap: .75rem; } .gap-4 { gap: 1rem; }
+  .mt-1 { margin-top: .25rem; } .mt-2 { margin-top: .5rem; } .mt-3 { margin-top: .75rem; } .mt-4 { margin-top: 1rem; } .mt-6 { margin-top: 1.5rem; }
+  .mb-1 { margin-bottom: .25rem; } .mb-2 { margin-bottom: .5rem; } .mb-3 { margin-bottom: .75rem; }
+  .uppercase { text-transform: uppercase; } .italic { font-style: italic; }
+
+  .rounded-sm { border-radius: var(--radius-sm); } .rounded-md { border-radius: var(--radius-md); }
+  .rounded-lg { border-radius: var(--radius-lg); } .rounded-full { border-radius: 9999px; }
+  .border { border: 1px solid var(--border); }
+
+  .bg-card { background: var(--card); } .bg-muted { background: var(--muted); }
+  .text-foreground { color: var(--foreground); } .text-muted-foreground { color: var(--muted-foreground); }
+  .text-accent { color: var(--accent); } .text-destructive { color: var(--destructive); }
+  .text-success { color: var(--success); } .text-warning { color: var(--warning); }
+
+  .text-header-title { font-size: 1.75rem; line-height: 1.15; font-weight: 600; }
+  .text-row-title { font-size: 1.125rem; line-height: 1.3; font-weight: 600; }
+  .text-body { font-size: 1rem; line-height: 1.5; }
+  .text-caption { font-size: .8125rem; line-height: 1.4; }
+  .text-label { font-size: .6875rem; line-height: 1.2; font-weight: 600; letter-spacing: .06em; }
+  .tabular-nums { font-variant-numeric: tabular-nums; }
+
+  /* ---- shell (same rail/topbar as office-catalog.html) ---- */
+  .app-shell { display: flex; min-height: 100vh; }
+  .rail { width: 64px; flex-shrink: 0; background: var(--card); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; align-items: center; padding: .75rem 0; gap: .5rem; }
+  .rail-create { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+    border-radius: var(--radius-md); background: var(--accent); color: var(--accent-foreground); margin-bottom: .5rem; }
+  .rail-item { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;
+    border-radius: var(--radius-md); color: var(--muted-foreground); text-decoration: none; }
+  .rail-item[aria-current="page"] { background: var(--card); border: 1px solid var(--border); color: var(--accent); }
+  .rail-spacer { flex: 1; }
+  .rail-expand { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: var(--muted-foreground); }
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .topbar { height: 60px; flex-shrink: 0; display: flex; align-items: center; gap: 1rem; padding: 0 1.5rem;
+    background: var(--card); border-bottom: 1px solid var(--border); }
+  .crumbs { display: flex; align-items: center; gap: .5rem; font-size: .875rem; white-space: nowrap; }
+  .crumbs a { color: var(--muted-foreground); text-decoration: none; }
+  .crumbs a:hover { color: var(--foreground); }
+  .crumbs .sep { color: var(--muted-foreground); }
+  .crumbs .page { font-weight: 600; }
+  .icon-btn { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-md); color: var(--muted-foreground); }
+  .icon-btn:hover { background: var(--muted); }
+  .avatar-tile { width: 34px; height: 34px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center;
+    background: var(--primary); color: var(--primary-foreground); font-size: .75rem; font-weight: 600; }
+
+  .content { flex: 1; padding: 1.5rem 2rem 4rem; }
+  .form-shell { max-width: 900px; margin: 0 auto; }
+
+  /* ---- product header block ---- */
+  .product-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
+  .status-pill { display: inline-flex; align-items: center; padding: .1875rem .625rem; border-radius: 9999px; font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .status-pill.active { background: var(--muted); color: var(--foreground); }
+  .status-pill.inactive { background: var(--muted); color: var(--muted-foreground); }
+  .btn-primary { display: inline-flex; align-items: center; gap: .5rem; height: 36px; padding: 0 1rem; border-radius: var(--radius-md);
+    background: var(--primary); color: var(--primary-foreground); font-size: .8125rem; font-weight: 600; }
+  .btn-outline { display: inline-flex; align-items: center; gap: .5rem; height: 36px; padding: 0 .875rem; border-radius: var(--radius-md);
+    border: 1px solid var(--input); background: var(--card); color: var(--foreground); font-size: .8125rem; font-weight: 600; }
+
+  .role-toggle-bar { display: flex; align-items: center; gap: .5rem; margin-bottom: 1.5rem; padding: .625rem .875rem;
+    border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); }
+  .role-toggle { display: inline-flex; border: 1px solid var(--input); border-radius: var(--radius-md); overflow: hidden; margin-left: auto; }
+  .role-toggle button { padding: .375rem .75rem; font-size: .75rem; font-weight: 600; color: var(--muted-foreground); }
+  .role-toggle button[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); }
+
+  /* ---- section cards ---- */
+  .section-card { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); padding: 1.25rem 1.5rem; margin-bottom: 1rem; }
+  .section-title { font-size: .9375rem; font-weight: 700; margin-bottom: .25rem; }
+  .section-sub { font-size: .8125rem; color: var(--muted-foreground); margin-bottom: 1rem; }
+
+  .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .875rem 1rem; }
+  .field-grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .field { display: flex; flex-direction: column; gap: .375rem; }
+  .field label { font-size: .6875rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--foreground); }
+  .field input, .field select, .field textarea {
+    height: 38px; border-radius: var(--radius-md); border: 1px solid var(--input);
+    background: var(--card); padding: 0 .75rem; font-size: .875rem; color: var(--foreground);
+  }
+  .field input::placeholder { color: var(--muted-foreground); }
+  .field .hint { font-size: .75rem; color: var(--muted-foreground); }
+  .field .not-entered-input { color: var(--muted-foreground); font-style: italic; }
+
+  .pricing-callout { display: flex; gap: .625rem; padding: .75rem .875rem; border-radius: var(--radius-md);
+    background: var(--warning-bg); color: var(--warning); font-size: .8125rem; margin-bottom: 1rem; align-items: flex-start; }
+
+  .barcode-table { width: 100%; border-collapse: collapse; margin-top: .5rem; }
+  .barcode-table th { text-align: left; font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground); padding: .5rem .5rem; border-bottom: 1px solid var(--border); }
+  .barcode-table td { padding: .5rem; border-bottom: 1px solid var(--border); font-size: .875rem; vertical-align: middle; }
+  .barcode-table tr:last-child td { border-bottom: none; }
+  .barcode-table input, .barcode-table select { height: 34px; border-radius: var(--radius-sm); border: 1px solid var(--input); padding: 0 .5rem; font-size: .8125rem; width: 100%; }
+  .pill-mini { display: inline-flex; align-items: center; padding: .0625rem .5rem; border-radius: 9999px; font-size: .6875rem; font-weight: 600; background: var(--muted); color: var(--foreground); }
+  .pill-mini.primary { background: var(--accent); color: var(--accent-foreground); }
+  .icon-btn-sm { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); color: var(--muted-foreground); }
+  .icon-btn-sm:hover { background: var(--muted); }
+  .add-barcode-btn { display: inline-flex; align-items: center; gap: .375rem; margin-top: .75rem; font-size: .8125rem; font-weight: 600; color: var(--accent); }
+
+  .empty-barcodes { padding: 1rem; text-align: center; border: 1px dashed var(--border); border-radius: var(--radius-md); color: var(--muted-foreground); font-size: .8125rem; margin-top: .5rem; }
+
+  .danger-zone { border: 1px solid var(--destructive); border-radius: var(--radius-lg); background: var(--card); padding: 1.25rem 1.5rem; margin-top: 1.5rem; }
+  .danger-zone .section-title { color: var(--destructive); }
+  .btn-danger-outline { display: inline-flex; align-items: center; gap: .5rem; height: 38px; padding: 0 1rem; border-radius: var(--radius-md);
+    border: 1px solid var(--destructive); background: var(--card); color: var(--destructive); font-size: .8125rem; font-weight: 600; }
+
+  .form-footer { position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: .75rem;
+    padding: 1rem 0; background: linear-gradient(var(--background) 60%, var(--background)); border-top: 1px solid var(--border); margin-top: 1.5rem; }
+
+  .role-block { display: none; }
+  .role-block[data-active="true"] { display: block; }
+
+  .waste-note { font-size: .75rem; color: var(--muted-foreground); margin-top: .375rem; }
+
+  /* ---- prototype chrome (NOT shipped UI) — added at session close ---- */
+  .proto-chrome { position: relative; outline: 2px dashed #C8901A; outline-offset: 7px;
+                  border-radius: 8px; }
+  .proto-chrome::before { content: "PROTOTYPE ONLY \2014 NOT SHIPPED UI";
+                  position: absolute; top: -1.55rem; left: 0; white-space: nowrap;
+                  font-size: .5625rem; font-weight: 700; letter-spacing: .08em;
+                  color: #8A6206; }
+  </style>
+</head>
+<body>
+<div class="app-shell">
+  <nav class="rail" aria-label="Sections">
+    <button class="rail-create" aria-label="Create new">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+    </button>
+    <a class="rail-item" aria-current="page" href="office-catalog.html" aria-label="Catalog">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round"/></svg>
+    </a>
+    <a class="rail-item" href="office-counts-list.html" aria-label="Counts">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5" stroke-linecap="round"/></svg>
+    </a>
+    <a class="rail-item" href="office-reorder.html" aria-label="Reorder">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M3 3h2l2.4 12.4a2 2 0 0 0 2 1.6h7.2a2 2 0 0 0 2-1.6L20 8H6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/></svg>
+    </a>
+    <a class="rail-item" href="office-count-summary.html" aria-label="Reports">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 20V10M12 20V4M20 20v-7" stroke-linecap="round"/></svg>
+    </a>
+    <div class="rail-spacer"></div>
+    <button class="rail-expand" aria-label="Expand sidebar">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </nav>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="crumbs">
+        <a href="office-catalog.html">Catalog</a>
+        <span class="sep">/</span>
+        <span class="page">Bacardí Superior Rum</span>
+      </div>
+      <div style="margin-left:auto; display:flex; align-items:center; gap:.5rem;">
+        <div class="avatar-tile" aria-hidden="true">JM</div>
+      </div>
+    </header>
+
+    <div class="content">
+      <div class="form-shell">
+
+        <!-- Demo-only role toggle -->
+        <div class="role-toggle-bar proto-chrome">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="color:var(--muted-foreground)" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="text-caption text-muted-foreground">This form is owner/manager only (staff cannot reach catalog edit). Cost is owner-only within it.</span>
+          <div class="role-toggle" role="group" aria-label="Preview role">
+            <button id="btn-owner" aria-pressed="true">Owner</button>
+            <button id="btn-manager" aria-pressed="false">Manager</button>
+          </div>
+        </div>
+
+        <div class="product-header">
+          <div>
+            <h1 class="text-header-title">Bacardí Superior Rum</h1>
+            <div class="flex items-center gap-2 mt-2">
+              <span class="status-pill active">Active</span>
+              <span class="text-caption text-muted-foreground">Product #58 · Spirits · Rum</span>
+            </div>
+          </div>
+          <div class="flex gap-2">
+            <a href="office-catalog.html" class="btn-outline">Cancel</a>
+            <button class="btn-primary">Save changes</button>
+          </div>
+        </div>
+
+        <!-- ===== Details ===== -->
+        <div class="section-card">
+          <div class="section-title">Details</div>
+          <div class="section-sub">The natural key is name + size — a 750&nbsp;ml and a 1.75&nbsp;L of the same brand are different products with their own barcode, cost, and case size.</div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="f-name">Name</label>
+              <input id="f-name" type="text" value="Bacardí Superior Rum" />
+            </div>
+            <div class="field">
+              <label for="f-brand">Brand</label>
+              <input id="f-brand" type="text" value="Bacardí" />
+            </div>
+            <div class="field">
+              <label for="f-category">Category</label>
+              <select id="f-category">
+                <option>Spirits</option>
+                <option>Beer</option>
+                <option>Draft</option>
+                <option>Wine</option>
+                <option>Liqueur</option>
+                <option>N/A</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="f-subcategory">Subcategory</label>
+              <input id="f-subcategory" type="text" value="Rum" />
+            </div>
+            <div class="field">
+              <label for="f-unittype">Unit type</label>
+              <select id="f-unittype">
+                <option>Bottle</option>
+                <option>Can</option>
+                <option>Keg</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="f-size">Size (ml)</label>
+              <input id="f-size" type="number" value="750" />
+              <span class="hint">Stored in ml even for oz/keg sizes — half barrel = 58,674&nbsp;ml.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== Purchasing ===== -->
+        <div class="section-card">
+          <div class="section-title">Purchasing</div>
+          <div class="section-sub">Case size and cost snapshot onto every count line the moment it's counted (invariant 2) — changing them here never rewrites history.</div>
+          <div class="field-grid cols-3">
+            <div class="field">
+              <label for="f-vendor">Vendor</label>
+              <select id="f-vendor">
+                <option>Breakthru Beverage Arizona</option>
+                <option>Southern Glazer's Wine &amp; Spirits</option>
+                <option>Young's Market Co. of Arizona</option>
+                <option>Hensley Beverage Company</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="f-casesize">Case size</label>
+              <input id="f-casesize" type="number" placeholder="Not set" class="not-entered-input" />
+              <span class="hint">No product in the catalog has this filled in yet — comes from the next invoice.</span>
+            </div>
+            <div class="field">
+              <label for="f-waste">Waste factor</label>
+              <input id="f-waste" type="number" step="0.001" value="0.000" />
+              <span class="waste-note">0.000 for bottles/wine. Draft kegs default to 0.100 (foam, lines, first/last pour).</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== Pricing — OWNER ONLY block, entirely absent for manager ===== -->
+        <div class="section-card role-block" data-active="true" id="pricing-owner">
+          <div class="section-title">Pricing <span class="pill-mini" style="margin-left:.5rem;">Owner only</span></div>
+          <div class="section-sub">Cost and margin data is gated by role (invariant 8) — a manager viewing this same product never receives this section at all, not a disabled version of it.</div>
+          <div class="pricing-callout">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="flex-shrink:0; margin-top:1px;"><path d="M12 9v4M12 17h.01" stroke-linecap="round"/><circle cx="12" cy="12" r="9"/></svg>
+            <div>88 of 97 seeded products have no cost yet — it arrives from supplier invoices. An empty field here means "not entered," and every count line counted against it is excluded from valuation, never priced at $0.00.</div>
+          </div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="f-cost">Current unit cost</label>
+              <input id="f-cost" type="text" placeholder="Not entered" class="not-entered-input" />
+              <span class="hint">Per each, 4 decimal places (e.g. case cost ÷ case size = $91.00 ÷ 24 = $3.7917).</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== Par & reorder ===== -->
+        <div class="section-card">
+          <div class="section-title">Par &amp; reorder</div>
+          <div class="section-sub">Par scope is undecided (per product vs. per location) — this form writes an overall par (<code>location_id</code> null) for now.</div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="f-par">Par level</label>
+              <input id="f-par" type="number" placeholder="No par set" class="not-entered-input" />
+            </div>
+            <div class="field">
+              <label for="f-reorder">Reorder point</label>
+              <input id="f-reorder" type="number" placeholder="Optional" />
+              <span class="hint">Falls back to par level as the reorder threshold when left blank.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== Barcodes — one-to-many ===== -->
+        <div class="section-card">
+          <div class="section-title">Barcodes</div>
+          <div class="section-sub">A product has many barcodes — a bottle UPC and a case UPC are different codes with different <code>pack_level</code>. This is a list, not a single UPC field.</div>
+          <table class="barcode-table">
+            <thead>
+              <tr>
+                <th style="width:44%;">Barcode</th>
+                <th style="width:18%;">Format</th>
+                <th style="width:16%;">Pack level</th>
+                <th style="width:14%;">Primary</th>
+                <th style="width:8%;"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><input type="text" value="080480000341" /></td>
+                <td>
+                  <select><option>UPC-A</option><option>EAN-13</option><option>CODE-128</option></select>
+                </td>
+                <td>
+                  <select><option>Each</option><option>Case</option></select>
+                </td>
+                <td><span class="pill-mini primary">Primary</span></td>
+                <td><button class="icon-btn-sm" aria-label="Remove this barcode"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke-linecap="round"/></svg></button></td>
+              </tr>
+            </tbody>
+          </table>
+          <button class="add-barcode-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+            Add barcode
+          </button>
+          <p class="hint mt-2">This product has only an each-level barcode so far — its case UPC will be captured the first time a case is scanned, or can be added here now.</p>
+        </div>
+
+        <!-- ===== Danger zone ===== -->
+        <div class="danger-zone">
+          <div class="section-title">Deactivate product</div>
+          <p class="text-caption text-muted-foreground mt-1" style="max-width:60ch;">
+            This sets <code>active = false</code>. It does not delete the product (invariant 6) — every past count line, barcode, and par record keeps referencing it, and it can be reactivated later. It simply stops appearing in new counts and search results.
+          </p>
+          <button class="btn-danger-outline mt-3">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 8l8 8" stroke-linecap="round"/></svg>
+            Deactivate this product…
+          </button>
+        </div>
+
+        <div class="form-footer">
+          <a href="office-catalog.html" class="btn-outline">Cancel</a>
+          <button class="btn-primary">Save changes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  var btnOwner = document.getElementById("btn-owner");
+  var btnManager = document.getElementById("btn-manager");
+  var pricing = document.getElementById("pricing-owner");
+  btnOwner.addEventListener("click", function () {
+    btnOwner.setAttribute("aria-pressed", "true"); btnManager.setAttribute("aria-pressed", "false");
+    pricing.setAttribute("data-active", "true");
+  });
+  btnManager.addEventListener("click", function () {
+    btnOwner.setAttribute("aria-pressed", "false"); btnManager.setAttribute("aria-pressed", "true");
+    pricing.removeAttribute("data-active");
+  });
+</script>
+
+<!-- =====================================================================
+     ANNOTATIONS — design decisions & open questions for the owner
+     ===================================================================== -->
+<div style="max-width:900px; margin:2rem auto 4rem; padding:0 2rem; font-size:.875rem; line-height:1.6; color:var(--muted-foreground);">
+  <h2 style="color:var(--foreground); font-size:1rem; font-weight:700; margin-bottom:.5rem;">Design decisions</h2>
+  <ul style="padding-left:1.25rem; list-style:disc;">
+    <li>Chose "Bacardí Superior Rum" as the worked example specifically because it has one barcode already (captured via scan-to-enroll) and no cost/case size yet — the common state for most of the catalog, not the exception.</li>
+    <li>Pricing is its own <code>&lt;section&gt;</code>, toggled entirely on/off by the demo role switch — not opacity, not a lock icon over a visible field. A manager viewing this product has that section missing from the DOM, matching how the real form would be composed per role.</li>
+    <li>Barcodes are a table (one-to-many), not a single "UPC" field — matches <code>ProductBarcode</code>'s real shape (barcode, format, pack_level, is_primary) and the invariant that scan-to-enroll only ever inserts one row into it, never a column on <code>product</code>.</li>
+    <li>Deactivate is a distinct, clearly-labeled danger-zone action with copy that states explicitly what it does and does not do (no delete) — directly answering invariant 6 rather than using ambiguous iconography.</li>
+    <li>Waste factor is editable here but explained inline, since it's meaningful for kegs only (0.100 default) and inert for everything else (0.000) — a field most editors will never touch.</li>
+    <li>Par level/reorder point sit on this form even though "par scope" (per-product vs per-location) is an open question in CLAUDE.md — this write path already matches the documented interim behavior (write null-location rows only).</li>
+  </ul>
+  <h2 style="color:var(--foreground); font-size:1rem; font-weight:700; margin:1.5rem 0 .5rem;">Open questions</h2>
+  <ul style="padding-left:1.25rem; list-style:disc;">
+    <li><strong>Reactivation isn't specced.</strong> The form only offers deactivate. If an owner needs to bring a product back (relist a seasonal spirit), does that go through this same form (an "Active" toggle appears once inactive) or a separate confirmation flow? Left as a single one-way action for now.</li>
+    <li><strong>Barcode edit vs. re-scan.</strong> Should the back office allow typing a barcode by hand (as drawn here), or must every barcode originate from an actual scan to avoid typos creating an unresolvable code? The form as built assumes manual entry is fine for corrections.</li>
+    <li><strong>Wine producer field has no column yet.</strong> CLAUDE.md flags that Merlot/Chardonnay "need a producer before they can be costed or scanned," but <code>db/schema.ts</code> has no producer/vintage column on <code>product</code> — editing a wine today would still only offer name/brand/category. This form doesn't invent that field since it isn't in the schema; flagging it here rather than guessing its shape.</li>
+  </ul>
+</div>
+
+</body>
+</html>

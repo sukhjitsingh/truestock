@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Handlebar — Count Session (prototype)</title>
+<style>
+  :root{
+    --background:#0B0B0C;--foreground:#F5F5F4;--card:#17181A;--card-foreground:#F5F5F4;
+    --muted:#131315;--muted-foreground:#A8A8A5;--primary:#F5F5F4;--primary-foreground:#0A0A0A;
+    --secondary:#1E1E21;--secondary-foreground:#F5F5F4;--accent:#60A5FA;--accent-foreground:#0A0A0A;
+    --destructive:#D33039;--destructive-foreground:#FFFFFF;--border:#232326;--input:#6B6B6B;--ring:#60A5FA;
+    --header:#121317;--header-foreground:#F5F5F4;
+    --success:#6FCF8E;--success-bg:#14301F;--warning:#F0B429;--warning-bg:#3A2A10;--negative:#F0718A;--negative-bg:#3A1620;
+    --radius-sm:12px;--radius-md:14px;--radius-lg:16px;--radius-xl:20px;
+    --card-gap:12px;--card-pad:16px;--bar-pad:16px;--section-gap:24px;--tap-min:44px;--tap-primary:56px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{background:#050506;color:var(--foreground);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+    font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;}
+  :focus-visible{outline:2px solid var(--ring);outline-offset:2px;}
+  button{cursor:pointer;font-family:inherit;}
+  a{color:inherit;text-decoration:none;}
+
+  .proto-bar{max-width:390px;margin:0 auto;padding:10px 12px;border:1px dashed #3a3a3f;border-bottom:none;
+    background:#111114;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8a8a90;display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+  .proto-bar b{color:#c9c9cf;}
+  .proto-nav a{padding:4px 8px;border:1px solid #3a3a3f;border-radius:8px;color:#c9c9cf;}
+  .proto-nav a:hover{background:#1c1c20;}
+  .proto-controls{max-width:390px;margin:0 auto;padding:12px;border:1px dashed #3a3a3f;border-top:none;border-bottom:none;
+    background:#0d0d10;display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px;color:#a8a8ac;}
+  .proto-controls select{background:#1c1c20;color:#eee;border:1px solid #3a3a3f;border-radius:8px;padding:6px 8px;font-size:12px;}
+  .proto-label{font-weight:600;color:#6f6f75;}
+  .proto-annotations{max-width:390px;margin:0 auto;padding:16px 14px;border:1px dashed #3a3a3f;background:#0d0d10;color:#b5b5ba;font-size:12.5px;line-height:1.6;}
+  .proto-annotations h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8a8a90;margin:0 0 10px;}
+  .proto-annotations h3{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#6f6f75;margin:16px 0 6px;}
+  .proto-annotations ul{margin:0;padding-left:18px;}
+  .proto-annotations li{margin-bottom:8px;}
+  .proto-annotations b{color:#e6e6ea;}
+
+  .app{max-width:390px;margin:0 auto;min-height:100vh;background:var(--background);position:relative;
+    border:1px solid var(--border);border-top:none;}
+  .app.has-bar{padding-bottom:96px;}
+
+  .text-numeral-lg{font-size:48px;font-weight:700;line-height:1;}
+  .text-header-title{font-size:28px;font-weight:600;line-height:1.15;}
+  .text-numeral-md{font-size:24px;font-weight:600;line-height:1.1;}
+  .text-row-title{font-size:18px;font-weight:600;line-height:1.3;}
+  .text-numeral-sm{font-size:17px;font-weight:600;line-height:1.2;}
+  .text-row-subtitle{font-size:15px;font-weight:400;line-height:1.4;color:var(--muted-foreground);}
+  .text-body{font-size:16px;font-weight:400;line-height:1.5;}
+  .text-screen-title{font-size:13px;font-weight:600;line-height:1.2;letter-spacing:.06em;text-transform:uppercase;}
+  .text-caption{font-size:13px;font-weight:400;line-height:1.4;color:var(--muted-foreground);}
+  .text-label{font-size:11px;font-weight:600;line-height:1.2;letter-spacing:.06em;text-transform:uppercase;}
+
+  .detail-header{border-radius:0 0 var(--radius-xl) var(--radius-xl);background:var(--header);color:var(--header-foreground);
+    padding:20px var(--bar-pad) 28px;}
+  .icon-btn{width:44px;height:44px;min-width:44px;display:flex;align-items:center;justify-content:center;
+    border-radius:999px;border:1px solid rgba(245,245,244,.2);background:transparent;color:inherit;}
+  .header-row{display:flex;align-items:center;justify-content:space-between;}
+  .header-pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
+  .pill-outline{display:inline-flex;align-items:center;border-radius:999px;padding:4px 12px;font-size:11px;font-weight:600;
+    letter-spacing:.06em;text-transform:uppercase;border:1px solid rgba(245,245,244,.25);color:var(--header-foreground);}
+  .pill{display:inline-flex;align-items:center;border-radius:999px;padding:4px 12px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;}
+  .pill-success{background:var(--success-bg);color:var(--success);}
+  .pill-warning{background:var(--warning-bg);color:var(--warning);}
+  .pill-neutral{background:rgba(245,245,244,.12);color:var(--header-foreground);}
+  .header-meta{display:flex;align-items:center;gap:8px;margin-top:16px;color:rgba(245,245,244,.7);font-size:13px;}
+  .header-meta svg{flex-shrink:0;}
+
+  .closed-banner{margin:12px var(--bar-pad) 0;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);
+    background:var(--muted);color:var(--muted-foreground);font-size:13px;display:none;align-items:flex-start;gap:8px;}
+  .closed-banner svg{flex-shrink:0;margin-top:1px;color:var(--success);}
+
+  .section{padding:20px var(--bar-pad) 0;}
+  .section-label{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px;}
+
+  .progress-card{border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);padding:var(--card-pad);}
+  .progress-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .progress-item .num{color:var(--card-foreground);}
+  .progress-item .lbl{color:var(--muted-foreground);margin-top:2px;}
+  .value-row{margin-top:14px;padding-top:14px;border-top:1px solid var(--border);display:flex;align-items:baseline;justify-content:space-between;}
+  .excluded-note{margin-top:8px;color:var(--muted-foreground);font-size:12px;}
+
+  /* status timeline */
+  .timeline{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;}
+  .timeline li{display:flex;gap:12px;}
+  .node-col{display:flex;flex-direction:column;align-items:center;}
+  .node{width:12px;height:12px;border-radius:999px;flex-shrink:0;}
+  .node-done{background:var(--success);}
+  .node-current{border:2px solid var(--accent);background:var(--background);}
+  .node-upcoming{border:2px solid var(--input);background:var(--background);}
+  .node-line{width:1px;flex:1;background:var(--border);min-height:20px;}
+  .tl-body{padding-bottom:20px;}
+  .tl-title{font-weight:600;}
+  .tl-title.done{color:var(--foreground);}
+  .tl-title.current{color:var(--foreground);}
+  .tl-title.upcoming{color:var(--muted-foreground);font-weight:400;}
+
+  .lines{display:flex;flex-direction:column;gap:var(--card-gap);}
+  .card-row{display:flex;align-items:flex-start;gap:12px;border-radius:var(--radius-lg);
+    border:1px solid var(--border);background:var(--card);padding:var(--card-pad);}
+  .card-glyph{display:flex;flex-shrink:0;align-items:center;justify-content:center;width:64px;height:64px;
+    border-radius:var(--radius-lg);background:var(--muted);color:var(--muted-foreground);font-size:20px;font-weight:700;}
+  .row-body{min-width:0;flex:1;}
+  .row-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;}
+  .row-top h3{margin:0;}
+  .row-sub{margin:2px 0 0;}
+  .qty-value{margin-top:8px;display:grid;gap:8px;align-items:baseline;}
+  .qty-value.has-value{grid-template-columns:1fr auto;}
+  .qty-value.no-value{grid-template-columns:1fr;}
+  .no-cost-note{color:var(--muted-foreground);font-size:12px;margin-top:2px;}
+  .more-link{display:flex;align-items:center;justify-content:center;min-height:var(--tap-min);border-radius:var(--radius-lg);
+    border:1px dashed var(--border);color:var(--muted-foreground);font-size:13px;font-weight:600;background:transparent;width:100%;}
+
+  .bottom-bar{position:fixed;left:0;right:0;bottom:0;max-width:390px;margin:0 auto;display:flex;gap:12px;
+    border-top:1px solid var(--border);background:var(--background);padding:var(--bar-pad) var(--bar-pad) calc(var(--bar-pad) + env(safe-area-inset-bottom));z-index:40;}
+  .btn{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:2px;flex:1;border-radius:var(--radius-md);
+    font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;min-height:var(--tap-primary);border:1px solid transparent;}
+  .btn-primary{background:var(--primary);color:var(--primary-foreground);}
+  .btn-outline{background:transparent;border-color:var(--input);color:var(--foreground);}
+  .waiting-note{padding:14px var(--bar-pad) calc(14px + env(safe-area-inset-bottom));text-align:center;color:var(--muted-foreground);font-size:13px;}
+
+  svg{display:block;}
+</style>
+</head>
+<body>
+
+<div class="proto-bar">
+  <span class="proto-nav">
+    <b>Prototype nav:</b>
+    <a href="count-scan.html">Scan</a>
+    <a href="count-fill-tenths.html">Fill tenths</a>
+    <a href="count-sealed-qty.html">Sealed qty</a>
+    <a href="scan-to-enroll.html">Scan-to-enroll</a>
+    <a href="count-session.html">Count session</a>
+  </span>
+</div>
+<div class="proto-controls">
+  <span class="proto-label">Demo controls (not shipped UI):</span>
+  <label>Status
+    <select id="statusSelect">
+      <option value="draft">draft</option>
+      <option value="in_progress">in_progress</option>
+      <option value="submitted">submitted</option>
+      <option value="reviewed" selected>reviewed</option>
+      <option value="closed">closed</option>
+    </select>
+  </label>
+  <label>Role
+    <select id="roleSelect">
+      <option value="owner" selected>Owner</option>
+      <option value="manager">Manager</option>
+      <option value="staff">Staff</option>
+    </select>
+  </label>
+</div>
+
+<div class="app" id="app">
+  <header class="detail-header">
+    <div class="header-row">
+      <button class="icon-btn" aria-label="Back">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <button class="icon-btn" aria-label="More actions" id="overflowBtn">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+      </button>
+    </div>
+    <h1 class="text-header-title" style="margin:14px 0 0">Count #1247</h1>
+    <div class="header-pills">
+      <span class="pill-outline">FULL COUNT</span>
+      <span class="pill" id="statusPill">REVIEWED</span>
+    </div>
+    <div class="header-meta">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
+      Started Jul 18, 2026 &middot; Back Bar, Storeroom, Walk-in Cooler, Tap 1
+    </div>
+  </header>
+
+  <div class="closed-banner" id="closedBanner">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+    <span>Closed Jul 25, 2026 by J. Alvarez. This record is permanent — corrections happen as a new adjustment, never by editing this count.</span>
+  </div>
+
+  <div class="section">
+    <div class="section-label"><span class="text-label" style="color:var(--muted-foreground)">Progress</span></div>
+    <div class="progress-card">
+      <div class="progress-grid">
+        <div class="progress-item">
+          <div class="text-numeral-md num">42</div>
+          <div class="text-caption lbl">Lines counted</div>
+        </div>
+        <div class="progress-item">
+          <div class="text-numeral-md num">187.4</div>
+          <div class="text-caption lbl">Total units</div>
+        </div>
+      </div>
+      <div class="value-row" id="valueRow">
+        <span class="text-caption">Total value</span>
+        <span class="text-numeral-md tabular" id="valueAmount">$1,842.60</span>
+      </div>
+      <p class="excluded-note">9 priced lines &middot; 33 unpriced lines excluded from valuation (no cost on file yet — normal at this stage of the catalog)</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-label"><span class="text-label" style="color:var(--muted-foreground)">Status</span></div>
+    <ol class="timeline" id="timeline"></ol>
+  </div>
+
+  <div class="section">
+    <div class="section-label">
+      <span class="text-label" style="color:var(--muted-foreground)">Counted lines</span>
+      <span class="text-caption">42</span>
+    </div>
+    <div class="lines" id="linesList">
+
+      <article class="card-row">
+        <div class="card-glyph" aria-hidden="true">SP</div>
+        <div class="row-body">
+          <div class="row-top"><h3 class="text-row-title">Tito's Handmade Vodka</h3></div>
+          <p class="text-row-subtitle row-sub">750ml &middot; Back Bar</p>
+          <div class="qty-value has-value" data-money-row>
+            <span class="text-numeral-sm">4 ea</span>
+            <span class="text-numeral-sm val tabular" data-cost="63.96">$63.96</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card-row">
+        <div class="card-glyph" aria-hidden="true">SP</div>
+        <div class="row-body">
+          <div class="row-top"><h3 class="text-row-title">Bacardi Superior Rum</h3></div>
+          <p class="text-row-subtitle row-sub">750ml &middot; Storeroom</p>
+          <div class="qty-value has-value" data-money-row>
+            <span class="text-numeral-sm">3 cases, 0 ea</span>
+            <span class="text-numeral-sm val tabular" data-cost="405.00">$405.00</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card-row">
+        <div class="card-glyph" aria-hidden="true">SP</div>
+        <div class="row-body">
+          <div class="row-top"><h3 class="text-row-title">Casamigos Blanco</h3></div>
+          <p class="text-row-subtitle row-sub">750ml &middot; Back Bar</p>
+          <div class="qty-value no-value" data-money-row data-unpriced="true">
+            <span class="text-numeral-sm">2 ea</span>
+          </div>
+          <p class="no-cost-note" data-unpriced-note>No cost on file — excluded from valuation</p>
+        </div>
+      </article>
+
+      <article class="card-row">
+        <div class="card-glyph" aria-hidden="true">SP</div>
+        <div class="row-body">
+          <div class="row-top"><h3 class="text-row-title">Tanqueray London Dry Gin</h3></div>
+          <p class="text-row-subtitle row-sub">750ml &middot; Back Bar &middot; 2 open bottles</p>
+          <div class="qty-value has-value" data-money-row>
+            <span class="text-numeral-sm">1.1 units</span>
+            <span class="text-numeral-sm val tabular" data-cost="20.35">$20.35</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card-row">
+        <div class="card-glyph" aria-hidden="true">KG</div>
+        <div class="row-body">
+          <div class="row-top"><h3 class="text-row-title">Coors Light — Half Barrel</h3></div>
+          <p class="text-row-subtitle row-sub">Keg &middot; Tap 1 &middot; 70% full</p>
+          <div class="qty-value no-value" data-money-row data-unpriced="true">
+            <span class="text-numeral-sm">0.7 units</span>
+          </div>
+          <p class="no-cost-note" data-unpriced-note>No cost on file — excluded from valuation</p>
+        </div>
+      </article>
+
+      <article class="card-row">
+        <div class="card-glyph" aria-hidden="true">BE</div>
+        <div class="row-body">
+          <div class="row-top"><h3 class="text-row-title">Corona Extra</h3></div>
+          <p class="text-row-subtitle row-sub">24/case &middot; Walk-in Cooler</p>
+          <div class="qty-value has-value" data-money-row>
+            <span class="text-numeral-sm">2 cases, 0 ea</span>
+            <span class="text-numeral-sm val tabular" data-cost="52.80">$52.80</span>
+          </div>
+        </div>
+      </article>
+
+      <button class="more-link" type="button">+ 36 more lines</button>
+    </div>
+  </div>
+
+  <div id="bottomBarSlot"></div>
+</div>
+
+<div class="proto-annotations">
+  <h2>Design decisions &amp; open questions — count-session.html</h2>
+  <h3>Decisions</h3>
+  <ul>
+    <li><b>The primary action is role- AND status-derived, not just status-derived.</b> `closeCountAction`/`reviewCountAction` require owner or manager — staff literally cannot call them. So at `submitted`/`reviewed`, a staff viewer sees no action bar at all, just a "waiting on someone else" note, rather than a disabled button. At `draft`/`in_progress`, all three roles can submit, since spec §4 says any counting role may do so.</li>
+    <li><b>At `closed`, the bottom action bar is not rendered</b> — the demo literally removes the DOM node, not `disabled`-attributes it — per invariant 1's "not disabled, absent." A closed-count banner takes its place, explaining that corrections are a new adjustment, never an edit here.</li>
+    <li><b>Only `owner` sees the total-value line and the two-line CLOSE COUNT button.</b> This is a stricter gate than the plain owner/staff split used elsewhere — CLAUDE.md's role table says manager has "no cost visibility" too, and `closeCountAction`'s own response only attaches `totalValue` `...(actor.role === "owner" ? {...} : {})`. Manager gets `totalUnits`/`pricedLineCount`/`excludedLineCount` (visible to everyone here) but never a dollar figure.</li>
+    <li>The excluded/unpriced-line count (33 of 42) is shown as an ordinary, unapologetic line in the progress card, per CLAUDE.md's "unpriced lines are normal, not errors" — most of the real catalog has no cost yet.</li>
+  </ul>
+  <h3>Something the server actions made awkward — flagged for backend/owner</h3>
+  <ul>
+    <li><b>There is no live "progress totals" read.</b> `getCountAction` returns raw lines; `totalUnits`/`pricedLineCount`/`excludedLineCount`/`totalValue` are only ever computed by `closeCount` (lib/domain/counts.ts), at the moment of closing. This screen's progress card and its "$1,842.60" while `reviewed` (not yet closed) is necessarily a value <b>computed client-side by summing the returned lines</b> — which means the client has to reimplement `summarizeValuation`'s logic to show a live total before close, and it can drift from the server's own computation if that logic ever changes on one side and not the other. Worth asking: should `getCountAction`/a new endpoint return the same summarized totals `closeCount` computes, read-only, before the count is actually closed?</li>
+  </ul>
+  <h3>Open questions for the owner</h3>
+  <ul>
+    <li>Should staff be able to see the timeline/progress view at all once they've submitted, or does "nothing left for you to do here" mean the whole session should just disappear from their list?</li>
+    <li>Cancelling a count entirely (not shown here) isn't in the five server actions this screen was built against — is "cancel a count" in scope, or does an unwanted count just stay `draft` forever?</li>
+  </ul>
+</div>
+
+<script>
+  var STATUS_ORDER = ['draft','in_progress','submitted','reviewed','closed'];
+  var STATUS_LABEL = {draft:'DRAFT', in_progress:'IN PROGRESS', submitted:'SUBMITTED', reviewed:'REVIEWED', closed:'CLOSED'};
+  var TL_STEPS = [
+    {key:'draft', title:'Draft created', date:'Jul 18, 2026'},
+    {key:'in_progress', title:'In progress', date:'Started Jul 18, 2026'},
+    {key:'submitted', title:'Submitted', date:'Jul 24, 2026'},
+    {key:'reviewed', title:'Reviewed', date:'Jul 25, 2026'},
+    {key:'closed', title:'Closed', date:''}
+  ];
+
+  var app = document.getElementById('app');
+  var statusSelect = document.getElementById('statusSelect');
+  var roleSelect = document.getElementById('roleSelect');
+  var statusPill = document.getElementById('statusPill');
+  var closedBanner = document.getElementById('closedBanner');
+  var timelineEl = document.getElementById('timeline');
+  var bottomSlot = document.getElementById('bottomBarSlot');
+  var valueRow = document.getElementById('valueRow');
+  var valueAmount = document.getElementById('valueAmount');
+
+  function pillClassFor(status){
+    if (status === 'closed' || status === 'reviewed') return 'pill-success';
+    if (status === 'in_progress' || status === 'submitted') return 'pill-warning';
+    return 'pill-neutral';
+  }
+
+  function renderTimeline(status){
+    var idx = STATUS_ORDER.indexOf(status);
+    timelineEl.innerHTML = '';
+    TL_STEPS.forEach(function(step, i){
+      var state = i < idx ? 'done' : (i === idx ? 'current' : 'upcoming');
+      var li = document.createElement('li');
+      li.innerHTML =
+        '<div class="node-col">' +
+          '<span class="node node-' + state + '"></span>' +
+          (i < TL_STEPS.length - 1 ? '<span class="node-line"></span>' : '') +
+        '</div>' +
+        '<div class="tl-body">' +
+          '<p class="tl-title ' + state + '">' + step.title + '</p>' +
+          (state !== 'upcoming' ? '<p class="text-caption">' + (i === idx ? step.date : step.date) + '</p>' : '') +
+        '</div>';
+      timelineEl.appendChild(li);
+    });
+  }
+
+  // ---- role-gated value rendering, same contract as the other prototypes ----
+  function applyRole(role){
+    document.querySelectorAll('[data-money-row]').forEach(function(row){
+      var unpriced = row.getAttribute('data-unpriced') === 'true';
+      var note = row.parentElement.querySelector('[data-unpriced-note]');
+      if (unpriced){
+        if (note) note.style.display = (role === 'owner') ? 'block' : 'none';
+        return;
+      }
+      if (role === 'owner'){
+        row.classList.add('has-value'); row.classList.remove('no-value');
+        if (!row.querySelector('.val') && row.dataset.costCache){
+          var span = document.createElement('span');
+          span.className = 'text-numeral-sm val tabular';
+          span.textContent = '$' + row.dataset.costCache;
+          row.appendChild(span);
+        }
+      } else {
+        var existing = row.querySelector('.val');
+        if (existing){ row.dataset.costCache = existing.getAttribute('data-cost'); existing.remove(); }
+        row.classList.remove('has-value'); row.classList.add('no-value');
+      }
+    });
+    // Session-summary total value: owner-only, exactly like closeCountAction's
+    // response shape (`...(actor.role === "owner" ? { totalValue } : {})`).
+    // CLAUDE.md's role table also gives manager NO cost visibility — this is
+    // not the same three-tier split as elsewhere; only "owner" ever sees $.
+    valueRow.style.display = (role === 'owner') ? 'flex' : 'none';
+  }
+
+  function renderBottomBar(status, role){
+    bottomSlot.innerHTML = '';
+    app.classList.remove('has-bar');
+    closedBanner.style.display = 'none';
+
+    if (status === 'closed'){
+      // Invariant 1: closed counts are immutable. No edit affordances at
+      // all — not disabled buttons, ABSENT ones. The bar is not rendered.
+      closedBanner.style.display = 'flex';
+      return;
+    }
+
+    var bar = document.createElement('div');
+
+    if (status === 'draft' || status === 'in_progress'){
+      // Any counting role may submit.
+      bar.className = 'bottom-bar';
+      bar.innerHTML =
+        '<button class="btn btn-outline">Back</button>' +
+        '<button class="btn btn-primary"><span class="text-label">Submit count</span></button>';
+      bottomSlot.appendChild(bar);
+      app.classList.add('has-bar');
+      return;
+    }
+
+    if (status === 'submitted'){
+      if (role === 'owner' || role === 'manager'){
+        bar.className = 'bottom-bar';
+        bar.innerHTML =
+          '<button class="btn btn-outline">Back</button>' +
+          '<button class="btn btn-primary"><span class="text-label">Mark reviewed</span></button>';
+        bottomSlot.appendChild(bar);
+        app.classList.add('has-bar');
+      } else {
+        var note = document.createElement('p');
+        note.className = 'waiting-note';
+        note.textContent = 'Submitted — waiting for manager review. Nothing left for you to do here.';
+        bottomSlot.appendChild(note);
+      }
+      return;
+    }
+
+    if (status === 'reviewed'){
+      if (role === 'owner' || role === 'manager'){
+        bar.className = 'bottom-bar';
+        var primaryInner = (role === 'owner')
+          ? '<span class="text-label">Close count</span><span class="text-numeral-sm tabular">$1,842.60</span>'
+          : '<span class="text-label">Close count</span>';
+        bar.innerHTML =
+          '<button class="btn btn-outline">Back</button>' +
+          '<button class="btn btn-primary">' + primaryInner + '</button>';
+        bottomSlot.appendChild(bar);
+        app.classList.add('has-bar');
+      } else {
+        var note2 = document.createElement('p');
+        note2.className = 'waiting-note';
+        note2.textContent = 'Reviewed — waiting for an owner or manager to close this count.';
+        bottomSlot.appendChild(note2);
+      }
+      return;
+    }
+  }
+
+  function render(){
+    var status = statusSelect.value;
+    var role = roleSelect.value;
+    statusPill.textContent = STATUS_LABEL[status];
+    statusPill.className = 'pill ' + pillClassFor(status);
+    renderTimeline(status);
+    applyRole(role);
+    renderBottomBar(status, role);
+  }
+
+  statusSelect.addEventListener('change', render);
+  roleSelect.addEventListener('change', render);
+  render();
+</script>
+</body>
+</html>

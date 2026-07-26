@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Handlebar — design system proof</title>
+<!--
+  Standalone, offline proof of docs/design-system.md. No build step, no CDN, no
+  network fetch of any kind (including web fonts) — open this file directly in a
+  browser. Production uses Geist via next/font (see app/layout.tsx); this prototype
+  falls back to the OS system-UI font stack since it cannot fetch a webfont without
+  a network connection, which the brief for this file explicitly rules out.
+
+  Toggle button (top right) flips `.dark` on <html>, exactly the mechanism described
+  in docs/design-system.md §1 — one component tree, two token sets, no forking.
+-->
+<style>
+  /* ===================================================================
+     TOKENS — mirrors app/globals.css exactly. If you change a value here,
+     change it there too (and vice versa); they must never drift apart.
+     =================================================================== */
+  :root {
+    --radius: 1rem;
+
+    --background: #f7f7f5;
+    --foreground: #111111;
+    --card: #ffffff;
+    --card-foreground: #111111;
+    --muted: #efefec;
+    --muted-foreground: #6b6b6b;
+    --primary: #0a0a0a;
+    --primary-foreground: #ffffff;
+    --secondary: #efefec;
+    --secondary-foreground: #111111;
+    --accent: #2563eb;
+    --accent-foreground: #ffffff;
+    --destructive: #c4304f;
+    --destructive-foreground: #ffffff;
+    --border: #e4e4e1;
+    --input: #8c8c8c;
+    --ring: #2563eb;
+    --header: #0a0a0a;
+    --header-foreground: #ffffff;
+    --success: #1f7a3d;
+    --success-bg: #e4f5e6;
+    --warning: #92600a;
+    --warning-bg: #fdf0dc;
+    --negative: #b8305a;
+    --negative-bg: #fde8ec;
+
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  html.dark {
+    --background: #0b0b0c;
+    --foreground: #f5f5f4;
+    --card: #17181a;
+    --card-foreground: #f5f5f4;
+    --muted: #131315;
+    --muted-foreground: #a8a8a5;
+    --primary: #f5f5f4;
+    --primary-foreground: #0a0a0a;
+    --secondary: #1e1e21;
+    --secondary-foreground: #f5f5f4;
+    --accent: #60a5fa;
+    --accent-foreground: #0a0a0a;
+    --destructive: #d33039;
+    --destructive-foreground: #ffffff;
+    --border: #232326;
+    --input: #6b6b6b;
+    --ring: #60a5fa;
+    --header: #121317;
+    --header-foreground: #f5f5f4;
+    --success: #6fcf8e;
+    --success-bg: #14301f;
+    --warning: #f0b429;
+    --warning-bg: #3a2a10;
+    --negative: #f0718a;
+    --negative-bg: #3a1620;
+  }
+
+  /* ===================================================================
+     RESET + BASE
+     =================================================================== */
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+  h1, h2, h3, p, ol, ul { margin: 0; padding: 0; list-style: none; }
+  button, input { font: inherit; color: inherit; }
+  button { cursor: pointer; background: none; border: none; }
+  svg { display: block; }
+
+  a, button, input, [role="button"], [tabindex] {
+    outline-offset: 2px;
+  }
+  a:focus-visible, button:focus-visible, input:focus-visible, [role="button"]:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  /* ===================================================================
+     LAYOUT UTILITIES (hand-rolled subset — production uses real Tailwind v4;
+     these class names deliberately match the ones in docs/design-system.md
+     so the mapping to real Tailwind classes is 1:1 and self-evident).
+     =================================================================== */
+  .flex { display: flex; }
+  .inline-flex { display: inline-flex; }
+  .grid { display: grid; }
+  .flex-col { flex-direction: column; }
+  .flex-1 { flex: 1 1 0%; }
+  .shrink-0 { flex-shrink: 0; }
+  .min-w-0 { min-width: 0; }
+  .items-center { align-items: center; }
+  .items-start { align-items: flex-start; }
+  .items-baseline { align-items: baseline; }
+  .justify-between { justify-content: space-between; }
+  .justify-center { justify-content: center; }
+  .justify-end { justify-content: flex-end; }
+  .flex-wrap { flex-wrap: wrap; }
+  .text-center { text-align: center; }
+  .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .uppercase { text-transform: uppercase; }
+  .relative { position: relative; }
+  .w-full { width: 100%; }
+  .max-w { max-width: 480px; }
+  .mx-auto { margin-inline: auto; }
+
+  .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .grid-cols-1fr-auto { grid-template-columns: 1fr auto; }
+  .grid-cols-1 { grid-template-columns: 1fr; }
+
+  .gap-1 { gap: 0.25rem; }
+  .gap-1_5 { gap: 0.375rem; }
+  .gap-2 { gap: 0.5rem; }
+  .gap-3 { gap: 0.75rem; }
+  .gap-4 { gap: 1rem; }
+  .gap-card-gap { gap: 0.75rem; }
+
+  .p-2 { padding: 0.5rem; }
+  .p-3 { padding: 0.75rem; }
+  .p-4 { padding: 1rem; }
+  .p-card-pad { padding: 1rem; }
+  .p-bar-pad { padding: 1rem; }
+  .px-3 { padding-inline: 0.75rem; }
+  .px-4 { padding-inline: 1rem; }
+  .px-bar-pad { padding-inline: 1rem; }
+  .py-1 { padding-block: 0.25rem; }
+  .py-2 { padding-block: 0.5rem; }
+  .pt-6 { padding-top: 1.5rem; }
+  .pb-6 { padding-bottom: 1.5rem; }
+  .pb-8 { padding-bottom: 2rem; }
+  .mt-2 { margin-top: 0.5rem; }
+  .mt-3 { margin-top: 0.75rem; }
+  .mt-4 { margin-top: 1rem; }
+  .mt-6 { margin-top: 1.5rem; }
+  .mt-10 { margin-top: 2.5rem; }
+  .mb-2 { margin-bottom: 0.5rem; }
+  .mb-3 { margin-bottom: 0.75rem; }
+  .mb-4 { margin-bottom: 1rem; }
+  .mb-6 { margin-bottom: 1.5rem; }
+  .mx-2 { margin-inline: 0.5rem; }
+  .section-gap > * + * { margin-top: 1.5rem; }
+
+  /* ===================================================================
+     SIZE / RADIUS / BORDER TOKENS
+     =================================================================== */
+  .rounded-sm { border-radius: var(--radius-sm); }
+  .rounded-md { border-radius: var(--radius-md); }
+  .rounded-lg { border-radius: var(--radius-lg); }
+  .rounded-xl { border-radius: var(--radius-xl); }
+  .rounded-full { border-radius: 9999px; }
+  .rounded-b-xl { border-bottom-left-radius: var(--radius-xl); border-bottom-right-radius: var(--radius-xl); }
+
+  .border { border: 1px solid var(--border); }
+  .border-input { border: 1px solid var(--input); }
+  .border-t { border-top: 1px solid var(--border); }
+  .border-2 { border-width: 2px; border-style: solid; }
+  .border-foreground { border-color: var(--foreground); }
+  .border-input-color { border-color: var(--input); }
+  .border-accent { border-color: var(--accent); }
+  .border-header-20 { border: 1px solid color-mix(in srgb, var(--header-foreground) 20%, transparent); }
+  .border-header-25 { border: 1px solid color-mix(in srgb, var(--header-foreground) 25%, transparent); }
+
+  .size-3 { width: 0.75rem; height: 0.75rem; }
+  .size-4 { width: 1rem; height: 1rem; }
+  .size-5 { width: 1.25rem; height: 1.25rem; }
+  .size-6 { width: 1.5rem; height: 1.5rem; }
+  .size-8 { width: 2rem; height: 2rem; }
+  .size-16 { width: 4rem; height: 4rem; }
+  .size-tap-min { width: 2.75rem; height: 2.75rem; }
+  .min-h-tap-min { min-height: 2.75rem; }
+  .min-h-tap-primary { min-height: 3.5rem; }
+  .h-tap-min { height: 2.75rem; }
+  .w-px { width: 1px; }
+  .w-8 { width: 2rem; }
+  .h-px { height: 1px; }
+
+  /* ===================================================================
+     COLOR TOKENS -> utility classes
+     =================================================================== */
+  .bg-background { background: var(--background); }
+  .bg-card { background: var(--card); }
+  .bg-muted { background: var(--muted); }
+  .bg-primary { background: var(--primary); }
+  .bg-secondary { background: var(--secondary); }
+  .bg-accent { background: var(--accent); }
+  .bg-destructive { background: var(--destructive); }
+  .bg-header { background: var(--header); }
+  .bg-success-bg { background: var(--success-bg); }
+  .bg-warning-bg { background: var(--warning-bg); }
+  .bg-negative-bg { background: var(--negative-bg); }
+  .bg-transparent { background: transparent; }
+
+  .text-foreground { color: var(--foreground); }
+  .text-card-foreground { color: var(--card-foreground); }
+  .text-muted-foreground { color: var(--muted-foreground); }
+  .text-primary-foreground { color: var(--primary-foreground); }
+  .text-secondary-foreground { color: var(--secondary-foreground); }
+  .text-accent { color: var(--accent); }
+  .text-accent-foreground { color: var(--accent-foreground); }
+  .text-destructive-foreground { color: var(--destructive-foreground); }
+  .text-header-foreground { color: var(--header-foreground); }
+  .text-header-foreground-70 { color: color-mix(in srgb, var(--header-foreground) 70%, transparent); }
+  .text-success { color: var(--success); }
+  .text-warning { color: var(--warning); }
+  .text-negative { color: var(--negative); }
+
+  /* ===================================================================
+     TYPE SCALE — mirrors the --text-* companions in app/globals.css
+     =================================================================== */
+  .text-numeral-lg { font-size: 3rem; line-height: 1; font-weight: 700; }
+  .text-header-title { font-size: 1.75rem; line-height: 1.15; font-weight: 600; }
+  .text-numeral-md { font-size: 1.5rem; line-height: 1.1; font-weight: 600; }
+  .text-row-title { font-size: 1.125rem; line-height: 1.3; font-weight: 600; }
+  .text-numeral-sm { font-size: 1.0625rem; line-height: 1.2; font-weight: 600; }
+  .text-row-subtitle { font-size: 0.9375rem; line-height: 1.4; font-weight: 400; }
+  .text-body { font-size: 1rem; line-height: 1.5; font-weight: 400; }
+  .text-screen-title { font-size: 0.8125rem; line-height: 1.2; font-weight: 600; letter-spacing: 0.06em; }
+  .text-caption { font-size: 0.8125rem; line-height: 1.4; font-weight: 400; }
+  .text-label { font-size: 0.6875rem; line-height: 1.2; font-weight: 600; letter-spacing: 0.06em; }
+  .font-semibold { font-weight: 600; }
+  .tabular-nums { font-variant-numeric: tabular-nums; }
+
+  /* ===================================================================
+     PAGE CHROME (prototype-only, not a design token)
+     =================================================================== */
+  .prototype-shell { max-width: 1180px; margin: 0 auto; padding: 2rem 1.5rem 6rem; }
+  .toggle-bar {
+    position: sticky; top: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1rem 1.5rem;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+  }
+  .toggle-btn {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    padding: 0.625rem 1rem;
+    min-height: 2.75rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--input);
+    background: var(--card);
+    color: var(--foreground);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .swatch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
+  .swatch {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    background: var(--card);
+  }
+  .swatch-color { height: 4.5rem; }
+  .swatch-meta { padding: 0.75rem; font-size: 0.8125rem; }
+  .swatch-meta .name { font-weight: 600; margin-bottom: 0.125rem; }
+  .swatch-meta .hex { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; opacity: 0.75; }
+  .swatch-meta .ratio { margin-top: 0.375rem; display: inline-block; padding: 0.125rem 0.5rem; border-radius: 9999px; font-size: 0.6875rem; font-weight: 600; }
+  .ratio-pass { background: #e4f5e6; color: #1f7a3d; }
+  .ratio-note { background: #fdf0dc; color: #92600a; }
+
+  section.demo-section { margin-top: 3rem; }
+  .demo-section > h2 { font-size: 0.8125rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted-foreground); margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
+  .demo-section > p.note { font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 1rem; max-width: 68ch; }
+  .demo-row { display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: flex-start; }
+  .demo-card-wrap { width: 340px; max-width: 100%; }
+  .stage {
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+  }
+  .stage-dark-label { display: block; }
+
+  .type-row { display: flex; align-items: baseline; gap: 1rem; padding: 0.75rem 0; border-bottom: 1px solid var(--border); }
+  .type-row .label { width: 160px; flex-shrink: 0; font-size: 0.75rem; color: var(--muted-foreground); font-family: ui-monospace, monospace; }
+
+  .scale-bar { height: 1.5rem; background: var(--accent); border-radius: var(--radius-sm); }
+  .scale-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+  .scale-row .label { width: 140px; flex-shrink: 0; font-size: 0.8125rem; font-family: ui-monospace, monospace; }
+
+  .radius-demo { width: 4rem; height: 4rem; background: var(--secondary); border: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<div class="toggle-bar">
+  <div>
+    <strong style="font-size:0.9375rem;">Handlebar</strong>
+    <span class="text-muted-foreground" style="font-size:0.8125rem; margin-left:0.5rem;">design system proof</span>
+  </div>
+  <button class="toggle-btn" id="theme-toggle" aria-pressed="true">
+    <span id="theme-toggle-label">Switch to light (back office)</span>
+  </button>
+</div>
+
+<div class="prototype-shell">
+
+  <!-- =================================================================
+       PALETTE — static reference, always visible regardless of the live
+       toggle above, so both themes' hex + ratio values can be audited
+       side by side. See docs/design-system.md §2 for full derivations.
+       ================================================================= -->
+  <section class="demo-section" style="margin-top:2rem;">
+    <h2>Palette — light theme</h2>
+    <div class="swatch-grid">
+      <div class="swatch" style="background:#ffffff;"><div class="swatch-color" style="background:#F7F7F5"></div><div class="swatch-meta" style="color:#111111;"><div class="name">background</div><div class="hex">#F7F7F5</div></div></div>
+      <div class="swatch" style="background:#ffffff;"><div class="swatch-color" style="background:#FFFFFF; border-bottom:1px solid #E4E4E1;"></div><div class="swatch-meta" style="color:#111111;"><div class="name">card</div><div class="hex">#FFFFFF</div></div></div>
+      <div class="swatch" style="background:#ffffff;"><div class="swatch-color" style="background:#111111"></div><div class="swatch-meta" style="color:#111111;"><div class="name">foreground</div><div class="hex">#111111</div><span class="ratio ratio-pass">17.60:1 on bg</span></div></div>
+      <div class="swatch" style="background:#ffffff;"><div class="swatch-color" style="background:#EFEFEC"></div><div class="swatch-meta" style="color:#111111;"><div class="name">muted</div><div class="hex">#EFEFEC</div></div></div>
+      <div class="swatch" style="background:#ffffff;"><div class="swatch-color" style="background:#6B6B6B"></div><div class="swatch-meta" style="color:#111111;"><div class="name">muted-foreground</div><div class="hex">#6B6B6B</div><span class="ratio ratio-pass">5.33:1 on white</span></div></div>
+      <div class="swatch" style="background:#ffffff;"><div class="swatch-color" style="background:#0A0A0A"></div><div class="swatch-meta" style="color:#111111;"><div class="name">primary</div><div class="hex">#0A0A0A</div></div></div>
+      <div class="swatch" style="background:#ffffff;"><div class="swatch-color" style="background:#2563EB"></div><div class="swatch-meta" style="color:#111111;"><div class="name">accent — brand blue</div><div class="hex">#2563EB</div><span class="ratio ratio-pass">5.17:1 w/ white text</span></div></div>
+      <div class="swatch" style="background:#ffffff;"><div class="swatch-color" style="background:#C4304F"></div><div class="swatch-meta" style="color:#111111;"><div class="name">destructive</div><div class="hex">#C4304F</div><span class="ratio ratio-pass">5.41:1 w/ white text</span></div></div>
+      <div class="swatch" style="background:#ffffff;"><div class="swatch-color" style="background:#E4E4E1"></div><div class="swatch-meta" style="color:#111111;"><div class="name">border (decorative)</div><div class="hex">#E4E4E1</div><span class="ratio ratio-note">~1.2:1 — see §5</span></div></div>
+      <div class="swatch" style="background:#ffffff;"><div class="swatch-color" style="background:#8C8C8C"></div><div class="swatch-meta" style="color:#111111;"><div class="name">input (functional)</div><div class="hex">#8C8C8C</div><span class="ratio ratio-pass">3.37:1 on white</span></div></div>
+      <div class="swatch" style="background:#ffffff;"><div class="swatch-color" style="background:#E4F5E6"></div><div class="swatch-meta" style="color:#111111;"><div class="name">success-bg</div><div class="hex">#E4F5E6</div></div></div>
+      <div class="swatch" style="background:#ffffff;"><div class="swatch-color" style="background:#1F7A3D"></div><div class="swatch-meta" style="color:#111111;"><div class="name">success</div><div class="hex">#1F7A3D</div><span class="ratio ratio-pass">4.73:1 on success-bg</span></div></div>
+      <div class="swatch" style="background:#ffffff;"><div class="swatch-color" style="background:#FDF0DC"></div><div class="swatch-meta" style="color:#111111;"><div class="name">warning-bg</div><div class="hex">#FDF0DC</div></div></div>
+      <div class="swatch" style="background:#ffffff;"><div class="swatch-color" style="background:#92600A"></div><div class="swatch-meta" style="color:#111111;"><div class="name">warning</div><div class="hex">#92600A</div><span class="ratio ratio-pass">4.78:1 on warning-bg</span></div></div>
+      <div class="swatch" style="background:#ffffff;"><div class="swatch-color" style="background:#FDE8EC"></div><div class="swatch-meta" style="color:#111111;"><div class="name">negative-bg</div><div class="hex">#FDE8EC</div></div></div>
+      <div class="swatch" style="background:#ffffff;"><div class="swatch-color" style="background:#B8305A"></div><div class="swatch-meta" style="color:#111111;"><div class="name">negative</div><div class="hex">#B8305A</div><span class="ratio ratio-pass">4.97:1 on negative-bg</span></div></div>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2>Palette — dark theme (product default)</h2>
+    <div class="swatch-grid">
+      <div class="swatch" style="background:#0b0b0c;"><div class="swatch-color" style="background:#0B0B0C"></div><div class="swatch-meta" style="color:#F5F5F4;"><div class="name">background</div><div class="hex">#0B0B0C</div></div></div>
+      <div class="swatch" style="background:#0b0b0c;"><div class="swatch-color" style="background:#17181A"></div><div class="swatch-meta" style="color:#F5F5F4;"><div class="name">card</div><div class="hex">#17181A</div></div></div>
+      <div class="swatch" style="background:#0b0b0c;"><div class="swatch-color" style="background:#F5F5F4"></div><div class="swatch-meta" style="color:#F5F5F4;"><div class="name">foreground</div><div class="hex">#F5F5F4</div><span class="ratio ratio-pass">18.03:1 on bg</span></div></div>
+      <div class="swatch" style="background:#0b0b0c;"><div class="swatch-color" style="background:#131315"></div><div class="swatch-meta" style="color:#F5F5F4;"><div class="name">muted</div><div class="hex">#131315</div></div></div>
+      <div class="swatch" style="background:#0b0b0c;"><div class="swatch-color" style="background:#A8A8A5"></div><div class="swatch-meta" style="color:#F5F5F4;"><div class="name">muted-foreground</div><div class="hex">#A8A8A5</div><span class="ratio ratio-pass">8.25:1 on bg</span></div></div>
+      <div class="swatch" style="background:#0b0b0c;"><div class="swatch-color" style="background:#F5F5F4"></div><div class="swatch-meta" style="color:#F5F5F4;"><div class="name">primary (bright, not black)</div><div class="hex">#F5F5F4</div></div></div>
+      <div class="swatch" style="background:#0b0b0c;"><div class="swatch-color" style="background:#60A5FA"></div><div class="swatch-meta" style="color:#F5F5F4;"><div class="name">accent — brand blue</div><div class="hex">#60A5FA</div><span class="ratio ratio-pass">8.26:1 w/ black text</span></div></div>
+      <div class="swatch" style="background:#0b0b0c;"><div class="swatch-color" style="background:#D33039"></div><div class="swatch-meta" style="color:#F5F5F4;"><div class="name">destructive</div><div class="hex">#D33039</div><span class="ratio ratio-pass">4.94:1 w/ white text</span></div></div>
+      <div class="swatch" style="background:#0b0b0c;"><div class="swatch-color" style="background:#6B6B6B"></div><div class="swatch-meta" style="color:#F5F5F4;"><div class="name">input (functional border)</div><div class="hex">#6B6B6B</div><span class="ratio ratio-pass">3.33:1 on card</span></div></div>
+      <div class="swatch" style="background:#0b0b0c;"><div class="swatch-color" style="background:#14301F"></div><div class="swatch-meta" style="color:#F5F5F4;"><div class="name">success-bg</div><div class="hex">#14301F</div></div></div>
+      <div class="swatch" style="background:#0b0b0c;"><div class="swatch-color" style="background:#6FCF8E"></div><div class="swatch-meta" style="color:#F5F5F4;"><div class="name">success</div><div class="hex">#6FCF8E</div><span class="ratio ratio-pass">7.46:1 on success-bg</span></div></div>
+      <div class="swatch" style="background:#0b0b0c;"><div class="swatch-color" style="background:#3A2A10"></div><div class="swatch-meta" style="color:#F5F5F4;"><div class="name">warning-bg</div><div class="hex">#3A2A10</div></div></div>
+      <div class="swatch" style="background:#0b0b0c;"><div class="swatch-color" style="background:#F0B429"></div><div class="swatch-meta" style="color:#F5F5F4;"><div class="name">warning</div><div class="hex">#F0B429</div><span class="ratio ratio-pass">7.42:1 on warning-bg</span></div></div>
+      <div class="swatch" style="background:#0b0b0c;"><div class="swatch-color" style="background:#3A1620"></div><div class="swatch-meta" style="color:#F5F5F4;"><div class="name">negative-bg</div><div class="hex">#3A1620</div></div></div>
+      <div class="swatch" style="background:#0b0b0c;"><div class="swatch-color" style="background:#F0718A"></div><div class="swatch-meta" style="color:#F5F5F4;"><div class="name">negative</div><div class="hex">#F0718A</div><span class="ratio ratio-pass">5.65:1 on negative-bg</span></div></div>
+      <div class="swatch" style="background:#0b0b0c;"><div class="swatch-color" style="background:#121317"></div><div class="swatch-meta" style="color:#F5F5F4;"><div class="name">header (not inverted to white)</div><div class="hex">#121317</div><span class="ratio ratio-pass">17.02:1 text on it</span></div></div>
+    </div>
+  </section>
+
+  <!-- =================================================================
+       TYPE SCALE
+       ================================================================= -->
+  <section class="demo-section">
+    <h2>Type scale</h2>
+    <p class="note">Every row below uses only the class named at left — line-height, weight, and letter-spacing ride along automatically, matching the paired <code>--text-*--line-height</code> etc. tokens in app/globals.css.</p>
+    <div class="type-row"><span class="label">.text-numeral-lg</span><span class="text-numeral-lg tabular-nums">0.7</span></div>
+    <div class="type-row"><span class="label">.text-header-title</span><span class="text-header-title">Count #1246799</span></div>
+    <div class="type-row"><span class="label">.text-numeral-md</span><span class="text-numeral-md tabular-nums">$600.00</span></div>
+    <div class="type-row"><span class="label">.text-row-title</span><span class="text-row-title">Tito's Handmade Vodka 750ml</span></div>
+    <div class="type-row"><span class="label">.text-numeral-sm</span><span class="text-numeral-sm tabular-nums">2 pcs</span></div>
+    <div class="type-row"><span class="label">.text-row-subtitle</span><span class="text-row-subtitle text-muted-foreground">SKU-04471 · Well spirits</span></div>
+    <div class="type-row"><span class="label">.text-body</span><span class="text-body">Default paragraph and form text.</span></div>
+    <div class="type-row"><span class="label">.text-screen-title</span><span class="text-screen-title uppercase">Count Session</span></div>
+    <div class="type-row"><span class="label">.text-caption</span><span class="text-caption text-muted-foreground">Started July 25, 2026</span></div>
+    <div class="type-row"><span class="label">.text-label</span><span class="text-label uppercase">Barcode / UPC</span></div>
+  </section>
+
+  <!-- =================================================================
+       SPACING + RADIUS SCALES
+       ================================================================= -->
+  <section class="demo-section">
+    <h2>Spacing scale</h2>
+    <div class="scale-row"><span class="label">card-gap · 12px</span><div class="scale-bar" style="width:12px;"></div></div>
+    <div class="scale-row"><span class="label">card-pad · 16px</span><div class="scale-bar" style="width:16px;"></div></div>
+    <div class="scale-row"><span class="label">section-gap · 24px</span><div class="scale-bar" style="width:24px;"></div></div>
+    <div class="scale-row"><span class="label">tap-min · 44px</span><div class="scale-bar" style="width:44px;"></div></div>
+    <div class="scale-row"><span class="label">tap-primary · 56px</span><div class="scale-bar" style="width:56px;"></div></div>
+  </section>
+
+  <section class="demo-section">
+    <h2>Radius scale</h2>
+    <div class="demo-row">
+      <div><div class="radius-demo rounded-sm"></div><p class="text-caption text-muted-foreground mt-2">sm · 12px</p></div>
+      <div><div class="radius-demo rounded-md"></div><p class="text-caption text-muted-foreground mt-2">md · 14px</p></div>
+      <div><div class="radius-demo rounded-lg"></div><p class="text-caption text-muted-foreground mt-2">lg · 16px</p></div>
+      <div><div class="radius-demo rounded-xl"></div><p class="text-caption text-muted-foreground mt-2">xl · 20px</p></div>
+      <div><div class="radius-demo rounded-full"></div><p class="text-caption text-muted-foreground mt-2">full · pill</p></div>
+    </div>
+  </section>
+
+  <!-- =================================================================
+       LIVE COMPONENTS — respond to the theme toggle above. Same markup,
+       same classes, only the CSS variables underneath change.
+       ================================================================= -->
+  <section class="demo-section">
+    <h2>Status pills</h2>
+    <div class="demo-row">
+      <span class="inline-flex items-center rounded-full bg-success-bg px-3 py-1 text-label uppercase text-success">In stock</span>
+      <span class="inline-flex items-center rounded-full bg-warning-bg px-3 py-1 text-label uppercase text-warning">Low</span>
+      <span class="inline-flex items-center rounded-full bg-negative-bg px-3 py-1 text-label uppercase text-negative">Out</span>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2>Card row — role-gated value, both variants</h2>
+    <p class="note">Left: owner/manager view, value present, two-column grid. Right: staff view, value <code>undefined</code>, single-column — not a blank cell, a different layout. See docs/design-system.md §8.</p>
+    <div class="demo-row">
+      <div class="demo-card-wrap">
+        <article class="flex items-start gap-3 rounded-lg border bg-card p-card-pad">
+          <div class="flex size-16 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground" aria-hidden="true">
+            <svg class="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2h8M9 2v5.5L5 15a3 3 0 0 0 3 4.5h8A3 3 0 0 0 19 15l-4-7.5V2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-start justify-between gap-2">
+              <h3 class="truncate text-row-title text-card-foreground">Tito's Handmade Vodka</h3>
+              <svg class="size-5 shrink-0 text-muted-foreground" style="margin-top:2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <p class="truncate text-row-subtitle text-muted-foreground">SKU-04471 · 750ml</p>
+            <span class="mt-2 inline-flex items-center rounded-full bg-success-bg px-3 py-1 text-label uppercase text-success" style="width:fit-content;">In stock</span>
+            <div class="mt-2 grid grid-cols-1fr-auto items-baseline gap-2">
+              <span class="text-numeral-sm text-card-foreground">2 pcs</span>
+              <span class="text-numeral-sm tabular-nums text-card-foreground">$600.00</span>
+            </div>
+          </div>
+        </article>
+      </div>
+      <div class="demo-card-wrap">
+        <article class="flex items-start gap-3 rounded-lg border bg-card p-card-pad">
+          <div class="flex size-16 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground" aria-hidden="true">
+            <svg class="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2h8M9 2v5.5L5 15a3 3 0 0 0 3 4.5h8A3 3 0 0 0 19 15l-4-7.5V2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-start justify-between gap-2">
+              <h3 class="truncate text-row-title text-card-foreground">Tito's Handmade Vodka</h3>
+              <svg class="size-5 shrink-0 text-muted-foreground" style="margin-top:2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <p class="truncate text-row-subtitle text-muted-foreground">SKU-04471 · 750ml</p>
+            <span class="mt-2 inline-flex items-center rounded-full bg-success-bg px-3 py-1 text-label uppercase text-success" style="width:fit-content;">In stock</span>
+            <div class="mt-2 grid grid-cols-1 items-baseline">
+              <span class="text-numeral-sm text-card-foreground">2 pcs</span>
+              <!-- value is undefined for this role: nothing renders here. No $0.00, no —, no empty column. -->
+            </div>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2>Detail header (black/inverted block)</h2>
+    <p class="note">Light theme inverts fully to black, per the reference. Dark theme deliberately does not invert to white — see docs/design-system.md for why.</p>
+    <div class="demo-card-wrap" style="width:380px;">
+      <header class="rounded-b-xl bg-header px-bar-pad pt-6 pb-8 text-header-foreground">
+        <div class="flex items-center justify-between">
+          <button aria-label="Close" class="flex size-tap-min items-center justify-center rounded-full border-header-20 text-header-foreground">
+            <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke-linecap="round"/></svg>
+          </button>
+          <button aria-label="More actions" class="flex size-tap-min items-center justify-center rounded-full border-header-20 text-header-foreground">
+            <svg class="size-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+          </button>
+        </div>
+        <h1 class="mt-4 text-header-title">Count #1246799</h1>
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+          <span class="rounded-full border-header-25 px-3 py-1 text-label uppercase">Tap-3</span>
+          <span class="rounded-full bg-warning-bg px-3 py-1 text-label uppercase text-warning">In progress</span>
+        </div>
+        <div class="mt-4 flex items-center gap-2 text-caption text-header-foreground-70">
+          <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke-linecap="round"/></svg>
+          July 25, 2026
+        </div>
+      </header>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2>Bottom action bar</h2>
+    <p class="note">Both buttons: rounded-md (14px), min-h-tap-primary (56px floor), equal width. Primary button is two lines only when the value is present (right example shows the staff/no-value variant — single line, not a blank second line).</p>
+    <div class="demo-row">
+      <div class="demo-card-wrap">
+        <p class="text-caption text-muted-foreground mb-2">Owner / manager — value visible</p>
+        <div class="flex gap-3 border-t p-bar-pad bg-background">
+          <button class="min-h-tap-primary flex-1 rounded-md border-input bg-transparent text-label uppercase text-foreground" style="border:1px solid var(--input);">Cancel</button>
+          <button class="flex flex-col items-center justify-center min-h-tap-primary flex-1 rounded-md bg-primary text-primary-foreground gap-1">
+            <span class="text-label uppercase">Close count</span>
+            <span class="text-numeral-sm tabular-nums">$5,820.00</span>
+          </button>
+        </div>
+      </div>
+      <div class="demo-card-wrap">
+        <p class="text-caption text-muted-foreground mb-2">Staff — value absent</p>
+        <div class="flex gap-3 border-t p-bar-pad bg-background">
+          <button class="min-h-tap-primary flex-1 rounded-md bg-transparent text-label uppercase text-foreground" style="border:1px solid var(--input);">Cancel</button>
+          <button class="flex items-center justify-center min-h-tap-primary flex-1 rounded-md bg-primary text-primary-foreground">
+            <span class="text-label uppercase">Close count</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2>Search + scan field</h2>
+    <div class="demo-card-wrap">
+      <div class="flex h-tap-min items-center gap-2 rounded-md bg-card px-4" style="border:1px solid var(--input);">
+        <svg class="size-5 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5" stroke-linecap="round"/></svg>
+        <input type="search" placeholder="Search products" aria-label="Search products" class="flex-1 bg-transparent text-body text-foreground" style="border:none; min-width:0;" />
+        <button aria-label="Scan barcode" class="flex size-tap-min items-center justify-center rounded-md text-accent">
+          <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7V5a1 1 0 0 1 1-1h2M4 17v2a1 1 0 0 0 1 1h2M20 7V5a1 1 0 0 0-1-1h-2M20 17v2a1 1 0 0 1-1 1h-2M7 9v6M11 9v6M15 9v6" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2>Stepper</h2>
+    <p class="note">Progress indicator, not navigation — the 5-step wizard from the reference is discarded for scan-to-enroll (must stay under 20 seconds). Kept only for genuinely multi-step back-office flows.</p>
+    <ol class="flex items-center">
+      <li class="flex items-center gap-2">
+        <span class="flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-numeral-sm">
+          <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <span class="text-label uppercase text-foreground">Details</span>
+      </li>
+      <li class="h-px w-8 mx-2 bg-muted" style="background:var(--border);"></li>
+      <li class="flex items-center gap-2">
+        <span class="flex size-8 items-center justify-center rounded-full border-2 border-foreground text-numeral-sm text-foreground">2</span>
+        <span class="text-label uppercase text-foreground">Pricing</span>
+      </li>
+      <li class="h-px w-8 mx-2" style="background:var(--border);"></li>
+      <li class="flex items-center gap-2">
+        <span class="flex size-8 items-center justify-center rounded-full border-2 text-numeral-sm text-muted-foreground" style="border-color:var(--input);">3</span>
+        <span class="text-label uppercase text-muted-foreground">Review</span>
+      </li>
+    </ol>
+  </section>
+
+  <section class="demo-section">
+    <h2>Status timeline</h2>
+    <p class="note">Maps count-session state draft &rarr; in_progress &rarr; submitted &rarr; reviewed &rarr; closed. Current node is ringed in brand accent (means "you are here," not "this is good") — done is success green, upcoming is muted.</p>
+    <ol class="flex flex-col" style="max-width:320px;">
+      <li class="flex gap-3">
+        <div class="flex flex-col items-center">
+          <span class="size-3 rounded-full bg-success"></span>
+          <span class="w-px flex-1" style="background:var(--border);"></span>
+        </div>
+        <div class="pb-6">
+          <p class="text-row-subtitle font-semibold text-foreground">Draft created</p>
+          <p class="text-caption text-muted-foreground">Jul 18, 2026</p>
+        </div>
+      </li>
+      <li class="flex gap-3">
+        <div class="flex flex-col items-center">
+          <span class="size-3 rounded-full border-2 border-accent bg-background"></span>
+          <span class="w-px flex-1" style="background:var(--border);"></span>
+        </div>
+        <div class="pb-6">
+          <p class="text-row-subtitle font-semibold text-foreground">In progress</p>
+          <p class="text-caption text-muted-foreground">Started Jul 25, 2026</p>
+        </div>
+      </li>
+      <li class="flex gap-3">
+        <div class="flex flex-col items-center">
+          <span class="size-3 rounded-full border-2 bg-background" style="border-color:var(--input);"></span>
+        </div>
+        <div>
+          <p class="text-row-subtitle text-muted-foreground">Closed</p>
+        </div>
+      </li>
+    </ol>
+  </section>
+
+  <section class="demo-section">
+    <h2>Bottom tab bar</h2>
+    <div class="demo-card-wrap" style="width:420px;">
+      <nav class="grid grid-cols-4 border-t bg-background" aria-label="Primary">
+        <a href="#" aria-current="page" class="flex flex-col items-center justify-center gap-1 min-h-tap-min text-foreground" style="padding:0.5rem 0; text-decoration:none;">
+          <svg class="size-6" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3 3 10v11h6v-6h6v6h6V10z"/></svg>
+          <span class="text-label font-semibold">Count</span>
+        </a>
+        <a href="#" class="flex flex-col items-center justify-center gap-1 min-h-tap-min text-muted-foreground" style="padding:0.5rem 0; text-decoration:none;">
+          <svg class="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round"/></svg>
+          <span class="text-label">Catalog</span>
+        </a>
+        <a href="#" class="flex flex-col items-center justify-center gap-1 min-h-tap-min text-muted-foreground" style="padding:0.5rem 0; text-decoration:none;">
+          <svg class="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 20V10M12 20V4M20 20v-7" stroke-linecap="round"/></svg>
+          <span class="text-label">Reports</span>
+        </a>
+        <a href="#" class="flex flex-col items-center justify-center gap-1 min-h-tap-min text-muted-foreground" style="padding:0.5rem 0; text-decoration:none;">
+          <svg class="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><circle cx="12" cy="8" r="3.25"/><path d="M5 20c1-3.5 4-5.5 7-5.5s6 2 7 5.5" stroke-linecap="round"/></svg>
+          <span class="text-label">Account</span>
+        </a>
+      </nav>
+    </div>
+  </section>
+
+  <section class="demo-section">
+    <h2>Form field</h2>
+    <div class="demo-card-wrap">
+      <div class="flex flex-col gap-1_5">
+        <label for="upc-demo" class="text-label uppercase text-foreground" style="margin-bottom:0.375rem;">Barcode / UPC</label>
+        <input id="upc-demo" class="min-h-tap-min rounded-md bg-card px-3 text-body text-foreground" style="border:1px solid var(--input);" placeholder="0 12345 67890 1" />
+      </div>
+      <div class="grid grid-cols-2 gap-3 mt-4">
+        <div class="flex flex-col gap-1_5">
+          <label for="case-size" class="text-label uppercase text-foreground" style="margin-bottom:0.375rem;">Case size</label>
+          <input id="case-size" class="min-h-tap-min rounded-md bg-card px-3 text-body text-foreground" style="border:1px solid var(--input);" placeholder="12" />
+        </div>
+        <div class="flex flex-col gap-1_5">
+          <label for="case-cost" class="text-label uppercase text-foreground" style="margin-bottom:0.375rem;">Case cost</label>
+          <input id="case-cost" class="min-h-tap-min rounded-md bg-card px-3 text-body text-foreground" style="border:1px solid var(--input);" placeholder="$0.00" />
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+  var toggle = document.getElementById('theme-toggle');
+  var label = document.getElementById('theme-toggle-label');
+  var html = document.documentElement;
+
+  function applyTheme(dark) {
+    html.classList.toggle('dark', dark);
+    toggle.setAttribute('aria-pressed', String(dark));
+    label.textContent = dark ? 'Switch to light (back office)' : 'Switch to dark (counting app)';
+  }
+
+  // Dark is the product default — starts dark on load, matching the
+  // counting route's forced .dark class described in docs/design-system.md §1.
+  applyTheme(true);
+
+  toggle.addEventListener('click', function () {
+    applyTheme(!html.classList.contains('dark'));
+  });
+</script>
+
+</body>
+</html>

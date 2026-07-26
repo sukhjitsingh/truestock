@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Handlebar — Fill Level (tenths) (prototype)</title>
+<style>
+  :root{
+    --background:#0B0B0C;--foreground:#F5F5F4;--card:#17181A;--card-foreground:#F5F5F4;
+    --muted:#131315;--muted-foreground:#A8A8A5;--primary:#F5F5F4;--primary-foreground:#0A0A0A;
+    --secondary:#1E1E21;--secondary-foreground:#F5F5F4;--accent:#60A5FA;--accent-foreground:#0A0A0A;
+    --destructive:#D33039;--destructive-foreground:#FFFFFF;--border:#232326;--input:#6B6B6B;--ring:#60A5FA;
+    --header:#121317;--header-foreground:#F5F5F4;
+    --success:#6FCF8E;--success-bg:#14301F;--warning:#F0B429;--warning-bg:#3A2A10;--negative:#F0718A;--negative-bg:#3A1620;
+    --radius-sm:12px;--radius-md:14px;--radius-lg:16px;--radius-xl:20px;
+    --card-gap:12px;--card-pad:16px;--bar-pad:16px;--section-gap:24px;--tap-min:44px;--tap-primary:56px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{background:#050506;color:var(--foreground);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+    font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;}
+  :focus-visible{outline:2px solid var(--ring);outline-offset:2px;}
+  button{cursor:pointer;font-family:inherit;}
+  a{color:inherit;text-decoration:none;}
+
+  .proto-bar{max-width:390px;margin:0 auto;padding:10px 12px;border:1px dashed #3a3a3f;border-bottom:none;
+    background:#111114;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8a8a90;display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+  .proto-bar b{color:#c9c9cf;}
+  .proto-nav a{padding:4px 8px;border:1px solid #3a3a3f;border-radius:8px;color:#c9c9cf;}
+  .proto-nav a:hover{background:#1c1c20;}
+  .proto-controls{max-width:390px;margin:0 auto;padding:12px;border:1px dashed #3a3a3f;border-top:none;border-bottom:none;
+    background:#0d0d10;display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px;color:#a8a8ac;}
+  .proto-controls select{background:#1c1c20;color:#eee;border:1px solid #3a3a3f;border-radius:8px;padding:6px 8px;font-size:12px;}
+  .proto-controls button{background:#1c1c20;color:#eee;border:1px solid #3a3a3f;border-radius:8px;padding:8px 10px;font-size:12px;}
+  .proto-controls button.active{background:var(--accent);color:var(--accent-foreground);border-color:var(--accent);}
+  .proto-label{font-weight:600;color:#6f6f75;}
+  .proto-annotations{max-width:390px;margin:0 auto;padding:16px 14px;border:1px dashed #3a3a3f;background:#0d0d10;color:#b5b5ba;font-size:12.5px;line-height:1.6;}
+  .proto-annotations h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8a8a90;margin:0 0 10px;}
+  .proto-annotations h3{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#6f6f75;margin:16px 0 6px;}
+  .proto-annotations ul{margin:0;padding-left:18px;}
+  .proto-annotations li{margin-bottom:8px;}
+  .proto-annotations b{color:#e6e6ea;}
+
+  .app{max-width:390px;margin:0 auto;min-height:100vh;background:var(--background);position:relative;
+    border:1px solid var(--border);border-top:none;padding-bottom:110px;}
+
+  .text-numeral-lg{font-size:48px;font-weight:700;line-height:1;}
+  .text-header-title{font-size:28px;font-weight:600;line-height:1.15;}
+  .text-numeral-md{font-size:24px;font-weight:600;line-height:1.1;}
+  .text-row-title{font-size:18px;font-weight:600;line-height:1.3;}
+  .text-numeral-sm{font-size:17px;font-weight:600;line-height:1.2;}
+  .text-row-subtitle{font-size:15px;font-weight:400;line-height:1.4;color:var(--muted-foreground);}
+  .text-body{font-size:16px;font-weight:400;line-height:1.5;}
+  .text-screen-title{font-size:13px;font-weight:600;line-height:1.2;letter-spacing:.06em;text-transform:uppercase;}
+  .text-caption{font-size:13px;font-weight:400;line-height:1.4;color:var(--muted-foreground);}
+  .text-label{font-size:11px;font-weight:600;line-height:1.2;letter-spacing:.06em;text-transform:uppercase;}
+
+  /* detail header */
+  .detail-header{border-radius:0 0 var(--radius-xl) var(--radius-xl);background:var(--header);color:var(--header-foreground);
+    padding:20px var(--bar-pad) 24px;}
+  .icon-btn{width:44px;height:44px;min-width:44px;display:flex;align-items:center;justify-content:center;
+    border-radius:999px;border:1px solid rgba(245,245,244,.2);background:transparent;color:inherit;}
+  .header-row{display:flex;align-items:center;justify-content:space-between;}
+  .header-pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
+  .pill-outline{display:inline-flex;align-items:center;border-radius:999px;padding:4px 12px;font-size:11px;font-weight:600;
+    letter-spacing:.06em;text-transform:uppercase;border:1px solid rgba(245,245,244,.25);color:var(--header-foreground);}
+  .pill-accent{display:inline-flex;align-items:center;border-radius:999px;padding:4px 12px;font-size:11px;font-weight:600;
+    letter-spacing:.06em;text-transform:uppercase;background:rgba(96,165,250,.18);color:var(--accent);}
+
+  .section{padding:20px var(--bar-pad) 0;}
+  .section + .section{margin-top:var(--section-gap);}
+  .section-label{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px;}
+
+  /* the current-entry editor */
+  .editor{border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);padding:var(--card-pad);}
+  .editor-value{text-align:center;padding:4px 0 16px;}
+  .editor-value .big{color:var(--foreground);}
+  .editor-value .sub{color:var(--muted-foreground);margin-top:2px;}
+
+  .gauge-wrap{display:flex;gap:10px;align-items:stretch;}
+  .gauge{position:relative;flex:1;height:220px;border-radius:var(--radius-md);border:1px solid var(--input);
+    background:var(--muted);overflow:hidden;touch-action:none;}
+  .gauge-fill{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(180deg,var(--accent),#3b82f6);transition:height .12s ease;}
+  .gauge-grid{position:absolute;inset:0;display:flex;flex-direction:column;}
+  .gauge-grid div{flex:1;border-top:1px solid rgba(245,245,244,.08);}
+  .gauge-grid div:first-child{border-top:none;}
+  .gauge-ticks{display:flex;flex-direction:column;justify-content:space-between;text-align:right;padding:2px 0;
+    color:var(--muted-foreground);font-size:11px;width:34px;}
+
+  .quick-row{display:flex;gap:10px;margin-top:14px;}
+  .quick-btn{flex:1;min-height:var(--tap-primary);border-radius:var(--radius-md);border:1px solid var(--input);
+    background:var(--secondary);color:var(--foreground);font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;}
+  .quick-btn.active{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary);}
+
+  .commit-row{display:flex;gap:10px;margin-top:14px;}
+  .btn{display:flex;align-items:center;justify-content:center;border-radius:var(--radius-md);font-size:12px;font-weight:600;
+    letter-spacing:.06em;text-transform:uppercase;min-height:var(--tap-primary);border:1px solid transparent;flex:1;}
+  .btn-primary{background:var(--primary);color:var(--primary-foreground);}
+  .btn-outline{background:transparent;border-color:var(--input);color:var(--foreground);}
+  .btn-destructive{background:transparent;border-color:var(--destructive);color:var(--destructive);}
+
+  /* chip list of bottles already on this line */
+  .bottle-list{display:flex;flex-direction:column;gap:10px;}
+  .bottle-chip{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:56px;
+    border-radius:var(--radius-lg);border:1px solid var(--border);background:var(--card);padding:0 var(--card-pad);}
+  .bottle-chip.active{border-color:var(--accent);}
+  .bottle-chip .left{display:flex;align-items:center;gap:12px;flex:1;min-width:0;background:none;border:0;color:inherit;
+    text-align:left;min-height:56px;}
+  .bottle-chip .num{width:36px;height:36px;border-radius:999px;background:var(--muted);color:var(--muted-foreground);
+    display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0;}
+  .bottle-chip .fill-badge{font-size:17px;font-weight:600;}
+  .bottle-chip .remove-x{width:44px;height:44px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+    color:var(--muted-foreground);background:transparent;border:0;border-radius:999px;}
+  .bottle-chip .remove-x:hover{color:var(--destructive);}
+
+  .totals-row{display:flex;align-items:baseline;justify-content:space-between;padding:14px 0 4px;border-top:1px solid var(--border);margin-top:14px;}
+
+  .bottom-bar{position:fixed;left:0;right:0;bottom:0;max-width:390px;margin:0 auto;display:flex;gap:12px;
+    border-top:1px solid var(--border);background:var(--background);padding:var(--bar-pad) var(--bar-pad) calc(var(--bar-pad) + env(safe-area-inset-bottom));z-index:40;}
+  .bottom-bar .btn{flex-direction:column;gap:2px;}
+
+  svg{display:block;}
+</style>
+</head>
+<body>
+
+<div class="proto-bar">
+  <span class="proto-nav">
+    <b>Prototype nav:</b>
+    <a href="count-scan.html">Scan</a>
+    <a href="count-fill-tenths.html">Fill tenths</a>
+    <a href="count-sealed-qty.html">Sealed qty</a>
+    <a href="scan-to-enroll.html">Scan-to-enroll</a>
+    <a href="count-session.html">Count session</a>
+  </span>
+</div>
+<div class="proto-controls">
+  <span class="proto-label">Demo controls (not shipped UI):</span>
+  <button id="modeBottle" class="active">Example: Bottle (Tanqueray)</button>
+  <button id="modeKeg">Example: Keg (Coors Light half barrel)</button>
+  <label>Role
+    <select id="roleSelect">
+      <option value="owner">Owner</option>
+      <option value="manager">Manager</option>
+      <option value="staff">Staff</option>
+    </select>
+  </label>
+</div>
+
+<div class="app">
+
+  <header class="detail-header">
+    <div class="header-row">
+      <button class="icon-btn" aria-label="Close">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+      <button class="icon-btn" aria-label="More actions">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+      </button>
+    </div>
+    <h1 class="text-header-title" id="productName" style="margin:14px 0 0">Tanqueray London Dry Gin</h1>
+    <div class="header-pills">
+      <span class="pill-outline" id="productSize">750ML</span>
+      <span class="pill-outline" id="productLoc">BACK BAR</span>
+      <span class="pill-accent">OPEN &middot; FILL ENTRY</span>
+    </div>
+  </header>
+
+  <div class="section">
+    <div class="section-label">
+      <span class="text-label" style="color:var(--muted-foreground)" id="editorLabel">SETTING FILL LEVEL — NEW BOTTLE</span>
+    </div>
+
+    <div class="editor">
+      <div class="editor-value">
+        <div class="text-numeral-lg big" id="bigValue">50%</div>
+        <div class="text-caption sub" id="subValue">0.5 of a bottle</div>
+      </div>
+
+      <div class="gauge-wrap">
+        <div class="gauge" id="gauge" role="slider" aria-label="Fill level in tenths" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" tabindex="0">
+          <div class="gauge-grid">
+            <div></div><div></div><div></div><div></div><div></div>
+            <div></div><div></div><div></div><div></div><div></div>
+          </div>
+          <div class="gauge-fill" id="gaugeFill" style="height:50%"></div>
+        </div>
+        <div class="gauge-ticks">
+          <span>100%</span><span>80%</span><span>60%</span><span>40%</span><span>20%</span><span>0%</span>
+        </div>
+      </div>
+
+      <div class="quick-row">
+        <button class="quick-btn" data-quick="1">Full</button>
+        <button class="quick-btn active" data-quick="0.5">Half</button>
+        <button class="quick-btn" data-quick="0">Empty</button>
+      </div>
+
+      <div class="commit-row" id="commitRow">
+        <button class="btn btn-primary" id="commitAdd">+ Add bottle to line</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">
+      <span class="text-label" style="color:var(--muted-foreground)">OPEN ON THIS LINE</span>
+      <span class="text-caption" id="bottleCountLabel">2 bottles</span>
+    </div>
+    <div class="bottle-list" id="bottleList"></div>
+    <div class="totals-row">
+      <span class="text-caption">Total open</span>
+      <span class="text-numeral-sm" id="totalsText">1.1 units</span>
+    </div>
+    <p class="text-caption" id="valueNote" style="margin-top:4px"></p>
+  </div>
+
+  <div class="bottom-bar">
+    <button class="btn btn-outline" style="min-height:var(--tap-primary)">Cancel</button>
+    <button class="btn btn-primary" id="saveBtn">
+      <span class="text-label" style="letter-spacing:.06em">Save fill levels</span>
+    </button>
+  </div>
+</div>
+
+<div class="proto-annotations">
+  <h2>Design decisions &amp; open questions — count-fill-tenths.html</h2>
+  <h3>Decisions</h3>
+  <ul>
+    <li>The tenths control is <b>one large continuous tap/drag surface</b> (the vertical gauge), not ten separate 35px-wide segment buttons. Ten independent buttons across a 358px content width would each be ~35px — under the 44px tap-min floor. A single big gauge with internal gridlines gives full tenth-resolution ("a way to hit every tenth") without shipping a sub-44px tap target; FULL/HALF/EMPTY stay as three explicit tap-primary (56px+) buttons for the fast common case.</li>
+    <li><b>Two different server actions are modeled as two different UI actions, on purpose:</b> "+ Add bottle to line" stages a brand-new observation and maps to `incrementCountLineAction`'s `newPartialFills` (an append); tapping an existing bottle chip switches to "Update / Remove" and maps to `editCountLineFillsAction`, which replaces the whole `partialFills` array. The UI has to know which one it's calling based on whether the bottle already exists server-side — see the report back for why this was awkward.</li>
+    <li>The keg example reuses the identical gauge/buttons/list mechanism as the bottle example — per CLAUDE.md, a tapped keg is "no special-casing," just `partial_fills` on a product with a bigger `size_ml`. The mL total shown for the keg (derived as fraction × size_ml) is display-only.</li>
+    <li>Unpriced (Coors Light keg has no cost on file) collapses the value row to one column exactly like the scan screen, with an owner-only "no cost on file" note — never `$0.00`.</li>
+  </ul>
+  <h3>Open questions for the owner</h3>
+  <ul>
+    <li>Should removing a bottle from `partial_fills` require a confirmation step? Right now it's a single tap on the X — fast, but a fat thumb could delete a real observation with no undo.</li>
+    <li>Is there ever a reason to see a specific bottle's fill *history* (was it 0.3 an hour ago, corrected to 0.4 now)? `editCountLineFillsAction` doesn't currently write to the `count_line_write` ledger (see lib/domain/counts.ts's comment on that function) — so today a fill correction leaves no audit trail the way a quantity correction does. Worth deciding if that's acceptable before this ships.</li>
+  </ul>
+</div>
+
+<script>
+  // ---- two worked examples in one file: a bottle and a tapped keg. Both
+  // use the exact same tenths mechanism (spec §8's "no special-casing" for
+  // kegs) — only the header pills, sizeMl, and cost differ. ----
+  var examples = {
+    bottle: {
+      name: "Tanqueray London Dry Gin", size: "750ML", loc: "BACK BAR",
+      sizeMl: 750, unitCost: 18.50, fills: [0.3, 0.8]
+    },
+    keg: {
+      name: "Coors Light — Half Barrel", size: "58,674 ML", loc: "TAP 1",
+      sizeMl: 58674, unitCost: null, fills: [0.7]
+    }
+  };
+  var current = 'bottle';
+  var role = 'owner';
+  var draftValue = 0.5;
+  var activeIndex = null; // null = staging a brand-new bottle observation
+
+  var gauge = document.getElementById('gauge');
+  var gaugeFill = document.getElementById('gaugeFill');
+  var bigValue = document.getElementById('bigValue');
+  var subValue = document.getElementById('subValue');
+  var editorLabel = document.getElementById('editorLabel');
+  var commitRow = document.getElementById('commitRow');
+  var bottleList = document.getElementById('bottleList');
+  var bottleCountLabel = document.getElementById('bottleCountLabel');
+  var totalsText = document.getElementById('totalsText');
+  var valueNote = document.getElementById('valueNote');
+  var saveBtn = document.getElementById('saveBtn');
+
+  function setDraft(v){
+    draftValue = Math.round(v*10)/10;
+    gaugeFill.style.height = (draftValue*100) + '%';
+    bigValue.textContent = Math.round(draftValue*100) + '%';
+    subValue.textContent = draftValue.toFixed(1) + ' of a bottle';
+    gauge.setAttribute('aria-valuenow', Math.round(draftValue*100));
+    document.querySelectorAll('.quick-btn').forEach(function(b){
+      b.classList.toggle('active', parseFloat(b.dataset.quick) === draftValue);
+    });
+  }
+
+  function gaugePointToValue(clientY){
+    var rect = gauge.getBoundingClientRect();
+    var rel = 1 - (clientY - rect.top) / rect.height;
+    rel = Math.min(1, Math.max(0, rel));
+    return Math.round(rel*10)/10;
+  }
+  gauge.addEventListener('click', function(e){ setDraft(gaugePointToValue(e.clientY)); });
+  gauge.addEventListener('keydown', function(e){
+    if (e.key === 'ArrowUp') { setDraft(draftValue + 0.1); e.preventDefault(); }
+    if (e.key === 'ArrowDown') { setDraft(draftValue - 0.1); e.preventDefault(); }
+  });
+  document.querySelectorAll('.quick-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){ setDraft(parseFloat(btn.dataset.quick)); });
+  });
+
+  function renderCommitRow(){
+    if (activeIndex === null){
+      editorLabel.textContent = 'SETTING FILL LEVEL — NEW BOTTLE';
+      commitRow.innerHTML = '<button class="btn btn-primary" id="commitAdd">+ Add bottle to line</button>';
+      document.getElementById('commitAdd').addEventListener('click', function(){
+        var ex = examples[current];
+        ex.fills.push(draftValue);
+        renderBottleList();
+        setDraft(0.5);
+      });
+    } else {
+      editorLabel.textContent = 'EDITING BOTTLE #' + (activeIndex+1);
+      commitRow.innerHTML =
+        '<button class="btn btn-outline btn-destructive" id="commitRemove">Remove</button>' +
+        '<button class="btn btn-primary" id="commitUpdate">Update bottle</button>';
+      document.getElementById('commitUpdate').addEventListener('click', function(){
+        examples[current].fills[activeIndex] = draftValue;
+        activeIndex = null;
+        renderBottleList();
+        setDraft(0.5);
+        renderCommitRow();
+      });
+      document.getElementById('commitRemove').addEventListener('click', function(){
+        examples[current].fills.splice(activeIndex, 1);
+        activeIndex = null;
+        renderBottleList();
+        setDraft(0.5);
+        renderCommitRow();
+      });
+    }
+  }
+
+  function renderBottleList(){
+    var ex = examples[current];
+    bottleList.innerHTML = '';
+    ex.fills.forEach(function(f, i){
+      var row = document.createElement('div');
+      row.className = 'bottle-chip' + (activeIndex === i ? ' active' : '');
+      row.innerHTML =
+        '<button class="left" data-i="' + i + '">' +
+          '<span class="num">' + (i+1) + '</span>' +
+          '<span class="fill-badge">' + Math.round(f*100) + '% full</span>' +
+        '</button>' +
+        '<button class="remove-x" aria-label="Remove bottle ' + (i+1) + '" data-i="' + i + '">' +
+          '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>' +
+        '</button>';
+      bottleList.appendChild(row);
+    });
+    bottleList.querySelectorAll('.left').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        activeIndex = parseInt(btn.dataset.i, 10);
+        setDraft(ex.fills[activeIndex]);
+        renderCommitRow();
+        renderBottleList();
+      });
+    });
+    bottleList.querySelectorAll('.remove-x').forEach(function(btn){
+      btn.addEventListener('click', function(e){
+        e.stopPropagation();
+        var i = parseInt(btn.dataset.i, 10);
+        ex.fills.splice(i, 1);
+        if (activeIndex === i) { activeIndex = null; setDraft(0.5); renderCommitRow(); }
+        renderBottleList();
+      });
+    });
+
+    var noun = (current === 'keg') ? (ex.fills.length === 1 ? 'keg' : 'kegs') : (ex.fills.length === 1 ? 'bottle' : 'bottles');
+    bottleCountLabel.textContent = ex.fills.length + ' ' + noun;
+    var totalUnits = ex.fills.reduce(function(a,b){ return a+b; }, 0);
+    var mlNote = current === 'keg' ? (' ≈ ' + Math.round(totalUnits*ex.sizeMl).toLocaleString() + ' mL') : '';
+    totalsText.textContent = totalUnits.toFixed(1) + ' units' + mlNote;
+
+    if (ex.unitCost == null){
+      valueNote.textContent = 'No cost on file — excluded from valuation';
+      valueNote.style.display = (role === 'owner') ? 'block' : 'none';
+      updateSaveButton(null);
+    } else if (role === 'owner') {
+      var val = totalUnits * ex.unitCost;
+      valueNote.style.display = 'none';
+      updateSaveButton(val);
+    } else {
+      valueNote.style.display = 'none';
+      updateSaveButton(undefined); // undefined = role-gated absence, not $0
+    }
+  }
+
+  // Mirrors design-system.md §8: the button is single-line unless a value
+  // is genuinely present for this viewer — never a blank second line.
+  function updateSaveButton(value){
+    if (typeof value === 'number'){
+      saveBtn.innerHTML = '<span class="text-label">Save fill levels</span><span class="text-numeral-sm tabular">$' + value.toFixed(2) + '</span>';
+    } else {
+      saveBtn.innerHTML = '<span class="text-label">Save fill levels</span>';
+    }
+  }
+
+  function loadExample(name){
+    current = name;
+    activeIndex = null;
+    var ex = examples[name];
+    document.getElementById('productName').textContent = ex.name;
+    document.getElementById('productSize').textContent = ex.size;
+    document.getElementById('productLoc').textContent = ex.loc;
+    setDraft(0.5);
+    renderCommitRow();
+    renderBottleList();
+  }
+
+  document.getElementById('modeBottle').addEventListener('click', function(){
+    this.classList.add('active'); document.getElementById('modeKeg').classList.remove('active');
+    loadExample('bottle');
+  });
+  document.getElementById('modeKeg').addEventListener('click', function(){
+    this.classList.add('active'); document.getElementById('modeBottle').classList.remove('active');
+    loadExample('keg');
+  });
+  document.getElementById('roleSelect').addEventListener('change', function(e){
+    role = e.target.value;
+    renderBottleList();
+  });
+
+  loadExample('bottle');
+</script>
+</body>
+</html>

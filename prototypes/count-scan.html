@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Handlebar — Count Scan (prototype)</title>
+<style>
+  :root{
+    --background:#0B0B0C;--foreground:#F5F5F4;--card:#17181A;--card-foreground:#F5F5F4;
+    --muted:#131315;--muted-foreground:#A8A8A5;--primary:#F5F5F4;--primary-foreground:#0A0A0A;
+    --secondary:#1E1E21;--secondary-foreground:#F5F5F4;--accent:#60A5FA;--accent-foreground:#0A0A0A;
+    --destructive:#D33039;--destructive-foreground:#FFFFFF;--border:#232326;--input:#6B6B6B;--ring:#60A5FA;
+    --header:#121317;--header-foreground:#F5F5F4;
+    --success:#6FCF8E;--success-bg:#14301F;--warning:#F0B429;--warning-bg:#3A2A10;--negative:#F0718A;--negative-bg:#3A1620;
+    --radius-sm:12px;--radius-md:14px;--radius-lg:16px;--radius-xl:20px;
+    --card-gap:12px;--card-pad:16px;--bar-pad:16px;--section-gap:24px;--tap-min:44px;--tap-primary:56px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:#050506;color:var(--foreground);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+    font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;
+  }
+  :focus-visible{outline:2px solid var(--ring);outline-offset:2px;}
+  button{cursor:pointer;font-family:inherit;}
+  a{color:inherit;text-decoration:none;}
+
+  /* ---- prototype chrome (NOT shipped UI) ---- */
+  .proto-bar{max-width:390px;margin:0 auto;padding:10px 12px;border:1px dashed #3a3a3f;border-bottom:none;
+    background:#111114;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8a8a90;
+    display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+  .proto-bar b{color:#c9c9cf;}
+  .proto-nav a{padding:4px 8px;border:1px solid #3a3a3f;border-radius:8px;color:#c9c9cf;}
+  .proto-nav a:hover{background:#1c1c20;}
+  .proto-controls{max-width:390px;margin:0 auto;padding:12px;border:1px dashed #3a3a3f;border-top:none;border-bottom:none;
+    background:#0d0d10;display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px;color:#a8a8ac;}
+  .proto-controls select{background:#1c1c20;color:#eee;border:1px solid #3a3a3f;border-radius:8px;padding:6px 8px;font-size:12px;}
+  .proto-controls button{background:#1c1c20;color:#eee;border:1px solid #3a3a3f;border-radius:8px;padding:8px 10px;font-size:12px;}
+  .proto-controls button:hover{background:#26262b;}
+  .proto-label{font-weight:600;color:#6f6f75;}
+  .proto-annotations{max-width:390px;margin:0 auto;padding:16px 14px;border:1px dashed #3a3a3f;background:#0d0d10;color:#b5b5ba;font-size:12.5px;line-height:1.6;}
+  .proto-annotations h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8a8a90;margin:0 0 10px;}
+  .proto-annotations h3{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#6f6f75;margin:16px 0 6px;}
+  .proto-annotations ul{margin:0;padding-left:18px;}
+  .proto-annotations li{margin-bottom:8px;}
+  .proto-annotations b{color:#e6e6ea;}
+
+  /* ---- app shell ---- */
+  .app{max-width:390px;margin:0 auto;min-height:100vh;background:var(--background);position:relative;
+    border:1px solid var(--border);border-top:none;padding-bottom:96px;}
+
+  /* type scale */
+  .text-numeral-lg{font-size:48px;font-weight:700;line-height:1;}
+  .text-header-title{font-size:28px;font-weight:600;line-height:1.15;}
+  .text-numeral-md{font-size:24px;font-weight:600;line-height:1.1;}
+  .text-row-title{font-size:18px;font-weight:600;line-height:1.3;}
+  .text-numeral-sm{font-size:17px;font-weight:600;line-height:1.2;}
+  .text-row-subtitle{font-size:15px;font-weight:400;line-height:1.4;color:var(--muted-foreground);}
+  .text-body{font-size:16px;font-weight:400;line-height:1.5;}
+  .text-screen-title{font-size:13px;font-weight:600;line-height:1.2;letter-spacing:.06em;text-transform:uppercase;}
+  .text-caption{font-size:13px;font-weight:400;line-height:1.4;color:var(--muted-foreground);}
+  .text-label{font-size:11px;font-weight:600;line-height:1.2;letter-spacing:.06em;text-transform:uppercase;}
+
+  /* top bar */
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px var(--bar-pad) 4px;}
+  .icon-btn{width:44px;height:44px;min-width:44px;display:flex;align-items:center;justify-content:center;
+    border-radius:999px;border:1px solid var(--border);background:var(--card);color:var(--foreground);}
+  .count-id{text-align:center;flex:1;}
+  .count-id .t1{font-size:13px;font-weight:600;letter-spacing:.04em;color:var(--foreground);}
+  .count-id .t2{font-size:11px;color:var(--muted-foreground);letter-spacing:.04em;}
+  .sync-pill{display:flex;align-items:center;gap:6px;height:32px;padding:0 10px;border-radius:999px;
+    border:1px solid var(--border);color:var(--muted-foreground);font-size:11px;font-weight:600;letter-spacing:.04em;white-space:nowrap;}
+  .sync-dot{width:6px;height:6px;border-radius:999px;background:var(--muted-foreground);}
+  .sync-dot.active{background:var(--accent);animation:pulse 1s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+
+  /* location row */
+  .loc-row{padding:8px var(--bar-pad) 12px;}
+  .loc-pill{display:inline-flex;align-items:center;gap:6px;min-height:var(--tap-min);padding:0 14px;
+    border-radius:999px;border:1px solid var(--input);background:var(--card);color:var(--foreground);
+    font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;}
+
+  /* section label */
+  .section-label{padding:4px var(--bar-pad) 8px;display:flex;align-items:baseline;justify-content:space-between;}
+
+  /* card row */
+  .lines{display:flex;flex-direction:column;gap:var(--card-gap);padding:0 var(--bar-pad) 20px;}
+  .card-row{display:flex;align-items:flex-start;gap:12px;border-radius:var(--radius-lg);
+    border:1px solid var(--border);background:var(--card);padding:var(--card-pad);
+    transition:background-color .5s ease, border-color .5s ease, transform .2s ease;}
+  .card-row.flash-new{border-color:var(--success);background:var(--success-bg);}
+  .card-row.flash-dup{transform:scale(1.02);border-color:var(--accent);}
+  .card-glyph{display:flex;flex-shrink:0;align-items:center;justify-content:center;width:64px;height:64px;
+    border-radius:var(--radius-lg);background:var(--muted);color:var(--muted-foreground);font-size:20px;font-weight:700;letter-spacing:.02em;}
+  .row-body{min-width:0;flex:1;}
+  .row-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;}
+  .row-top h3{margin:0;}
+  .row-top .chev{color:var(--muted-foreground);flex-shrink:0;margin-top:2px;}
+  .row-sub{margin:2px 0 0;}
+  .row-badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+  .pill{display:inline-flex;align-items:center;border-radius:999px;padding:3px 10px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;}
+  .pill-success{background:var(--success-bg);color:var(--success);}
+  .pill-warning{background:var(--warning-bg);color:var(--warning);}
+  .pill-accent{background:rgba(96,165,250,.15);color:var(--accent);}
+  .qty-value{margin-top:8px;display:grid;gap:8px;align-items:baseline;}
+  .qty-value.has-value{grid-template-columns:1fr auto;}
+  .qty-value.no-value{grid-template-columns:1fr;}
+  .qty-value .qty{color:var(--card-foreground);}
+  .qty-value .val{color:var(--card-foreground);}
+  .no-cost-note{color:var(--muted-foreground);font-size:13px;margin-top:2px;}
+  .just-updated{display:none;align-items:center;gap:6px;margin-top:8px;color:var(--success);font-size:13px;font-weight:600;}
+  .just-updated.show{display:flex;animation:fadeout 2.2s ease forwards;}
+  @keyframes fadeout{0%{opacity:1;}70%{opacity:1;}100%{opacity:0;}}
+  .just-updated svg{width:14px;height:14px;}
+
+  /* bottom search+scan bar — pinned low for one-handed reach, per CLAUDE.md */
+  .bottom-bar{position:fixed;left:0;right:0;bottom:0;max-width:390px;margin:0 auto;
+    border-top:1px solid var(--border);background:var(--background);padding:12px var(--bar-pad) calc(12px + env(safe-area-inset-bottom));z-index:40;}
+  .search-scan{display:flex;align-items:center;gap:8px;height:var(--tap-primary);border-radius:var(--radius-md);
+    border:1px solid var(--input);background:var(--card);padding:0 12px 0 16px;}
+  .search-scan input{flex:1;min-width:0;background:transparent;border:0;color:var(--foreground);font-size:16px;}
+  .search-scan input:focus{outline:none;}
+  .search-scan input::placeholder{color:var(--muted-foreground);}
+  .search-scan .divider{width:1px;align-self:stretch;background:var(--border);margin:10px 2px;}
+  .scan-trigger{flex-shrink:0;width:var(--tap-primary);height:var(--tap-primary);display:flex;align-items:center;
+    justify-content:center;color:var(--accent-foreground);background:var(--accent);border:0;border-radius:var(--radius-md);}
+  .bottom-hint{text-align:center;color:var(--muted-foreground);font-size:11px;margin-top:6px;letter-spacing:.02em;}
+
+  /* location sheet */
+  .backdrop{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;display:none;}
+  .backdrop.open{display:block;}
+  .sheet{position:fixed;left:0;right:0;bottom:0;max-width:390px;margin:0 auto;background:var(--card);
+    border-top:1px solid var(--border);border-radius:var(--radius-xl) var(--radius-xl) 0 0;z-index:51;
+    padding:8px var(--bar-pad) calc(16px + env(safe-area-inset-bottom));transform:translateY(100%);transition:transform .25s ease;}
+  .sheet.open{transform:translateY(0);}
+  .sheet-head{display:flex;align-items:center;justify-content:space-between;padding:8px 0 12px;}
+  .sheet-list{display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto;}
+  .sheet-item{display:flex;align-items:center;justify-content:space-between;min-height:var(--tap-min);
+    padding:0 12px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--background);color:var(--foreground);font-size:16px;}
+  .sheet-item.active{border-color:var(--accent);color:var(--accent);}
+  svg{display:block;}
+</style>
+</head>
+<body>
+
+<div class="proto-bar">
+  <span class="proto-nav">
+    <b>Prototype nav:</b>
+    <a href="count-scan.html">Scan</a>
+    <a href="count-fill-tenths.html">Fill tenths</a>
+    <a href="count-sealed-qty.html">Sealed qty</a>
+    <a href="scan-to-enroll.html">Scan-to-enroll</a>
+    <a href="count-session.html">Count session</a>
+  </span>
+</div>
+<div class="proto-controls">
+  <span class="proto-label">Demo controls (not shipped UI):</span>
+  <label>Role
+    <select id="roleSelect">
+      <option value="owner">Owner</option>
+      <option value="manager">Manager</option>
+      <option value="staff">Staff</option>
+    </select>
+  </label>
+  <button id="simNew">▶ Simulate scan: new product (Hendrick's Gin)</button>
+  <button id="simDup">▶ Simulate scan: duplicate (Tito's — already on this count)</button>
+</div>
+
+<div class="app">
+
+  <!-- top bar: identity + pending sync -->
+  <div class="topbar">
+    <button class="icon-btn" aria-label="Back to count list">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <div class="count-id">
+      <div class="t1">COUNT #1247 &middot; FULL</div>
+      <div class="t2">IN PROGRESS</div>
+    </div>
+    <div class="sync-pill" id="syncPill" aria-live="polite">
+      <span class="sync-dot" id="syncDot"></span>
+      <span id="syncText">ALL SYNCED</span>
+    </div>
+  </div>
+
+  <!-- location context -->
+  <div class="loc-row">
+    <button class="loc-pill" id="locBtn" aria-haspopup="true" aria-expanded="false">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 21s7-7.2 7-12a7 7 0 10-14 0c0 4.8 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>
+      <span id="locName">Back Bar</span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+  </div>
+
+  <div class="section-label">
+    <span class="text-label" style="color:var(--muted-foreground)">JUST COUNTED</span>
+    <span class="text-caption" id="lineCountLabel">6 lines this count</span>
+  </div>
+
+  <!-- running list, most recent first -->
+  <div class="lines" id="lineList">
+
+    <article class="card-row" id="line-hendricks" style="display:none">
+      <div class="card-glyph" aria-hidden="true">SP</div>
+      <div class="row-body">
+        <div class="row-top">
+          <h3 class="text-row-title">Hendrick's Gin</h3>
+          <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+        </div>
+        <p class="text-row-subtitle row-sub">750ml &middot; Back Bar</p>
+        <div class="qty-value has-value" data-money-row>
+          <span class="text-numeral-sm qty">1 ea</span>
+          <span class="text-numeral-sm val tabular" data-cost="24.00">$24.00</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="card-row" id="line-titos">
+      <div class="card-glyph" aria-hidden="true">SP</div>
+      <div class="row-body">
+        <div class="row-top">
+          <h3 class="text-row-title">Tito's Handmade Vodka</h3>
+          <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+        </div>
+        <p class="text-row-subtitle row-sub">750ml &middot; Back Bar</p>
+        <div class="qty-value has-value" data-money-row>
+          <span class="text-numeral-sm qty" id="titosQty">4 ea</span>
+          <span class="text-numeral-sm val tabular" data-cost="63.96">$63.96</span>
+        </div>
+        <div class="just-updated" id="titosUpdated">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+          Already on this count — updated, not duplicated
+        </div>
+      </div>
+    </article>
+
+    <article class="card-row">
+      <div class="card-glyph" aria-hidden="true">SP</div>
+      <div class="row-body">
+        <div class="row-top">
+          <h3 class="text-row-title">Jameson Irish Whiskey</h3>
+          <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+        </div>
+        <p class="text-row-subtitle row-sub">750ml &middot; Back Bar</p>
+        <div class="qty-value has-value" data-money-row>
+          <span class="text-numeral-sm qty">1 case, 2 ea</span>
+          <span class="text-numeral-sm val tabular" data-cost="315.00">$315.00</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="card-row">
+      <div class="card-glyph" aria-hidden="true">SP</div>
+      <div class="row-body">
+        <div class="row-top">
+          <h3 class="text-row-title">Casamigos Blanco</h3>
+          <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+        </div>
+        <p class="text-row-subtitle row-sub">750ml &middot; Back Bar</p>
+        <!-- unpriced line: genuinely no cost on file yet — normal, not an error -->
+        <div class="qty-value no-value" data-money-row data-unpriced="true">
+          <span class="text-numeral-sm qty">2 ea</span>
+        </div>
+        <p class="no-cost-note" data-unpriced-note>No cost on file — excluded from valuation</p>
+      </div>
+    </article>
+
+    <a href="count-fill-tenths.html?product=tanqueray" style="display:block">
+    <article class="card-row">
+      <div class="card-glyph" aria-hidden="true">SP</div>
+      <div class="row-body">
+        <div class="row-top">
+          <h3 class="text-row-title">Tanqueray London Dry Gin</h3>
+          <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+        </div>
+        <p class="text-row-subtitle row-sub">750ml &middot; Back Bar</p>
+        <div class="row-badges"><span class="pill pill-accent">1 open bottle &middot; 60% full</span></div>
+        <div class="qty-value has-value" data-money-row>
+          <span class="text-numeral-sm qty">0.6 units</span>
+          <span class="text-numeral-sm val tabular" data-cost="11.10">$11.10</span>
+        </div>
+      </div>
+    </article>
+    </a>
+
+    <a href="count-fill-tenths.html?product=coors-keg" style="display:block">
+    <article class="card-row">
+      <div class="card-glyph" aria-hidden="true">KG</div>
+      <div class="row-body">
+        <div class="row-top">
+          <h3 class="text-row-title">Coors Light — Half Barrel</h3>
+          <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+        </div>
+        <p class="text-row-subtitle row-sub">Keg &middot; Tap 1</p>
+        <div class="row-badges"><span class="pill pill-accent">Tapped &middot; 70% full</span></div>
+        <div class="qty-value no-value" data-money-row data-unpriced="true">
+          <span class="text-numeral-sm qty">0.7 units &middot; ~41,072 mL</span>
+        </div>
+        <p class="no-cost-note" data-unpriced-note>No cost on file — excluded from valuation</p>
+      </div>
+    </article>
+    </a>
+
+  </div>
+
+  <!-- bottom action: search + scan, pinned low for one-handed reach -->
+  <div class="bottom-bar">
+    <div class="search-scan">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="color:var(--muted-foreground);flex-shrink:0;"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input type="search" placeholder="Search products" aria-label="Search products" />
+      <div class="divider" aria-hidden="true"></div>
+      <button class="scan-trigger" aria-label="Scan barcode" id="scanTrigger">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 6v12M11 6v12M15 6v12"/></svg>
+      </button>
+    </div>
+    <p class="bottom-hint">Scan is always paired with search — damaged labels and house infusions need the picker.</p>
+  </div>
+
+</div>
+
+<!-- location picker sheet -->
+<div class="backdrop" id="backdrop"></div>
+<div class="sheet" id="locSheet" role="dialog" aria-label="Select location">
+  <div class="sheet-head">
+    <span class="text-screen-title">Select location</span>
+    <button class="icon-btn" id="sheetClose" aria-label="Close location picker">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="sheet-list" id="sheetList">
+    <button class="sheet-item active" data-loc="Back Bar">Back Bar</button>
+    <button class="sheet-item" data-loc="Storeroom">Storeroom</button>
+    <button class="sheet-item" data-loc="Walk-in Cooler">Walk-in Cooler</button>
+    <button class="sheet-item" data-loc="Tap 1">Tap 1</button>
+    <button class="sheet-item" data-loc="Tap 2">Tap 2</button>
+    <button class="sheet-item" data-loc="Tap 3">Tap 3</button>
+  </div>
+</div>
+
+<div class="proto-annotations">
+  <h2>Design decisions &amp; open questions — count-scan.html</h2>
+  <h3>Decisions</h3>
+  <ul>
+    <li>The search+scan field is pinned at the <b>bottom</b> of the screen, not the top the reference/design-system component shows it at by default. CLAUDE.md's "primary actions sit in the lower half" rule outranks the reference's placement for this specific screen — scanning is the single most-repeated action in the whole app, so it gets the thumb-reachable position. The bottom tab bar is dropped entirely on this screen since an active count is a focused session, not a place to jump to Catalog/Reports mid-scan.</li>
+    <li><b>Invariant 3 is made visible, not just correct.</b> "Simulate scan: duplicate" pulses the existing Tito's row, bumps its quantity, and shows an ephemeral "already on this count — updated" badge, rather than silently updating a number nobody notices changed. This was called out as the #1 source of user distrust, so it gets its own explicit confirmation rather than folding into the ordinary optimistic-insert flash.</li>
+    <li>The ambient "N pending / all synced" pill stays a neutral muted color always — it is deliberately <b>not</b> colored amber/green, because docs/design-system.md §3 reserves green/amber/red exclusively for stock and count-session status, and sync/connectivity state is neither. The one-off "just saved" flash on a row briefly uses success-green, which is defensible because it's confirming a completed write (the same "step completed" meaning §3 already sanctions), not decorating a persistent state.</li>
+    <li>Role toggle demonstrates the §8 contract literally: switching to manager/staff <b>removes the money `&lt;span&gt;` node from the DOM</b> and collapses the grid to one column via JS, rather than hiding it with CSS — mirroring "the field is undefined, not styled away."</li>
+    <li>Two lines (Tanqueray, Coors Light keg) link out to count-fill-tenths.html, showing how the scan screen hands off to the tenths editor for anything open/tapped.</li>
+    <li>Category glyphs are two-letter monograms (SP/KG) per divergence #4 — no product photography, no file storage in the MVP.</li>
+  </ul>
+  <h3>Open questions for the owner</h3>
+  <ul>
+    <li>Is a bottom sheet the right pattern for location switching mid-count, or should location be locked for the whole session (i.e., you open one count per location rather than switching within it)? The current count domain model takes `locationId` per line-write, so switching is technically supported — but switching often invites mis-scans into the wrong location if it's too easy to fat-finger.</li>
+    <li>Should the "already counted — updated" confirmation require an explicit tap to dismiss for the first few times a new staff member uses the app (a teaching moment), rather than always auto-fading after 2 seconds?</li>
+  </ul>
+</div>
+
+<script>
+  // ---- role-gated value rendering (mirrors docs/design-system.md §8) ----
+  // A "staff"/"manager" role means the server never sent unitCostAtCount /
+  // extendedValue at all (canSeeCost() is owner-only per lib/authz.ts) —
+  // so switching roles here actually REMOVES the value node and swaps the
+  // grid to a single column, rather than hiding it with CSS. This mirrors
+  // the real contract: the field is undefined, not styled away.
+  function applyRole(role){
+    document.querySelectorAll('[data-money-row]').forEach(function(row){
+      var valEl = row.querySelector('.val');
+      var cost = row.getAttribute('data-cost') || (valEl && valEl.getAttribute('data-cost'));
+      var unpriced = row.getAttribute('data-unpriced') === 'true';
+      var note = row.parentElement.querySelector('[data-unpriced-note]');
+
+      if (unpriced) {
+        // Genuinely no cost recorded — same one-column layout regardless of
+        // role, but the "why" caption only makes sense to someone who's
+        // allowed to think about cost at all.
+        row.classList.remove('has-value'); row.classList.add('no-value');
+        if (note) note.style.display = (role === 'owner') ? 'block' : 'none';
+        return;
+      }
+
+      if (role === 'owner') {
+        row.classList.add('has-value'); row.classList.remove('no-value');
+        if (!row.querySelector('.val') && row.dataset.costCache) {
+          var span = document.createElement('span');
+          span.className = 'text-numeral-sm val tabular';
+          span.textContent = '$' + row.dataset.costCache;
+          row.appendChild(span);
+        }
+      } else {
+        var existing = row.querySelector('.val');
+        if (existing) {
+          row.dataset.costCache = existing.getAttribute('data-cost');
+          existing.remove();
+        }
+        row.classList.remove('has-value'); row.classList.add('no-value');
+      }
+    });
+  }
+  document.getElementById('roleSelect').addEventListener('change', function(e){
+    applyRole(e.target.value);
+  });
+  applyRole('owner');
+
+  // ---- pending-writes sync indicator (spec §11: "12 lines pending") ----
+  var pending = 0;
+  function renderSync(){
+    var dot = document.getElementById('syncDot');
+    var txt = document.getElementById('syncText');
+    if (pending > 0){
+      dot.classList.add('active');
+      txt.textContent = pending + ' PENDING';
+    } else {
+      dot.classList.remove('active');
+      txt.textContent = 'ALL SYNCED';
+    }
+  }
+  function flashSaved(rowEl){
+    // Brief green confirmation that a write completed — success green is
+    // reserved for stock/count status per docs/design-system.md §3, but a
+    // one-off "this write is done" pulse is the same "step completed"
+    // meaning the rule sanctions, not decoration, and it self-clears.
+    rowEl.classList.add('flash-new');
+    setTimeout(function(){ rowEl.classList.remove('flash-new'); }, 900);
+  }
+
+  // ---- simulate: brand-new product scanned for the first time ----
+  document.getElementById('simNew').addEventListener('click', function(){
+    var row = document.getElementById('line-hendricks');
+    if (row.style.display !== 'none') return; // already shown once, demo is one-shot
+    row.style.display = 'flex';
+    pending++; renderSync();
+    applyRole(document.getElementById('roleSelect').value);
+    flashSaved(row);
+    document.getElementById('lineCountLabel').textContent = '7 lines this count';
+    setTimeout(function(){ pending = Math.max(0, pending - 1); renderSync(); }, 900);
+  });
+
+  // ---- simulate: scanning a bottle that's ALREADY on this count ----
+  // This is the invariant-3 demo: the existing line ticks up in place,
+  // nothing new is inserted.
+  var titosCount = 4;
+  document.getElementById('simDup').addEventListener('click', function(){
+    var row = document.getElementById('line-titos');
+    var qtyEl = document.getElementById('titosQty');
+    var valEl = row.querySelector('.val');
+    titosCount += 1;
+    qtyEl.textContent = titosCount + ' ea';
+    if (valEl) valEl.textContent = '$' + (titosCount * 15.99).toFixed(2);
+    row.dataset.cost = (titosCount * 15.99).toFixed(2);
+    row.classList.add('flash-dup');
+    pending++; renderSync();
+    setTimeout(function(){ row.classList.remove('flash-dup'); }, 500);
+    var badge = document.getElementById('titosUpdated');
+    badge.classList.remove('show'); void badge.offsetWidth; badge.classList.add('show');
+    setTimeout(function(){ pending = Math.max(0, pending - 1); renderSync(); }, 900);
+  });
+
+  // ---- location sheet ----
+  var locBtn = document.getElementById('locBtn');
+  var sheet = document.getElementById('locSheet');
+  var backdrop = document.getElementById('backdrop');
+  function openSheet(){ sheet.classList.add('open'); backdrop.classList.add('open'); locBtn.setAttribute('aria-expanded','true'); }
+  function closeSheet(){ sheet.classList.remove('open'); backdrop.classList.remove('open'); locBtn.setAttribute('aria-expanded','false'); }
+  locBtn.addEventListener('click', openSheet);
+  document.getElementById('sheetClose').addEventListener('click', closeSheet);
+  backdrop.addEventListener('click', closeSheet);
+  document.querySelectorAll('.sheet-item').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      document.querySelectorAll('.sheet-item').forEach(function(b){ b.classList.remove('active'); });
+      btn.classList.add('active');
+      document.getElementById('locName').textContent = btn.dataset.loc;
+      closeSheet();
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1440, initial-scale=1" />
+<title>Handlebar — Counts</title>
+<!--
+  Standalone back-office prototype. No build step, no network. Light theme
+  only. Designed at 1440px. See the annotation block at the bottom of this
+  file for design decisions and open questions.
+-->
+<style>
+  :root {
+    --radius: 1rem;
+    --background: #f7f7f5; --foreground: #111111;
+    --card: #ffffff; --card-foreground: #111111;
+    --muted: #efefec; --muted-foreground: #6b6b6b;
+    --primary: #0a0a0a; --primary-foreground: #ffffff;
+    --secondary: #efefec; --secondary-foreground: #111111;
+    --accent: #2563eb; --accent-foreground: #ffffff;
+    --destructive: #c4304f; --destructive-foreground: #ffffff;
+    --border: #e4e4e1; --input: #8c8c8c; --ring: #2563eb;
+    --success: #1f7a3d; --success-bg: #e4f5e6;
+    --warning: #92600a; --warning-bg: #fdf0dc;
+    --negative: #b8305a; --negative-bg: #fde8ec;
+    --radius-sm: calc(var(--radius) - 4px); --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius); --radius-xl: calc(var(--radius) + 4px);
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: var(--background); color: var(--foreground); font-family: var(--font-sans);
+    font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; min-width: 1280px; }
+  h1, h2, h3, p, ol, ul { margin: 0; padding: 0; list-style: none; }
+  button, input { font: inherit; color: inherit; }
+  button { cursor: pointer; background: none; border: none; }
+  svg { display: block; }
+  table { border-collapse: collapse; width: 100%; }
+
+  a, button, input, [tabindex] { outline-offset: 2px; }
+  a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+  .flex { display: flex; } .items-center { align-items: center; } .justify-between { justify-content: space-between; }
+  .gap-2 { gap: .5rem; } .gap-3 { gap: .75rem; } .mt-1 { margin-top: .25rem; } .mt-2 { margin-top: .5rem; }
+  .mb-3 { margin-bottom: .75rem; } .uppercase { text-transform: uppercase; }
+
+  .rounded-md { border-radius: var(--radius-md); } .rounded-lg { border-radius: var(--radius-lg); } .rounded-full { border-radius: 9999px; }
+  .border { border: 1px solid var(--border); }
+  .bg-card { background: var(--card); } .bg-muted { background: var(--muted); }
+  .text-foreground { color: var(--foreground); } .text-muted-foreground { color: var(--muted-foreground); }
+  .text-accent { color: var(--accent); }
+  .text-header-title { font-size: 1.75rem; line-height: 1.15; font-weight: 600; }
+  .text-caption { font-size: .8125rem; line-height: 1.4; }
+  .text-label { font-size: .6875rem; line-height: 1.2; font-weight: 600; letter-spacing: .06em; }
+  .tabular-nums { font-variant-numeric: tabular-nums; }
+
+  .app-shell { display: flex; min-height: 100vh; }
+  .rail { width: 64px; flex-shrink: 0; background: var(--card); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; align-items: center; padding: .75rem 0; gap: .5rem; }
+  .rail-create { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+    border-radius: var(--radius-md); background: var(--accent); color: var(--accent-foreground); margin-bottom: .5rem; }
+  .rail-item { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;
+    border-radius: var(--radius-md); color: var(--muted-foreground); text-decoration: none; }
+  .rail-item[aria-current="page"] { background: var(--card); border: 1px solid var(--border); color: var(--accent); }
+  .rail-spacer { flex: 1; }
+  .rail-expand { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: var(--muted-foreground); }
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .topbar { height: 60px; flex-shrink: 0; display: flex; align-items: center; gap: 1rem; padding: 0 1.5rem;
+    background: var(--card); border-bottom: 1px solid var(--border); }
+  .crumbs { display: flex; align-items: center; gap: .5rem; font-size: .875rem; }
+  .crumbs .workspace { font-weight: 600; } .crumbs .sep { color: var(--muted-foreground); } .crumbs .page { color: var(--muted-foreground); }
+  .avatar-tile { width: 34px; height: 34px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center;
+    background: var(--primary); color: var(--primary-foreground); font-size: .75rem; font-weight: 600; margin-left: auto; }
+
+  .content { flex: 1; padding: 1.5rem 1.5rem 4rem; }
+  .page-header { display: flex; align-items: center; gap: .75rem; margin-bottom: 1rem; }
+  .btn-primary { display: inline-flex; align-items: center; gap: .5rem; height: 36px; padding: 0 1rem; border-radius: var(--radius-md);
+    background: var(--primary); color: var(--primary-foreground); font-size: .8125rem; font-weight: 600; }
+
+  .role-toggle-wrap { margin-left: auto; display: flex; align-items: center; gap: .5rem; }
+  .role-toggle { display: inline-flex; border: 1px solid var(--input); border-radius: var(--radius-md); overflow: hidden; }
+  .role-toggle button { padding: .5rem .875rem; font-size: .75rem; font-weight: 600; color: var(--muted-foreground); }
+  .role-toggle button[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); }
+
+  .filter-bar { display: flex; align-items: center; gap: .5rem; margin-bottom: 1rem; }
+  .filter-pill { display: inline-flex; align-items: center; gap: .375rem; height: 36px; padding: 0 .75rem; border-radius: var(--radius-md);
+    font-size: .8125rem; font-weight: 500; border: 1px solid var(--input); background: var(--card); color: var(--foreground); }
+  .filter-pill[data-applied="true"] { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+
+  .table-card { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--card); }
+  thead th { text-align: left; font-size: .75rem; font-weight: 600; color: var(--muted-foreground); background: var(--muted); padding: .625rem .875rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th.num, td.num { text-align: right; }
+  th .sort { color: var(--muted-foreground); font-weight: 400; margin-left: .25rem; cursor: pointer; }
+  tbody tr { height: 57px; border-bottom: 1px solid var(--border); }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: color-mix(in srgb, var(--muted) 55%, transparent); }
+  td { padding: 0 .875rem; font-size: .875rem; vertical-align: middle; }
+
+  .count-id { font-weight: 700; }
+  .count-id-num { color: var(--muted-foreground); font-weight: 400; }
+  .type-chip { display: inline-flex; align-items: center; padding: .1875rem .5rem; border-radius: var(--radius-sm); background: var(--muted); font-size: .75rem; }
+
+  .status-pill { display: inline-flex; align-items: center; gap: .3125rem; padding: .1875rem .625rem; border-radius: 9999px; font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .status-pill.draft { background: var(--muted); color: var(--muted-foreground); }
+  .status-pill.in_progress { background: var(--warning-bg); color: var(--warning); }
+  .status-pill.submitted { background: var(--warning-bg); color: var(--warning); }
+  .status-pill.reviewed { background: var(--warning-bg); color: var(--warning); }
+  .status-pill.closed { background: var(--success-bg); color: var(--success); }
+  .status-dot { width: 6px; height: 6px; border-radius: 9999px; background: currentColor; }
+
+  .person { display: flex; align-items: center; gap: .5rem; }
+  .person-dot { width: 22px; height: 22px; border-radius: 9999px; display: flex; align-items: center; justify-content: center; font-size: .625rem; font-weight: 700; color: #fff; flex-shrink: 0; }
+  .no-value { color: var(--muted-foreground); font-style: italic; font-size: .8125rem; }
+  .dash { color: var(--muted-foreground); }
+
+  .lock-note { display: inline-flex; align-items: center; gap: .3125rem; color: var(--muted-foreground); font-size: .8125rem; }
+  .action-link { color: var(--accent); font-size: .8125rem; font-weight: 600; text-decoration: none; }
+  .action-link:hover { text-decoration: underline; }
+
+  .role-note { display: none; }
+  .role-note[data-active="true"] { display: block; }
+
+  /* ---- prototype chrome (NOT shipped UI) — added at session close ---- */
+  .proto-chrome { position: relative; outline: 2px dashed #C8901A; outline-offset: 7px;
+                  border-radius: 8px; }
+  .proto-chrome::before { content: "PROTOTYPE ONLY \2014 NOT SHIPPED UI";
+                  position: absolute; top: -1.55rem; left: 0; white-space: nowrap;
+                  font-size: .5625rem; font-weight: 700; letter-spacing: .08em;
+                  color: #8A6206; }
+  </style>
+</head>
+<body>
+<div class="app-shell">
+  <nav class="rail" aria-label="Sections">
+    <button class="rail-create" aria-label="Create new">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+    </button>
+    <a class="rail-item" href="office-catalog.html" aria-label="Catalog">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round"/></svg>
+    </a>
+    <a class="rail-item" aria-current="page" href="office-counts-list.html" aria-label="Counts">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5" stroke-linecap="round"/></svg>
+    </a>
+    <a class="rail-item" href="office-reorder.html" aria-label="Reorder">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M3 3h2l2.4 12.4a2 2 0 0 0 2 1.6h7.2a2 2 0 0 0 2-1.6L20 8H6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/></svg>
+    </a>
+    <a class="rail-item" href="office-count-summary.html" aria-label="Reports">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 20V10M12 20V4M20 20v-7" stroke-linecap="round"/></svg>
+    </a>
+    <div class="rail-spacer"></div>
+    <button class="rail-expand" aria-label="Expand sidebar">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </nav>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="crumbs"><span class="workspace">Handlebar</span><span class="sep">/</span><span class="page">Counts</span></div>
+      <div class="avatar-tile" aria-hidden="true">JM</div>
+    </header>
+
+    <div class="content">
+      <div class="page-header">
+        <h1 class="text-header-title">Counts</h1>
+        <div class="role-toggle-wrap proto-chrome">
+          <span class="text-caption text-muted-foreground">Preview as</span>
+          <div class="role-toggle" role="group" aria-label="Preview role">
+            <button id="btn-owner" aria-pressed="true">Owner</button>
+            <button id="btn-manager" aria-pressed="false">Manager</button>
+          </div>
+        </div>
+        <button class="btn-primary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+          Start count
+        </button>
+      </div>
+
+      <p class="role-note text-caption text-muted-foreground mb-3" data-active="true" id="note-owner">Owner view — Total Value column present.</p>
+      <p class="role-note text-caption text-muted-foreground mb-3" id="note-manager">Manager view — the Total Value column is absent from this table's markup entirely, matching divergence B5 (staff never reach this screen at all — <code>countSummaryAction</code>/report actions require owner or manager).</p>
+
+      <div class="filter-bar">
+        <button class="filter-pill" data-applied="true" aria-pressed="true">All statuses</button>
+        <button class="filter-pill" aria-pressed="false">Full counts</button>
+        <button class="filter-pill" aria-pressed="false">Spot counts</button>
+        <button class="filter-pill" aria-pressed="false">Monthly close</button>
+      </div>
+
+      <div class="table-card">
+        <table>
+          <thead>
+            <tr id="thead-row">
+              <th>Count <span class="sort" aria-hidden="true">⇅</span></th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Opened by</th>
+              <th>Started <span class="sort" aria-hidden="true">⇅</span></th>
+              <th>Closed by</th>
+              <th>Closed <span class="sort" aria-hidden="true">⇅</span></th>
+              <th class="num role-block" data-active="true" id="th-value">Total value</th>
+              <th style="width:120px;"></th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  var counts = [
+    { id: 48, type: "Spot", status: "in_progress", openedBy: "Jordan M.", openedColor: "#2563eb", started: "Jul 25, 2026", closedBy: null, closed: null, value: null },
+    { id: 47, type: "Full", status: "closed", openedBy: "Jordan M.", openedColor: "#2563eb", started: "Jul 18, 2026", closedBy: "Alicia R.", closedColor: "#92600a", closed: "Jul 21, 2026", value: "$18,432.60" },
+    { id: 46, type: "Full", status: "closed", openedBy: "Alicia R.", openedColor: "#92600a", started: "Jul 11, 2026", closedBy: "Alicia R.", closedColor: "#92600a", closed: "Jul 14, 2026", value: "$17,312.20" },
+    { id: 45, type: "Monthly close", status: "reviewed", openedBy: "Jordan M.", openedColor: "#2563eb", started: "Jul 4, 2026", closedBy: null, closed: null, value: null },
+    { id: 44, type: "Spot", status: "submitted", openedBy: "Danny K.", openedColor: "#1f7a3d", started: "Jun 30, 2026", closedBy: null, closed: null, value: null },
+    { id: 43, type: "Full", status: "closed", openedBy: "Alicia R.", openedColor: "#92600a", started: "Jun 20, 2026", closedBy: "Alicia R.", closedColor: "#92600a", closed: "Jun 23, 2026", value: "$16,890.75" },
+    { id: 42, type: "Full", status: "draft", openedBy: "Jordan M.", openedColor: "#2563eb", started: "Jun 13, 2026", closedBy: null, closed: null, value: null },
+  ];
+
+  var statusLabel = { draft: "Draft", in_progress: "In progress", submitted: "Submitted", reviewed: "Reviewed", closed: "Closed" };
+
+  function initials(name) { return name.split(/\s+/).map(function (w) { return w[0]; }).slice(0, 2).join("").toUpperCase(); }
+
+  function personCell(name, color) {
+    if (!name) return '<span class="dash">—</span>';
+    return '<div class="person"><span class="person-dot" style="background:' + color + ';">' + initials(name) + '</span>' + name + '</div>';
+  }
+
+  function actionsCell(c) {
+    if (c.status === "closed") {
+      return '<span class="lock-note"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="5" y="10" width="14" height="9" rx="1.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3" stroke-linecap="round"/></svg>View only</span>';
+    }
+    var label = c.status === "draft" ? "Continue" : (c.status === "in_progress" ? "Continue" : "Review");
+    return '<a href="office-count-summary.html" class="action-link">' + label + ' →</a>';
+  }
+
+  function valueCell(c) {
+    if (c.value) return '<span class="tabular-nums" style="font-weight:600;">' + c.value + '</span>';
+    return '<span class="no-value">' + (c.status === "closed" ? "Not entered" : "Not valued yet") + '</span>';
+  }
+
+  function renderRow(c, ownerMode) {
+    var tr = '<tr>';
+    tr += '<td class="count-id"><span class="count-id-num">#</span>' + c.id + '</td>';
+    tr += '<td><span class="type-chip">' + c.type + '</span></td>';
+    tr += '<td><span class="status-pill ' + c.status + '"><span class="status-dot" aria-hidden="true"></span>' + statusLabel[c.status] + '</span></td>';
+    tr += '<td>' + personCell(c.openedBy, c.openedColor) + '</td>';
+    tr += '<td class="tabular-nums">' + c.started + '</td>';
+    tr += '<td>' + personCell(c.closedBy, c.closedColor) + '</td>';
+    tr += '<td class="tabular-nums">' + (c.closed ? c.closed : '<span class="dash">—</span>') + '</td>';
+    if (ownerMode) tr += '<td class="num">' + valueCell(c) + '</td>';
+    tr += '<td class="num">' + actionsCell(c) + '</td>';
+    tr += '</tr>';
+    return tr;
+  }
+
+  var tbody = document.getElementById("tbody");
+  var thValue = document.getElementById("th-value");
+  var btnOwner = document.getElementById("btn-owner");
+  var btnManager = document.getElementById("btn-manager");
+  var noteOwner = document.getElementById("note-owner");
+  var noteManager = document.getElementById("note-manager");
+
+  function render(ownerMode) {
+    tbody.innerHTML = counts.map(function (c) { return renderRow(c, ownerMode); }).join("");
+    thValue.style.display = ownerMode ? "" : "none";
+  }
+  render(true);
+
+  btnOwner.addEventListener("click", function () {
+    btnOwner.setAttribute("aria-pressed", "true"); btnManager.setAttribute("aria-pressed", "false");
+    noteOwner.setAttribute("data-active", "true"); noteManager.removeAttribute("data-active");
+    render(true);
+  });
+  btnManager.addEventListener("click", function () {
+    btnOwner.setAttribute("aria-pressed", "false"); btnManager.setAttribute("aria-pressed", "true");
+    noteManager.setAttribute("data-active", "true"); noteOwner.removeAttribute("data-active");
+    render(false);
+  });
+</script>
+
+<!-- =====================================================================
+     ANNOTATIONS — design decisions & open questions for the owner
+     ===================================================================== -->
+<div style="max-width:900px; margin:2rem auto 4rem; padding:0 1.5rem; font-size:.875rem; line-height:1.6; color:var(--muted-foreground);">
+  <h2 style="color:var(--foreground); font-size:1rem; font-weight:700; margin-bottom:.5rem;">Design decisions</h2>
+  <ul style="padding-left:1.25rem; list-style:disc;">
+    <li>Status pills map the five lifecycle states directly onto the three approved status colors: <code>draft</code> = neutral muted (not yet a stock/count status worth flagging), <code>in_progress</code>/<code>submitted</code>/<code>reviewed</code> = warning amber ("in progress / needs attention," an approved meaning per §3), <code>closed</code> = success green. No new color was invented for the five states.</li>
+    <li><strong>Closed rows show "View only" with a small lock glyph instead of any edit affordance</strong> — directly implementing invariant 1 (closed counts are immutable). Every other status gets a text link ("Continue" or "Review") instead, so the *absence* of that link, not a disabled/greyed one, is what communicates immutability.</li>
+    <li>Total Value column follows the same "structurally absent for manager" pattern as the catalog table — a second header cell and a second per-row branch, not a CSS-hidden column. It also reads "Not valued yet" (not "$0.00") for any non-closed count, since <code>count.total_value</code> is genuinely null until a count is reviewed/closed (db/schema.ts comment on <code>Count.totalValue</code>).</li>
+    <li>Opened-by/closed-by use the same colored-initials-tile pattern as vendors elsewhere in the app for visual consistency — these are staff members, never photos (no file storage in the MVP).</li>
+  </ul>
+  <h2 style="color:var(--foreground); font-size:1rem; font-weight:700; margin:1.5rem 0 .5rem;">Open questions</h2>
+  <ul style="padding-left:1.25rem; list-style:disc;">
+    <li><strong>No server action lists counts yet.</strong> <code>app/actions/reports.ts</code> only exposes <code>countSummaryAction</code> (one count) and <code>reorderListAction</code> — there's no <code>listCountsAction</code>. This table's data shape (id, type, status, openedBy/closedBy names, startedAt/closedAt, totalValue) would need a new query joining <code>count</code> against <code>user</code> twice (opened_by, closed_by).</li>
+    <li><strong>"Start count" button has no destination.</strong> Kicking off a new count session is presumably a counting-app (mobile) action, not a back-office one — worth confirming this button belongs here at all, versus the back office being read-only over count lifecycle and only the mobile app starts/continues counts.</li>
+  </ul>
+</div>
+
+</body>
+</html>

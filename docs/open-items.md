@@ -134,3 +134,42 @@ Not blocking, but they shape work that is coming:
   `count_line.opened_at` exist, unused, with no UI. If shelf life turns out to
   be load-bearing (opened vermouth, cream liqueurs), the columns are already
   there.
+
+## 8. Read-side gaps found while designing the UI
+
+**Trigger: when the React implementation of these screens starts. Before, not during.**
+
+Designing against the real server actions surfaced reads that do not exist yet. None is a
+bug in what was built; each is a hole the UI will otherwise paper over.
+
+- **No live progress totals for an in-progress count.** `totalUnits`, `pricedLineCount`,
+  `excludedLineCount` and `totalValue` are computed only inside `closeCount`. A count session
+  screen showing running totals before close must therefore re-sum valuation client-side —
+  a second implementation of the same arithmetic that can drift from
+  `lib/domain/valuation.ts` silently. **Fix by extracting the totals computation into a
+  read-only action** (`getCountTotals`) that both `closeCount` and the live screen call, so
+  there is one implementation. Do not let the client own this maths.
+- **`ProductSummary` carries no on-hand quantity.** The catalog's stock cell (units + a
+  par-relative bar) needs on-hand from the latest closed count joined against `ProductPar` —
+  the same computation `reorderList()` already performs. Decide whether the catalog read owns
+  that join or the stock cell is dropped from the catalog table.
+- **No `listCountsAction`.** The counts-list screen needs `count` joined against `user` twice
+  (`opened_by`, `closed_by`). Nothing reads the count table as a list today.
+- **`countSummary` has no aggregation.** No category/location rollup and no previous-count
+  comparison, both of which §9 of the spec calls for in the Count Summary report. The
+  prototype derives them client-side; the real version should not, and any value aggregate
+  needs the same owner-only gate as the per-line figures.
+
+## 9. Wine varietals have no "needs a producer" representation
+
+**Trigger: when the owner enters real costs, alongside item 4.**
+
+The 5 seeded wines are varietals (`Merlot`, `Chardonnay`), not specific bottles, and cannot
+be costed or scanned until they name a producer. The catalog prototype surfaces this as a
+"Needs producer" pill and a "Needs attention" saved view, but **there is no column backing
+it** — the prototype infers the state from category plus a null brand.
+
+Decide before building the catalog screen: is "incomplete product" a derived predicate
+(brand IS NULL AND category = 'Wine'), or does it deserve real state? A derived predicate is
+probably right and costs nothing; the point is to decide rather than let each screen invent
+its own definition of incomplete.

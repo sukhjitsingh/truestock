@@ -1,0 +1,719 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1440, initial-scale=1" />
+<title>Handlebar — Catalog</title>
+<!--
+  Standalone back-office prototype. No build step, no network (no CDN fonts,
+  no external CSS/JS) — open this file directly in Chrome. Modeled on
+  docs/design-reference.md PART B (Ecomiq) with the six divergences in
+  "Where we deliberately diverge (Part B)" applied, and every color/spacing/
+  radius value taken literally from docs/design-system.md + app/globals.css.
+
+  Desktop only, light theme only (no .dark class — back office renders with
+  no dark variant per design-system.md §1). Designed at 1440px.
+
+  See the annotation block at the bottom of this file (scroll to </body>)
+  for design decisions and open questions.
+-->
+<style>
+  /* ===================================================================
+     TOKENS — copied verbatim from app/globals.css :root (light theme).
+     Back office never applies .dark, so only the light block is needed.
+     =================================================================== */
+  :root {
+    --radius: 1rem;
+    --background: #f7f7f5;
+    --foreground: #111111;
+    --card: #ffffff;
+    --card-foreground: #111111;
+    --muted: #efefec;
+    --muted-foreground: #6b6b6b;
+    --primary: #0a0a0a;
+    --primary-foreground: #ffffff;
+    --secondary: #efefec;
+    --secondary-foreground: #111111;
+    --accent: #2563eb;
+    --accent-foreground: #ffffff;
+    --destructive: #c4304f;
+    --destructive-foreground: #ffffff;
+    --border: #e4e4e1;
+    --input: #8c8c8c;
+    --ring: #2563eb;
+    --header: #0a0a0a;
+    --header-foreground: #ffffff;
+    --success: #1f7a3d;
+    --success-bg: #e4f5e6;
+    --warning: #92600a;
+    --warning-bg: #fdf0dc;
+    --negative: #b8305a;
+    --negative-bg: #fde8ec;
+
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    min-width: 1280px;
+  }
+  h1, h2, h3, p, ol, ul { margin: 0; padding: 0; list-style: none; }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; background: none; border: none; }
+  svg { display: block; }
+  table { border-collapse: collapse; width: 100%; }
+
+  /* Accessibility floor — every interactive element gets a visible focus
+     ring (design-system.md §7 / app/globals.css :focus-visible). */
+  a, button, input, select, [role="button"], [tabindex] { outline-offset: 2px; }
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
+  [role="button"]:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  /* ===================================================================
+     UTILITIES (hand-rolled, 1:1 named after the real Tailwind classes in
+     docs/design-system.md so the mapping back to production is obvious)
+     =================================================================== */
+  .flex { display: flex; }
+  .inline-flex { display: inline-flex; }
+  .grid { display: grid; }
+  .flex-col { flex-direction: column; }
+  .flex-1 { flex: 1 1 0%; }
+  .shrink-0 { flex-shrink: 0; }
+  .min-w-0 { min-width: 0; }
+  .items-center { align-items: center; }
+  .items-start { align-items: flex-start; }
+  .items-baseline { align-items: baseline; }
+  .justify-between { justify-content: space-between; }
+  .justify-center { justify-content: center; }
+  .justify-end { justify-content: flex-end; }
+  .flex-wrap { flex-wrap: wrap; }
+  .text-center { text-align: center; }
+  .text-right { text-align: right; }
+  .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .uppercase { text-transform: uppercase; }
+  .italic { font-style: italic; }
+  .relative { position: relative; }
+  .w-full { width: 100%; }
+
+  .gap-1 { gap: .25rem; } .gap-1_5 { gap: .375rem; } .gap-2 { gap: .5rem; }
+  .gap-3 { gap: .75rem; } .gap-4 { gap: 1rem; } .gap-6 { gap: 1.5rem; }
+  .p-1 { padding: .25rem; } .p-2 { padding: .5rem; } .p-3 { padding: .75rem; }
+  .p-card-pad { padding: 1rem; }
+  .px-2 { padding-inline: .5rem; } .px-3 { padding-inline: .75rem; } .px-4 { padding-inline: 1rem; }
+  .px-6 { padding-inline: 1.5rem; } .py-1 { padding-block: .25rem; } .py-1_5 { padding-block: .375rem; }
+  .py-2 { padding-block: .5rem; } .py-3 { padding-block: .75rem; } .py-4 { padding-block: 1rem; }
+  .mt-1 { margin-top: .25rem; } .mt-2 { margin-top: .5rem; } .mt-3 { margin-top: .75rem; }
+  .mt-4 { margin-top: 1rem; } .mb-2 { margin-bottom: .5rem; } .mb-3 { margin-bottom: .75rem; }
+  .ml-auto { margin-left: auto; }
+
+  .rounded-sm { border-radius: var(--radius-sm); }
+  .rounded-md { border-radius: var(--radius-md); }
+  .rounded-lg { border-radius: var(--radius-lg); }
+  .rounded-full { border-radius: 9999px; }
+  .border { border: 1px solid var(--border); }
+  .border-input { border: 1px solid var(--input); }
+  .border-t { border-top: 1px solid var(--border); }
+  .border-b { border-bottom: 1px solid var(--border); }
+
+  .bg-background { background: var(--background); }
+  .bg-card { background: var(--card); }
+  .bg-muted { background: var(--muted); }
+  .bg-primary { background: var(--primary); }
+  .bg-secondary { background: var(--secondary); }
+  .bg-accent { background: var(--accent); }
+  .bg-success-bg { background: var(--success-bg); }
+  .bg-warning-bg { background: var(--warning-bg); }
+  .bg-negative-bg { background: var(--negative-bg); }
+
+  .text-foreground { color: var(--foreground); }
+  .text-card-foreground { color: var(--card-foreground); }
+  .text-muted-foreground { color: var(--muted-foreground); }
+  .text-primary-foreground { color: var(--primary-foreground); }
+  .text-accent { color: var(--accent); }
+  .text-success { color: var(--success); }
+  .text-warning { color: var(--warning); }
+  .text-negative { color: var(--negative); }
+
+  /* Type scale — mirrors --text-* companions in app/globals.css exactly */
+  .text-header-title { font-size: 1.75rem; line-height: 1.15; font-weight: 600; }
+  .text-numeral-md { font-size: 1.5rem; line-height: 1.1; font-weight: 600; }
+  .text-row-title { font-size: 1.125rem; line-height: 1.3; font-weight: 600; }
+  .text-numeral-sm { font-size: 1.0625rem; line-height: 1.2; font-weight: 600; }
+  .text-row-subtitle { font-size: .9375rem; line-height: 1.4; font-weight: 400; }
+  .text-body { font-size: 1rem; line-height: 1.5; }
+  .text-caption { font-size: .8125rem; line-height: 1.4; }
+  .text-label { font-size: .6875rem; line-height: 1.2; font-weight: 600; letter-spacing: .06em; }
+  .font-semibold { font-weight: 600; }
+  .tabular-nums { font-variant-numeric: tabular-nums; }
+
+  /* ===================================================================
+     APP SHELL — icon rail + top bar (docs/design-reference.md PART B)
+     =================================================================== */
+  .app-shell { display: flex; min-height: 100vh; }
+
+  .rail {
+    width: 64px; flex-shrink: 0;
+    background: var(--card);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; align-items: center;
+    padding: 0.75rem 0;
+    gap: 0.5rem;
+  }
+  .rail-create {
+    width: 40px; height: 40px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: var(--radius-md);
+    background: var(--accent);
+    color: var(--accent-foreground);
+    margin-bottom: .5rem;
+  }
+  .rail-item {
+    width: 44px; height: 44px; /* tap-min floor even though this is mouse-driven — costs nothing and helps trackpad users */
+    display: flex; align-items: center; justify-content: center;
+    border-radius: var(--radius-md);
+    color: var(--muted-foreground);
+    text-decoration: none;
+  }
+  .rail-item[aria-current="page"] {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--accent); /* brand blue on the active icon only — design-system.md §3 */
+  }
+  .rail-spacer { flex: 1; }
+  .rail-expand { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: var(--muted-foreground); }
+
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+  .topbar {
+    height: 60px; flex-shrink: 0;
+    display: flex; align-items: center; gap: 1rem;
+    padding: 0 1.5rem;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar-crumbs { display: flex; align-items: center; gap: .5rem; font-size: .875rem; white-space: nowrap; }
+  .topbar-crumbs .workspace { font-weight: 600; }
+  .topbar-crumbs .sep { color: var(--muted-foreground); }
+  .topbar-crumbs .page { color: var(--muted-foreground); }
+  .topbar-search {
+    flex: 1; max-width: 440px; margin: 0 auto;
+    display: flex; align-items: center; gap: .5rem;
+    height: 40px; padding: 0 .875rem;
+    border-radius: var(--radius-md);
+    background: var(--muted);
+  }
+  .topbar-search input { flex: 1; min-width: 0; background: transparent; border: none; font-size: .875rem; }
+  .topbar-search input::placeholder { color: var(--muted-foreground); }
+  .topbar-right { display: flex; align-items: center; gap: .5rem; margin-left: auto; }
+  .icon-btn { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-md); color: var(--muted-foreground); position: relative; }
+  .icon-btn:hover { background: var(--muted); }
+  .unread-dot { position: absolute; top: 8px; right: 9px; width: 6px; height: 6px; border-radius: 9999px; background: var(--accent); }
+  .avatar-tile {
+    width: 34px; height: 34px; border-radius: var(--radius-md);
+    display: flex; align-items: center; justify-content: center;
+    background: var(--primary); color: var(--primary-foreground);
+    font-size: .75rem; font-weight: 600;
+  }
+
+  .content { flex: 1; padding: 1.5rem 1.5rem 3rem; overflow-x: auto; }
+
+  /* ---- page header ---- */
+  .page-header { display: flex; align-items: center; gap: .75rem; margin-bottom: 1rem; }
+  .page-header .icon-btn { color: var(--foreground); }
+  .btn-primary {
+    display: inline-flex; align-items: center; gap: .5rem;
+    height: 36px; padding: 0 1rem;
+    border-radius: var(--radius-md);
+    background: var(--primary); color: var(--primary-foreground);
+    font-size: .8125rem; font-weight: 600;
+  }
+  .btn-outline {
+    display: inline-flex; align-items: center; gap: .5rem;
+    height: 36px; padding: 0 .875rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--input);
+    background: var(--card); color: var(--foreground);
+    font-size: .8125rem; font-weight: 600;
+  }
+
+  /* ---- view tabs ---- */
+  .view-tabs { display: flex; align-items: center; gap: 1.5rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; }
+  .view-tab {
+    padding: .75rem 0; font-size: .875rem; color: var(--muted-foreground);
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .view-tab[aria-selected="true"] { color: var(--foreground); font-weight: 600; border-bottom-color: var(--foreground); }
+  .view-tab-add { color: var(--muted-foreground); margin-left: auto; }
+
+  /* ---- filter bar ---- */
+  .filter-bar { display: flex; align-items: center; gap: .5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  .filter-search {
+    display: flex; align-items: center; gap: .5rem;
+    height: 36px; padding: 0 .75rem; width: 260px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--input);
+    background: var(--card);
+  }
+  .filter-search input { flex: 1; min-width: 0; border: none; background: transparent; font-size: .8125rem; }
+  .filter-search input::placeholder { color: var(--muted-foreground); }
+  .filter-pill {
+    display: inline-flex; align-items: center; gap: .375rem;
+    height: 36px; padding: 0 .75rem;
+    border-radius: var(--radius-md);
+    font-size: .8125rem; font-weight: 500;
+    border: 1px solid var(--input);
+    background: var(--card); color: var(--foreground);
+  }
+  /* Applied filter = filled solid; unapplied = outline. The whole active-
+     filter affordance, per docs/design-reference.md PART B — no badge, no count. */
+  .filter-pill[data-applied="true"] { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+  .filter-pill .clear-x { margin-left: .125rem; opacity: .8; }
+  .role-toggle-wrap { margin-left: auto; display: flex; align-items: center; gap: .5rem; }
+  .role-toggle {
+    display: inline-flex; border: 1px solid var(--input); border-radius: var(--radius-md); overflow: hidden;
+  }
+  .role-toggle button { padding: .5rem .875rem; font-size: .75rem; font-weight: 600; color: var(--muted-foreground); }
+  .role-toggle button[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); }
+
+  /* ---- table ---- */
+  .table-card { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--card); }
+  thead th {
+    text-align: left; font-size: .75rem; font-weight: 600; color: var(--muted-foreground);
+    background: var(--muted);
+    padding: .625rem .875rem;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--border);
+  }
+  th.num, td.num { text-align: right; }
+  th .sort { color: var(--muted-foreground); font-weight: 400; margin-left: .25rem; cursor: pointer; }
+  tbody tr { height: 57px; border-bottom: 1px solid var(--border); }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: color-mix(in srgb, var(--muted) 55%, transparent); }
+  tbody tr[data-inactive="true"] { opacity: 0.55; }
+  td { padding: 0 .875rem; font-size: .875rem; vertical-align: middle; }
+
+  .glyph-tile {
+    width: 40px; height: 40px; border-radius: var(--radius-sm);
+    background: var(--muted); color: var(--muted-foreground);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .cell-product { display: flex; align-items: center; gap: .75rem; max-width: 320px; }
+  .cell-product-text { min-width: 0; }
+  .cell-product-name { font-weight: 600; color: var(--card-foreground); }
+  .cell-product-sub { font-size: .8125rem; color: var(--muted-foreground); display: flex; align-items: center; gap: .375rem; flex-wrap: wrap; }
+
+  .chip { display: inline-flex; align-items: center; padding: .1875rem .5rem; border-radius: var(--radius-sm); background: var(--muted); color: var(--foreground); font-size: .75rem; }
+  .attn-pill { display: inline-flex; align-items: center; padding: .0625rem .5rem; border-radius: 9999px; background: var(--warning-bg); color: var(--warning); font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+
+  .vendor-cell { display: flex; align-items: center; gap: .5rem; white-space: nowrap; }
+  .vendor-dot { width: 22px; height: 22px; border-radius: 9999px; display: flex; align-items: center; justify-content: center; font-size: .625rem; font-weight: 700; color: #fff; flex-shrink: 0; }
+
+  .stock-cell { min-width: 150px; }
+  .stock-line { display: flex; align-items: baseline; gap: .375rem; white-space: nowrap; }
+  .stock-line .status-word { font-size: .75rem; font-weight: 600; }
+  .stock-bar-track { margin-top: .3125rem; height: 4px; width: 130px; border-radius: 9999px; background: var(--muted); overflow: hidden; }
+  .stock-bar-fill { height: 100%; border-radius: 9999px; }
+
+  .no-value { color: var(--muted-foreground); font-style: italic; font-size: .8125rem; }
+
+  .row-menu-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); color: var(--muted-foreground); }
+  .row-menu-btn:hover { background: var(--muted); }
+
+  .popover {
+    position: absolute; right: 0; top: calc(100% + 4px); z-index: 30;
+    width: 190px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--card);
+    padding: .25rem;
+  }
+  .popover-item { display: flex; align-items: center; gap: .5rem; width: 100%; padding: .5rem .625rem; border-radius: var(--radius-sm); font-size: .8125rem; text-align: left; color: var(--foreground); }
+  .popover-item:hover, .popover-item:focus-visible { background: var(--muted); }
+  .popover-item.danger { color: var(--destructive); }
+  .popover-hidden { display: none; }
+
+  .table-footer { display: flex; align-items: center; justify-content: space-between; padding: .75rem .875rem; border-top: 1px solid var(--border); font-size: .8125rem; color: var(--muted-foreground); }
+
+  .role-note { display: none; }
+  .role-note[data-active="true"] { display: block; }
+
+  /* ---- prototype chrome (NOT shipped UI) — added at session close ---- */
+  .proto-chrome { position: relative; outline: 2px dashed #C8901A; outline-offset: 7px;
+                  border-radius: 8px; }
+  .proto-chrome::before { content: "PROTOTYPE ONLY \2014 NOT SHIPPED UI";
+                  position: absolute; top: -1.55rem; left: 0; white-space: nowrap;
+                  font-size: .5625rem; font-weight: 700; letter-spacing: .08em;
+                  color: #8A6206; }
+  </style>
+</head>
+<body>
+
+<div class="app-shell">
+  <!-- ================= ICON RAIL ================= -->
+  <nav class="rail" aria-label="Sections">
+    <button class="rail-create" aria-label="Create new">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+    </button>
+    <a class="rail-item" aria-current="page" href="office-catalog.html" aria-label="Catalog">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round"/></svg>
+    </a>
+    <a class="rail-item" href="office-counts-list.html" aria-label="Counts">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5" stroke-linecap="round"/></svg>
+    </a>
+    <a class="rail-item" href="office-reorder.html" aria-label="Reorder">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M3 3h2l2.4 12.4a2 2 0 0 0 2 1.6h7.2a2 2 0 0 0 2-1.6L20 8H6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/></svg>
+    </a>
+    <a class="rail-item" href="office-count-summary.html" aria-label="Reports">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 20V10M12 20V4M20 20v-7" stroke-linecap="round"/></svg>
+    </a>
+    <div class="rail-spacer"></div>
+    <button class="rail-expand" aria-label="Expand sidebar">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </nav>
+
+  <div class="main">
+    <!-- ================= TOP BAR ================= -->
+    <header class="topbar">
+      <div class="topbar-crumbs">
+        <span class="workspace">Handlebar</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--muted-foreground)" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="sep">/</span>
+        <span class="page">Catalog</span>
+      </div>
+      <div class="topbar-search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--muted-foreground)" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5" stroke-linecap="round"/></svg>
+        <input type="search" aria-label="Search or press slash for commands" placeholder="Search or press '/' for commands" />
+      </div>
+      <div class="topbar-right">
+        <button class="icon-btn" aria-label="Notifications, 2 unread">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 4 1.5 5.5 1.5 5.5H4.5S6 13 6 9Z" stroke-linejoin="round"/><path d="M10 18a2 2 0 0 0 4 0"/></svg>
+          <span class="unread-dot" aria-hidden="true"></span>
+        </button>
+        <button class="icon-btn" aria-label="Messages">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 5h16v11H8l-4 4V5Z" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="avatar-tile" aria-hidden="true">JM</div>
+      </div>
+    </header>
+
+    <div class="content">
+      <!-- ================= PAGE HEADER ================= -->
+      <div class="page-header">
+        <button class="icon-btn" aria-label="Collapse sidebar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+        </button>
+        <h1 class="text-header-title">Catalog</h1>
+        <button class="icon-btn" aria-label="More page actions">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+        </button>
+        <button class="icon-btn" aria-label="Refresh catalog">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="btn-primary" style="margin-left:auto;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+          Add product
+        </button>
+      </div>
+
+      <!-- ================= VIEW TABS ================= -->
+      <div class="view-tabs" role="tablist" aria-label="Catalog views">
+        <button class="view-tab" role="tab" aria-selected="true">All products</button>
+        <button class="view-tab" role="tab" aria-selected="false">Needs attention <span style="color:var(--warning); font-weight:700;">· 2</span></button>
+        <button class="view-tab" role="tab" aria-selected="false">Draft &amp; kegs</button>
+        <button class="view-tab view-tab-add" role="tab" aria-selected="false">+ View</button>
+      </div>
+
+      <!-- ================= FILTER BAR ================= -->
+      <div class="filter-bar">
+        <div class="filter-search">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--muted-foreground)" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5" stroke-linecap="round"/></svg>
+          <input type="search" aria-label="Search products" placeholder="Search products" />
+        </div>
+        <button class="filter-pill" data-applied="true" aria-pressed="true">
+          Category: Spirits
+          <svg class="clear-x" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke-linecap="round"/></svg>
+        </button>
+        <button class="filter-pill" aria-pressed="false">Vendor</button>
+        <button class="filter-pill" aria-pressed="false">Active status</button>
+        <button class="filter-pill" aria-pressed="false">Pack level</button>
+
+        <!-- Demo-only affordance: swaps between two independently-authored
+             tables below (owner vs manager). See annotation block. -->
+        <div class="role-toggle-wrap proto-chrome">
+          <span class="text-caption text-muted-foreground">Preview as</span>
+          <div class="role-toggle" role="group" aria-label="Preview role">
+            <button id="btn-owner" aria-pressed="true">Owner</button>
+            <button id="btn-manager" aria-pressed="false">Manager</button>
+          </div>
+        </div>
+      </div>
+
+      <p class="role-note text-caption text-muted-foreground mb-3" data-active="true" id="note-owner">
+        Owner view — Unit Cost column present. Blank costs read "Not entered," never $0.00 (design-system.md §8).
+      </p>
+      <p class="role-note text-caption text-muted-foreground mb-3" id="note-manager">
+        Manager view — the Unit Cost column is structurally absent from this table's markup, not hidden with CSS (divergence B5). Staff would see this same shape; only owner and manager can reach the catalog screen at all (updateProductAction requires owner/manager).
+      </p>
+
+      <!-- ================= OWNER TABLE ================= -->
+      <div id="table-owner" class="table-card">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:320px;">Product <span class="sort" aria-hidden="true">⇅</span></th>
+              <th>Category <span class="sort" aria-hidden="true">⇅</span></th>
+              <th>Size</th>
+              <th>Case</th>
+              <th>Vendor <span class="sort" aria-hidden="true">⇅</span></th>
+              <th class="num">Unit cost <span class="sort" aria-hidden="true">⇅</span></th>
+              <th style="width:170px;">Stock <span class="sort" aria-hidden="true">⇅</span></th>
+              <th style="width:44px;"><span style="position:absolute; width:1px; height:1px; overflow:hidden;">Row actions</span></th>
+            </tr>
+          </thead>
+          <tbody id="tbody-owner"></tbody>
+        </table>
+        <div class="table-footer">
+          <span>Showing 19 of 97 products</span>
+          <span>62 spirits · 16 bottled beer · 9 draft kegs · 5 wine · 2 liqueur · 3 N/A</span>
+        </div>
+      </div>
+
+      <!-- ================= MANAGER TABLE (no Unit cost column at all) ================= -->
+      <div id="table-manager" class="table-card" style="display:none;">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:320px;">Product <span class="sort" aria-hidden="true">⇅</span></th>
+              <th>Category <span class="sort" aria-hidden="true">⇅</span></th>
+              <th>Size</th>
+              <th>Case</th>
+              <th>Vendor <span class="sort" aria-hidden="true">⇅</span></th>
+              <th style="width:170px;">Stock <span class="sort" aria-hidden="true">⇅</span></th>
+              <th style="width:44px;"><span style="position:absolute; width:1px; height:1px; overflow:hidden;">Row actions</span></th>
+            </tr>
+          </thead>
+          <tbody id="tbody-manager"></tbody>
+        </table>
+        <div class="table-footer">
+          <span>Showing 19 of 97 products</span>
+          <span>62 spirits · 16 bottled beer · 9 draft kegs · 5 wine · 2 liqueur · 3 N/A</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ---------------------------------------------------------------------
+  // Row data — realistic subset of the 97-product seed catalog. Stock
+  // (on-hand/par) is not part of ProductSummary (lib/domain/catalog.ts) —
+  // it's modeled here as if joined from ProductPar + the latest closed
+  // count, per the annotation block below.
+  // ---------------------------------------------------------------------
+  var rows = [
+    { name: "Tito's Handmade Vodka", sub: "Tito's · Vodka", size: "750 ml", vendor: "Southern Glazer's", vendorColor: "#2563eb", cost: "$14.85", onHand: 22, par: 24, reorder: 8, active: true },
+    { name: "Grey Goose Vodka", sub: "Grey Goose · Vodka", size: "750 ml", vendor: "Southern Glazer's", vendorColor: "#2563eb", cost: null, onHand: 6, par: 18, reorder: 6, active: true },
+    { name: "Jameson Irish Whiskey", sub: "Jameson · Irish Whiskey · Handle", size: "1.75 L", vendor: "Breakthru Beverage AZ", vendorColor: "#92600a", cost: null, onHand: 3, par: 10, reorder: 4, active: true },
+    { name: "Patrón Silver Tequila", sub: "Patrón · Tequila", size: "750 ml", vendor: "Southern Glazer's", vendorColor: "#2563eb", cost: "$28.40", onHand: 0, par: 12, reorder: 4, active: true },
+    { name: "Bacardí Superior Rum", sub: "Bacardí · Rum", size: "750 ml", vendor: "Breakthru Beverage AZ", vendorColor: "#92600a", cost: null, onHand: 14, par: null, reorder: null, active: true },
+    { name: "Jack Daniel's Old No. 7", sub: "Jack Daniel's · Whiskey", size: "750 ml", vendor: "Southern Glazer's", vendorColor: "#2563eb", cost: null, onHand: 9, par: 20, reorder: 8, active: true },
+    { name: "Hendrick's Gin", sub: "Hendrick's · Gin", size: "750 ml", vendor: "Young's Market Co. of AZ", vendorColor: "#1f7a3d", cost: null, onHand: 11, par: 12, reorder: 4, active: true },
+    { name: "Coors Light", sub: "Coors · Draft keg", size: "Half barrel", vendor: "Hensley Beverage Co.", vendorColor: "#b8305a", cost: "$118.00", onHand: 2, par: 4, reorder: 1, active: true },
+    { name: "Modelo Especial", sub: "Modelo · Draft keg", size: "Half barrel", vendor: "Hensley Beverage Co.", vendorColor: "#b8305a", cost: "$132.50", onHand: 1, par: 3, reorder: 1, active: true },
+    { name: "Blue Moon Belgian White", sub: "Blue Moon · Draft keg", size: "Sixtel", vendor: "Hensley Beverage Co.", vendorColor: "#b8305a", cost: "$96.00", onHand: 0, par: 2, reorder: 1, active: true },
+    { name: "Coors Light", sub: "Coors · Bottled beer", size: "12 oz", vendor: "Hensley Beverage Co.", vendorColor: "#b8305a", cost: null, onHand: 48, par: 72, reorder: 24, active: true },
+    { name: "Corona Extra", sub: "Corona · Bottled beer", size: "12 oz", vendor: "Hensley Beverage Co.", vendorColor: "#b8305a", cost: null, onHand: 60, par: 72, reorder: 24, active: true },
+    { name: "Michelob Ultra", sub: "Michelob · Bottled beer", size: "12 oz", vendor: "Hensley Beverage Co.", vendorColor: "#b8305a", cost: null, onHand: 0, par: 48, reorder: 12, active: true },
+    { name: "Merlot", sub: "Wine · Varietal", size: "750 ml", vendor: "Young's Market Co. of AZ", vendorColor: "#1f7a3d", cost: null, onHand: 9, par: null, reorder: null, active: true, attn: "Needs producer" },
+    { name: "Chardonnay", sub: "Wine · Varietal", size: "750 ml", vendor: "Young's Market Co. of AZ", vendorColor: "#1f7a3d", cost: null, onHand: 7, par: null, reorder: null, active: true, attn: "Needs producer" },
+    { name: "Kahlúa Coffee Liqueur", sub: "Kahlúa · Liqueur", size: "750 ml", vendor: "Southern Glazer's", vendorColor: "#2563eb", cost: null, onHand: 4, par: 6, reorder: 2, active: true },
+    { name: "St-Germain Elderflower Liqueur", sub: "St-Germain · Liqueur", size: "750 ml", vendor: "Breakthru Beverage AZ", vendorColor: "#92600a", cost: null, onHand: 3, par: 4, reorder: 1, active: true },
+    { name: "O'Doul's", sub: "O'Doul's · Non-alcoholic", size: "12 oz", vendor: "Hensley Beverage Co.", vendorColor: "#b8305a", cost: null, onHand: 24, par: 24, reorder: 8, active: true },
+    { name: "Heineken 0.0", sub: "Heineken · Non-alcoholic", size: "11.2 oz", vendor: "Hensley Beverage Co.", vendorColor: "#b8305a", cost: null, onHand: 0, par: 12, reorder: 4, active: false },
+  ];
+
+  function glyph() {
+    return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 2h8M9 2v5.5L5 15a3 3 0 0 0 3 4.5h8A3 3 0 0 0 19 15l-4-7.5V2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  }
+
+  function initials(v) {
+    return v.split(/\s+/).map(function (w) { return w[0]; }).slice(0, 2).join("").toUpperCase();
+  }
+
+  // Stock cell logic (design-system.md B1 + the reference's own zero-unit
+  // instinct, reconciled — see annotation block):
+  //   no par at all        -> unit count only, no bar, no status word
+  //   par exists, onHand=0 -> "Out" in negative, no bar (never a 0-width bar)
+  //   par exists, onHand>0 -> unit count + status word + bar, colored by status
+  function stockCell(r) {
+    var unitLabel = r.onHand + (r.onHand === 1 ? " unit" : " units");
+    if (r.par == null) {
+      return '<div class="stock-line"><span class="text-card-foreground" style="font-weight:600;">' + unitLabel + '</span></div>';
+    }
+    if (r.onHand === 0) {
+      return '<div class="stock-line"><span class="text-card-foreground" style="font-weight:600;">' + unitLabel + '</span><span class="status-word text-negative">· Out</span></div>';
+    }
+    var pct = Math.min(100, Math.round((r.onHand / r.par) * 100));
+    var word, colorVar, textVar;
+    if (r.onHand <= r.reorder) { word = "Low"; colorVar = "var(--warning)"; textVar = "text-warning"; }
+    else { word = "In stock"; colorVar = "var(--success)"; textVar = "text-success"; }
+    return (
+      '<div class="stock-line"><span class="text-card-foreground" style="font-weight:600;">' + unitLabel + '</span>' +
+      '<span class="status-word ' + textVar + '">· ' + word + '</span></div>' +
+      '<div class="stock-bar-track"><div class="stock-bar-fill" style="width:' + pct + '%; background:' + colorVar + ';"></div></div>'
+    );
+  }
+
+  function costCell(r) {
+    if (r.cost) return '<span class="tabular-nums text-card-foreground" style="font-weight:600;">' + r.cost + '</span>';
+    return '<span class="no-value">Not entered</span>';
+  }
+
+  function menuHtml(id) {
+    return (
+      '<div class="relative">' +
+        '<button class="row-menu-btn" aria-haspopup="true" aria-expanded="false" aria-label="More actions" onclick="toggleMenu(\'' + id + '\')">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>' +
+        '</button>' +
+        '<div class="popover popover-hidden" id="menu-' + id + '" role="menu">' +
+          '<a class="popover-item" role="menuitem" href="office-product-edit.html">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+            'Edit product</a>' +
+          '<button class="popover-item" role="menuitem">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="1"/><path d="M8 6V4h8v2" stroke-linecap="round"/></svg>' +
+            'Adjust par level</button>' +
+          '<button class="popover-item" role="menuitem">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="3" y="9" width="18" height="6" rx="1"/><path d="M6 15v3M18 15v3" stroke-linecap="round"/></svg>' +
+            'View barcodes</button>' +
+          '<button class="popover-item" role="menuitem">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5" stroke-linecap="round"/></svg>' +
+            'View count history</button>' +
+          '<button class="popover-item danger" role="menuitem">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 8l8 8" stroke-linecap="round"/></svg>' +
+            'Deactivate…</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function productCell(r) {
+    var attn = r.attn ? '<span class="attn-pill">' + r.attn + '</span>' : "";
+    return (
+      '<div class="cell-product">' +
+        '<div class="glyph-tile">' + glyph() + '</div>' +
+        '<div class="cell-product-text">' +
+          '<div class="truncate cell-product-name">' + r.name + '</div>' +
+          '<div class="cell-product-sub"><span class="truncate">' + r.sub + '</span>' + (attn ? attn : "") +
+            (r.active ? "" : '<span class="text-caption text-muted-foreground">· Inactive</span>') +
+          '</div>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function categoryFromSub(sub) {
+    if (sub.indexOf("Vodka") >= 0 || sub.indexOf("Whiskey") >= 0 || sub.indexOf("Tequila") >= 0 || sub.indexOf("Rum") >= 0 || sub.indexOf("Gin") >= 0) return "Spirits";
+    if (sub.indexOf("Draft keg") >= 0) return "Draft";
+    if (sub.indexOf("Bottled beer") >= 0) return "Beer";
+    if (sub.indexOf("Wine") >= 0) return "Wine";
+    if (sub.indexOf("Liqueur") >= 0) return "Liqueur";
+    if (sub.indexOf("Non-alcoholic") >= 0) return "N/A";
+    return "Other";
+  }
+
+  function renderRow(r, ownerMode) {
+    var cat = categoryFromSub(r.sub);
+    var caseCell = '<span class="no-value">Not set</span>'; // no product in the seed has case_size yet
+    var vendorCell = '<div class="vendor-cell"><span class="vendor-dot" style="background:' + r.vendorColor + ';">' + initials(r.vendor) + '</span><span class="truncate">' + r.vendor + '</span></div>';
+    var id = r.name.replace(/[^a-z0-9]/gi, "").toLowerCase() + (ownerMode ? "o" : "m");
+    var tr = '<tr' + (r.active ? "" : ' data-inactive="true"') + '>';
+    tr += '<td>' + productCell(r) + '</td>';
+    tr += '<td><span class="chip">' + cat + '</span></td>';
+    tr += '<td class="text-card-foreground">' + r.size + '</td>';
+    tr += '<td>' + caseCell + '</td>';
+    tr += '<td>' + vendorCell + '</td>';
+    if (ownerMode) tr += '<td class="num">' + costCell(r) + '</td>';
+    tr += '<td class="stock-cell">' + stockCell(r) + '</td>';
+    tr += '<td>' + menuHtml(id) + '</td>';
+    tr += '</tr>';
+    return tr;
+  }
+
+  var ownerBody = rows.map(function (r) { return renderRow(r, true); }).join("");
+  var managerBody = rows.map(function (r) { return renderRow(r, false); }).join("");
+  document.getElementById("tbody-owner").innerHTML = ownerBody;
+  document.getElementById("tbody-manager").innerHTML = managerBody;
+
+  function toggleMenu(id) {
+    var el = document.getElementById("menu-" + id);
+    var isOpen = !el.classList.contains("popover-hidden");
+    document.querySelectorAll(".popover").forEach(function (p) { p.classList.add("popover-hidden"); });
+    if (!isOpen) el.classList.remove("popover-hidden");
+  }
+  document.addEventListener("click", function (e) {
+    if (!e.target.closest(".relative")) {
+      document.querySelectorAll(".popover").forEach(function (p) { p.classList.add("popover-hidden"); });
+    }
+  });
+
+  // Role toggle — swaps between two structurally distinct <table> elements
+  // (the manager one never contains a Unit Cost <th>/<td> in its markup).
+  var btnOwner = document.getElementById("btn-owner");
+  var btnManager = document.getElementById("btn-manager");
+  var tableOwner = document.getElementById("table-owner");
+  var tableManager = document.getElementById("table-manager");
+  var noteOwner = document.getElementById("note-owner");
+  var noteManager = document.getElementById("note-manager");
+  function showOwner() {
+    btnOwner.setAttribute("aria-pressed", "true"); btnManager.setAttribute("aria-pressed", "false");
+    tableOwner.style.display = ""; tableManager.style.display = "none";
+    noteOwner.setAttribute("data-active", "true"); noteManager.removeAttribute("data-active");
+  }
+  function showManager() {
+    btnOwner.setAttribute("aria-pressed", "false"); btnManager.setAttribute("aria-pressed", "true");
+    tableOwner.style.display = "none"; tableManager.style.display = "";
+    noteManager.setAttribute("data-active", "true"); noteOwner.removeAttribute("data-active");
+  }
+  btnOwner.addEventListener("click", showOwner);
+  btnManager.addEventListener("click", showManager);
+</script>
+
+<!-- =====================================================================
+     ANNOTATIONS — design decisions & open questions for the owner
+     ===================================================================== -->
+<div style="max-width:900px; margin:2rem auto 4rem; padding:0 1.5rem; font-size:.875rem; line-height:1.6; color:var(--muted-foreground);">
+  <h2 style="color:var(--foreground); font-size:1rem; font-weight:700; margin-bottom:.5rem;">Design decisions</h2>
+  <ul style="padding-left:1.25rem; list-style:disc;">
+    <li>Owner and manager tables are two separate <code>&lt;table&gt;</code> elements in the DOM, toggled by the "Viewing as" control. The manager table never contains a Unit Cost <code>&lt;th&gt;</code>/<code>&lt;td&gt;</code> — satisfying divergence B5 (column absent, not CSS-hidden). In production these would be two TanStack Table column-def arrays selected by role, not one array with a hidden column.</li>
+    <li>Null <code>current_unit_cost</code> reads "Not entered" in muted italic — never "$0.00". This is the common case today (only the 9 draft kegs have real costs), so it had to look correct at scale, not like an edge case.</li>
+    <li>Case size reads "Not set" for every row because no product in the seed has <code>case_size</code> populated yet — same treatment, different reason (a data-completeness gap, not a role redaction).</li>
+    <li>Stock cell reconciles two rules that could read as contradictory: B1 says "no par → no bar, no status word"; the reference's own instinct is "0 units → no bar" (a 0-width bar is meaningless). Applied as: no par → units only; par + 0 on-hand → "Out" in negative with no bar; par + >0 on-hand → units + status word + bar.</li>
+    <li>Product <code>active = false</code> is shown as a dimmed row + a plain "· Inactive" caption, deliberately NOT a status pill — green/amber/red are reserved for stock/count status (design-system.md §3), and active/inactive is a record-lifecycle property, not a stock signal.</li>
+    <li>"Needs producer" uses the warning (amber) pill — "needs attention" is an approved meaning for amber per §3, and Merlot/Chardonnay are varietals without a producer, so they can't yet be scanned or costed.</li>
+    <li>Vendor is shown as a deterministic colored initials tile (not a photo/avatar) per divergence B4 — colors are drawn from the existing status/accent token set, not new hex values.</li>
+    <li>Density matches divergence B6: 57px rows, 32px row-menu button, 36px filter/header controls — no phone-sized tap targets here.</li>
+  </ul>
+  <h2 style="color:var(--foreground); font-size:1rem; font-weight:700; margin:1.5rem 0 .5rem;">Open questions</h2>
+  <ul style="padding-left:1.25rem; list-style:disc;">
+    <li><strong>Stock cell has no backing field.</strong> <code>ProductSummary</code> (lib/domain/catalog.ts) carries catalog metadata only — no on-hand quantity. The two-line stock cell the reference calls "the best idea in this shot" requires joining catalog rows against <code>ProductPar</code> and the latest closed count's on-hand (the same computation <code>reorderList()</code> already does). Is this screen meant to reuse that computation, or should the catalog table drop the stock cell entirely and point users to the reorder list for on-hand figures? Today, with zero closed counts, every row's on-hand would be 0 — worth deciding before this ships.</li>
+    <li><strong>Vendor name resolution.</strong> <code>ProductSummary.vendorId</code> is an id; this screen needs it joined against <code>listVendorsAction()</code>. Fine as a client-side join, flagging it since no backend action currently returns products with vendor names inline.</li>
+    <li><strong>"Needs attention" view tab is decorative here</strong> (not wired to real filter logic) — would need a real query (e.g. wine category with no producer field, or products with no barcode) once that's defined.</li>
+  </ul>
+</div>
+
+</body>
+</html>

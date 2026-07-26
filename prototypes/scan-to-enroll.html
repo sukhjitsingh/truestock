@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Handlebar — Scan-to-Enroll (prototype)</title>
+<style>
+  :root{
+    --background:#0B0B0C;--foreground:#F5F5F4;--card:#17181A;--card-foreground:#F5F5F4;
+    --muted:#131315;--muted-foreground:#A8A8A5;--primary:#F5F5F4;--primary-foreground:#0A0A0A;
+    --secondary:#1E1E21;--secondary-foreground:#F5F5F4;--accent:#60A5FA;--accent-foreground:#0A0A0A;
+    --destructive:#D33039;--destructive-foreground:#FFFFFF;--border:#232326;--input:#6B6B6B;--ring:#60A5FA;
+    --header:#121317;--header-foreground:#F5F5F4;
+    --success:#6FCF8E;--success-bg:#14301F;--warning:#F0B429;--warning-bg:#3A2A10;--negative:#F0718A;--negative-bg:#3A1620;
+    --radius-sm:12px;--radius-md:14px;--radius-lg:16px;--radius-xl:20px;
+    --card-gap:12px;--card-pad:16px;--bar-pad:16px;--section-gap:24px;--tap-min:44px;--tap-primary:56px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{background:#050506;color:var(--foreground);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+    font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;}
+  :focus-visible{outline:2px solid var(--ring);outline-offset:2px;}
+  button{cursor:pointer;font-family:inherit;}
+  a{color:inherit;text-decoration:none;}
+
+  .proto-bar{max-width:390px;margin:0 auto;padding:10px 12px;border:1px dashed #3a3a3f;border-bottom:none;
+    background:#111114;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8a8a90;display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+  .proto-bar b{color:#c9c9cf;}
+  .proto-nav a{padding:4px 8px;border:1px solid #3a3a3f;border-radius:8px;color:#c9c9cf;}
+  .proto-nav a:hover{background:#1c1c20;}
+  .proto-controls{max-width:390px;margin:0 auto;padding:12px;border:1px dashed #3a3a3f;border-top:none;border-bottom:none;
+    background:#0d0d10;display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px;color:#a8a8ac;}
+  .proto-controls select{background:#1c1c20;color:#eee;border:1px solid #3a3a3f;border-radius:8px;padding:6px 8px;font-size:12px;}
+  .proto-label{font-weight:600;color:#6f6f75;}
+  .proto-timer{margin-left:auto;font-weight:700;color:#eee;}
+  .proto-timer.warn{color:var(--warning, #F0B429);}
+  .proto-annotations{max-width:390px;margin:0 auto;padding:16px 14px;border:1px dashed #3a3a3f;background:#0d0d10;color:#b5b5ba;font-size:12.5px;line-height:1.6;}
+  .proto-annotations h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8a8a90;margin:0 0 10px;}
+  .proto-annotations h3{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#6f6f75;margin:16px 0 6px;}
+  .proto-annotations ul{margin:0;padding-left:18px;}
+  .proto-annotations li{margin-bottom:8px;}
+  .proto-annotations b{color:#e6e6ea;}
+
+  .app{max-width:390px;margin:0 auto;min-height:100vh;background:var(--background);position:relative;
+    border:1px solid var(--border);border-top:none;padding-bottom:96px;}
+
+  .text-header-title{font-size:28px;font-weight:600;line-height:1.15;}
+  .text-row-subtitle{font-size:15px;font-weight:400;line-height:1.4;color:var(--muted-foreground);}
+  .text-body{font-size:16px;font-weight:400;line-height:1.5;}
+  .text-screen-title{font-size:13px;font-weight:600;line-height:1.2;letter-spacing:.06em;text-transform:uppercase;}
+  .text-caption{font-size:13px;font-weight:400;line-height:1.4;color:var(--muted-foreground);}
+  .text-label{font-size:11px;font-weight:600;line-height:1.2;letter-spacing:.06em;text-transform:uppercase;}
+
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px var(--bar-pad) 4px;}
+  .topbar .cancel{color:var(--muted-foreground);font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+    background:transparent;border:0;min-height:44px;padding:0 6px;}
+
+  .barcode-block{margin:8px var(--bar-pad) 4px;padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius-lg);
+    background:var(--card);display:flex;align-items:center;gap:12px;}
+  .barcode-block svg{color:var(--accent);flex-shrink:0;}
+  .barcode-block .num{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:18px;letter-spacing:.04em;}
+  .barcode-block .lbl{color:var(--muted-foreground);font-size:12px;margin-top:2px;}
+
+  form{padding:4px var(--bar-pad) 8px;display:flex;flex-direction:column;gap:18px;}
+  .field{display:flex;flex-direction:column;gap:6px;}
+  .field input{min-height:var(--tap-min);border-radius:var(--radius-md);border:1px solid var(--input);
+    background:var(--card);padding:0 12px;color:var(--foreground);font-size:16px;}
+  .field input:focus{outline:none;border-color:var(--ring);box-shadow:0 0 0 2px var(--ring) inset;}
+  .field .req::after{content:" *";color:var(--negative);}
+  .field .optional{color:var(--muted-foreground);font-weight:400;text-transform:none;letter-spacing:0;}
+
+  .chip-row{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip{min-height:var(--tap-min);padding:0 16px;border-radius:999px;border:1px solid var(--input);
+    background:var(--card);color:var(--foreground);font-size:14px;font-weight:600;display:inline-flex;align-items:center;}
+  .chip.active{background:var(--accent);border-color:var(--accent);color:var(--accent-foreground);}
+
+  .checkbox-row{display:flex;align-items:center;gap:10px;min-height:var(--tap-min);}
+  .checkbox-row input{width:22px;height:22px;accent-color:var(--accent);}
+
+  .cut-note{margin:0 var(--bar-pad) 8px;padding:12px 14px;border:1px dashed var(--border);border-radius:var(--radius-md);
+    color:var(--muted-foreground);font-size:12px;line-height:1.5;}
+
+  .bottom-bar{position:fixed;left:0;right:0;bottom:0;max-width:390px;margin:0 auto;display:flex;gap:12px;
+    border-top:1px solid var(--border);background:var(--background);padding:var(--bar-pad) var(--bar-pad) calc(var(--bar-pad) + env(safe-area-inset-bottom));z-index:40;}
+  .btn{display:flex;align-items:center;justify-content:center;flex:1;border-radius:var(--radius-md);
+    font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;min-height:var(--tap-primary);border:1px solid transparent;}
+  .btn-primary{background:var(--primary);color:var(--primary-foreground);}
+  svg{display:block;}
+</style>
+</head>
+<body>
+
+<div class="proto-bar">
+  <span class="proto-nav">
+    <b>Prototype nav:</b>
+    <a href="count-scan.html">Scan</a>
+    <a href="count-fill-tenths.html">Fill tenths</a>
+    <a href="count-sealed-qty.html">Sealed qty</a>
+    <a href="scan-to-enroll.html">Scan-to-enroll</a>
+    <a href="count-session.html">Count session</a>
+  </span>
+</div>
+<div class="proto-controls">
+  <span class="proto-label">Demo controls (not shipped UI):</span>
+  <label>Role
+    <select id="roleSelect">
+      <option value="staff">Staff</option>
+      <option value="manager">Manager</option>
+      <option value="owner">Owner</option>
+    </select>
+  </label>
+  <span class="proto-timer" id="timer">0.0s since scan</span>
+</div>
+
+<div class="app">
+  <div class="topbar">
+    <button class="cancel">Cancel</button>
+    <span class="text-screen-title">Unknown barcode</span>
+    <span style="width:44px"></span>
+  </div>
+
+  <div class="barcode-block">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 6v12M11 6v12M15 6v12"/></svg>
+    <div>
+      <div class="num">0-13891-23456-7</div>
+      <div class="lbl">Not in catalog — enroll it now, then keep counting</div>
+    </div>
+  </div>
+
+  <form id="enrollForm" onsubmit="return false">
+
+    <div class="field">
+      <label class="text-label req" for="name">Product name</label>
+      <input id="name" placeholder="e.g. Espolòn Blanco" autofocus />
+    </div>
+
+    <div class="field">
+      <label class="text-label" for="brand"><span class="optional">Brand (optional)</span></label>
+      <input id="brand" placeholder="e.g. Espolòn" />
+    </div>
+
+    <div class="field">
+      <label class="text-label req">Category</label>
+      <div class="chip-row" id="categoryChips">
+        <button type="button" class="chip active" data-cat="spirits">Spirits</button>
+        <button type="button" class="chip" data-cat="beer">Beer</button>
+        <button type="button" class="chip" data-cat="wine">Wine</button>
+        <button type="button" class="chip" data-cat="draft">Draft Keg</button>
+        <button type="button" class="chip" data-cat="liqueur">Liqueur</button>
+        <button type="button" class="chip" data-cat="na">N/A</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="text-label req">Size</label>
+      <div class="chip-row" id="sizeChips"></div>
+    </div>
+
+    <div class="field" id="caseSizeField">
+      <label class="text-label" for="caseSize"><span class="optional">Case size (editable, defaulted)</span></label>
+      <input id="caseSize" type="number" inputmode="numeric" value="12" />
+    </div>
+
+    <div class="checkbox-row">
+      <input type="checkbox" id="isCase" />
+      <label for="isCase" class="text-body">This barcode is for a case, not a single bottle</label>
+    </div>
+
+    <div class="field" id="costField" style="display:none">
+      <label class="text-label" for="cost"><span class="optional">Cost per unit (optional, owner only)</span></label>
+      <input id="cost" type="number" step="0.01" inputmode="decimal" placeholder="0.00" />
+    </div>
+  </form>
+
+  <div class="cut-note">
+    <b>Cut from this form, on purpose:</b> vendor, subcategory, waste factor, shelf life, and par level.
+    None of them are needed to finish counting right now — they're one-tap edits in the back office later.
+    Barcode symbology (UPC-A/EAN-13/etc.) is read from the scan itself, not typed. See the annotations at the
+    bottom of this file for why each cut is safe.
+  </div>
+
+  <div class="bottom-bar">
+    <button class="btn btn-primary" id="saveBtn">Save &amp; keep counting</button>
+  </div>
+</div>
+
+<div class="proto-annotations">
+  <h2>Design decisions &amp; open questions — scan-to-enroll.html</h2>
+  <h3>Fields kept, and why</h3>
+  <ul>
+    <li><b>Barcode</b> — read-only display of the value the scan already produced. Zero interaction cost, which is the whole point of scan-to-enroll.</li>
+    <li><b>Name</b> — the one field that must be typed. Autofocused so the keyboard is up and the cursor is ready the instant the screen appears.</li>
+    <li><b>Category</b> — one-tap chip group over a dropdown or free text, because the catalog's real category set is small and closed (spirits/beer/wine/liqueur/draft/N-A per docs/handlebar-catalog.xlsx) — a chip is faster than opening a picker.</li>
+    <li><b>Size</b> — chip set that changes with category and pre-selects the most common value for that category (750ml for spirits, half barrel for draft, etc.), so the fast path is zero taps if the default is right.</li>
+    <li><b>Case size</b> — prefilled from the category default, editable; hidden entirely for Draft Keg since kegs aren't cased.</li>
+    <li><b>"This barcode is for a case" checkbox</b> — defaults unchecked (each), since a first scan-to-enroll is almost always off a single bottle/can, not a case carton.</li>
+    <li><b>Cost per unit</b> — owner-only, and the field is removed from the DOM entirely for manager/staff rather than shown-then-silently-dropped, even though `createProductAction` would strip it either way — showing a field that quietly does nothing is its own small lie.</li>
+  </ul>
+  <h3>Fields cut, and why</h3>
+  <ul>
+    <li><b>Vendor</b> — not needed to keep counting; assigning a vendor is a back-office task, not a floor task, and the schema's `vendorId` is nullable.</li>
+    <li><b>Subcategory, waste factor, shelf life, par level</b> — all optional/nullable in the schema, all deferred to the back office. None of them block a count from proceeding.</li>
+    <li><b>Barcode format/symbology</b> — the `BarcodeDetector` result already reports this; it is never something a human types.</li>
+    <li><b>The reference's 5-step wizard</b> — discarded outright per design-reference.md divergence #2. This is one screen, full stop.</li>
+  </ul>
+  <h3>Open questions for the owner</h3>
+  <ul>
+    <li>Is "guess the category from the barcode's GS1 prefix" worth building later, to pre-select a category chip instead of always defaulting to Spirits?</li>
+    <li>Wine in the real catalog is currently varietal-level (Merlot, Chardonnay) without a producer (per CLAUDE.md's open question #1-adjacent note) — should scan-to-enroll for wine ask for a producer name up front, or is that also a back-office cleanup task?</li>
+  </ul>
+</div>
+
+<script>
+  var CATEGORY_SIZES = {
+    spirits: [ {l:'750ml', ml:750, unit:'bottle', case:12, def:true}, {l:'1.75L Handle', ml:1750, unit:'bottle', case:6}, {l:'Other', ml:0, unit:'bottle', case:12} ],
+    beer:    [ {l:'12oz Can', ml:355, unit:'can', case:24, def:true}, {l:'12oz Bottle', ml:355, unit:'bottle', case:24}, {l:'16oz Can', ml:473, unit:'can', case:24}, {l:'22oz Bottle', ml:650, unit:'bottle', case:12} ],
+    wine:    [ {l:'750ml', ml:750, unit:'bottle', case:12, def:true}, {l:'Other', ml:0, unit:'bottle', case:12} ],
+    draft:   [ {l:'Half Barrel', ml:58674, unit:'keg', case:null, def:true}, {l:'Quarter Barrel', ml:29337, unit:'keg', case:null}, {l:'Sixtel', ml:19533, unit:'keg', case:null} ],
+    liqueur: [ {l:'750ml', ml:750, unit:'bottle', case:12, def:true}, {l:'1L', ml:1000, unit:'bottle', case:12}, {l:'Other', ml:0, unit:'bottle', case:12} ],
+    na:      [ {l:'12oz Can/Bottle', ml:355, unit:'can', case:24, def:true}, {l:'750ml', ml:750, unit:'bottle', case:12} ]
+  };
+
+  var sizeChips = document.getElementById('sizeChips');
+  var caseSizeField = document.getElementById('caseSizeField');
+  var caseSizeInput = document.getElementById('caseSize');
+
+  function renderSizes(cat){
+    var options = CATEGORY_SIZES[cat];
+    sizeChips.innerHTML = '';
+    options.forEach(function(o, i){
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chip' + (o.def ? ' active' : '');
+      btn.textContent = o.l;
+      btn.dataset.ml = o.ml; btn.dataset.unit = o.unit; btn.dataset.case = o.case;
+      btn.addEventListener('click', function(){
+        sizeChips.querySelectorAll('.chip').forEach(function(c){ c.classList.remove('active'); });
+        btn.classList.add('active');
+        applyCaseDefault(o);
+      });
+      sizeChips.appendChild(btn);
+      if (o.def) applyCaseDefault(o);
+    });
+  }
+
+  function applyCaseDefault(o){
+    if (o.case === null){
+      caseSizeField.style.display = 'none'; // kegs aren't cased — field doesn't apply
+    } else {
+      caseSizeField.style.display = 'flex';
+      caseSizeInput.value = o.case;
+    }
+  }
+
+  document.querySelectorAll('#categoryChips .chip').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      document.querySelectorAll('#categoryChips .chip').forEach(function(c){ c.classList.remove('active'); });
+      btn.classList.add('active');
+      renderSizes(btn.dataset.cat);
+    });
+  });
+  renderSizes('spirits');
+
+  // Cost is only ever persisted for an owner caller (lib/domain/catalog.ts
+  // strips it server-side for anyone else) — so a non-owner enrolling
+  // mid-count never even sees the field, rather than seeing it and having
+  // it silently dropped.
+  var roleSelect = document.getElementById('roleSelect');
+  var costField = document.getElementById('costField');
+  function applyRole(){
+    costField.style.display = (roleSelect.value === 'owner') ? 'flex' : 'none';
+  }
+  roleSelect.addEventListener('change', applyRole);
+  applyRole();
+
+  // Prototype-only elapsed timer, to literally test the <20s claim while
+  // reviewing — not shipped UI.
+  var start = Date.now();
+  var timerEl = document.getElementById('timer');
+  setInterval(function(){
+    var s = (Date.now() - start) / 1000;
+    timerEl.textContent = s.toFixed(1) + 's since scan';
+    timerEl.classList.toggle('warn', s > 20);
+  }, 100);
+
+  document.getElementById('saveBtn').addEventListener('click', function(){
+    alert('Prototype only — in the real app this calls createProductAction() and returns straight to the scan screen with the new product already selected.');
+  });
+</script>
+</body>
+</html>

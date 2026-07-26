@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Handlebar — Sealed Backstock Quantity (prototype)</title>
+<style>
+  :root{
+    --background:#0B0B0C;--foreground:#F5F5F4;--card:#17181A;--card-foreground:#F5F5F4;
+    --muted:#131315;--muted-foreground:#A8A8A5;--primary:#F5F5F4;--primary-foreground:#0A0A0A;
+    --secondary:#1E1E21;--secondary-foreground:#F5F5F4;--accent:#60A5FA;--accent-foreground:#0A0A0A;
+    --destructive:#D33039;--destructive-foreground:#FFFFFF;--border:#232326;--input:#6B6B6B;--ring:#60A5FA;
+    --header:#121317;--header-foreground:#F5F5F4;
+    --success:#6FCF8E;--success-bg:#14301F;--warning:#F0B429;--warning-bg:#3A2A10;--negative:#F0718A;--negative-bg:#3A1620;
+    --radius-sm:12px;--radius-md:14px;--radius-lg:16px;--radius-xl:20px;
+    --card-gap:12px;--card-pad:16px;--bar-pad:16px;--section-gap:24px;--tap-min:44px;--tap-primary:56px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{background:#050506;color:var(--foreground);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+    font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;}
+  :focus-visible{outline:2px solid var(--ring);outline-offset:2px;}
+  button{cursor:pointer;font-family:inherit;}
+  a{color:inherit;text-decoration:none;}
+  input[type=number]{font-family:inherit;}
+  input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
+
+  .proto-bar{max-width:390px;margin:0 auto;padding:10px 12px;border:1px dashed #3a3a3f;border-bottom:none;
+    background:#111114;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8a8a90;display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+  .proto-bar b{color:#c9c9cf;}
+  .proto-nav a{padding:4px 8px;border:1px solid #3a3a3f;border-radius:8px;color:#c9c9cf;}
+  .proto-nav a:hover{background:#1c1c20;}
+  .proto-controls{max-width:390px;margin:0 auto;padding:12px;border:1px dashed #3a3a3f;border-top:none;border-bottom:none;
+    background:#0d0d10;display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px;color:#a8a8ac;}
+  .proto-controls select{background:#1c1c20;color:#eee;border:1px solid #3a3a3f;border-radius:8px;padding:6px 8px;font-size:12px;}
+  .proto-label{font-weight:600;color:#6f6f75;}
+  .proto-annotations{max-width:390px;margin:0 auto;padding:16px 14px;border:1px dashed #3a3a3f;background:#0d0d10;color:#b5b5ba;font-size:12.5px;line-height:1.6;}
+  .proto-annotations h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8a8a90;margin:0 0 10px;}
+  .proto-annotations h3{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#6f6f75;margin:16px 0 6px;}
+  .proto-annotations ul{margin:0;padding-left:18px;}
+  .proto-annotations li{margin-bottom:8px;}
+  .proto-annotations b{color:#e6e6ea;}
+
+  .app{max-width:390px;margin:0 auto;min-height:100vh;background:var(--background);position:relative;
+    border:1px solid var(--border);border-top:none;padding-bottom:96px;}
+
+  .text-numeral-lg{font-size:48px;font-weight:700;line-height:1;}
+  .text-header-title{font-size:28px;font-weight:600;line-height:1.15;}
+  .text-numeral-md{font-size:24px;font-weight:600;line-height:1.1;}
+  .text-row-title{font-size:18px;font-weight:600;line-height:1.3;}
+  .text-numeral-sm{font-size:17px;font-weight:600;line-height:1.2;}
+  .text-row-subtitle{font-size:15px;font-weight:400;line-height:1.4;color:var(--muted-foreground);}
+  .text-body{font-size:16px;font-weight:400;line-height:1.5;}
+  .text-screen-title{font-size:13px;font-weight:600;line-height:1.2;letter-spacing:.06em;text-transform:uppercase;}
+  .text-caption{font-size:13px;font-weight:400;line-height:1.4;color:var(--muted-foreground);}
+  .text-label{font-size:11px;font-weight:600;line-height:1.2;letter-spacing:.06em;text-transform:uppercase;}
+
+  .detail-header{border-radius:0 0 var(--radius-xl) var(--radius-xl);background:var(--header);color:var(--header-foreground);
+    padding:20px var(--bar-pad) 24px;}
+  .icon-btn{width:44px;height:44px;min-width:44px;display:flex;align-items:center;justify-content:center;
+    border-radius:999px;border:1px solid rgba(245,245,244,.2);background:transparent;color:inherit;}
+  .header-row{display:flex;align-items:center;justify-content:space-between;}
+  .header-pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
+  .pill-outline{display:inline-flex;align-items:center;border-radius:999px;padding:4px 12px;font-size:11px;font-weight:600;
+    letter-spacing:.06em;text-transform:uppercase;border:1px solid rgba(245,245,244,.25);color:var(--header-foreground);}
+
+  .section{padding:20px var(--bar-pad) 0;}
+  .section-label{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px;}
+
+  /* ADD / SET mode toggle — brand blue for the active segment (a form
+     selection state), per docs/design-system.md §3's explicit allowance:
+     "selected/active states in nav and forms" is a sanctioned blue use. */
+  .mode-toggle{display:flex;border:1px solid var(--input);border-radius:var(--radius-md);padding:3px;gap:3px;}
+  .mode-btn{flex:1;min-height:40px;border-radius:calc(var(--radius-md) - 4px);border:0;background:transparent;
+    color:var(--muted-foreground);font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;}
+  .mode-btn.active{background:var(--accent);color:var(--accent-foreground);}
+
+  .current-note{margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-md);
+    background:var(--muted);color:var(--muted-foreground);font-size:13px;display:flex;gap:8px;align-items:flex-start;}
+  .current-note svg{flex-shrink:0;margin-top:2px;color:var(--accent);}
+
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px;}
+  .qty-card{border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);padding:var(--card-pad);}
+  .qty-card .lbl{display:block;margin-bottom:10px;}
+  .stepper{display:flex;align-items:center;gap:8px;}
+  .step-btn{width:var(--tap-primary);height:var(--tap-primary);flex-shrink:0;border-radius:var(--radius-md);
+    border:1px solid var(--input);background:var(--secondary);color:var(--foreground);font-size:22px;font-weight:700;}
+  .step-input{flex:1;min-width:0;text-align:center;background:transparent;border:0;color:var(--foreground);
+    font-size:32px;font-weight:700;-moz-appearance:textfield;}
+  .qty-card .hint{margin-top:8px;color:var(--muted-foreground);font-size:12px;}
+
+  .summary{margin-top:16px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--muted);padding:var(--card-pad);}
+  .summary-row{display:flex;align-items:baseline;justify-content:space-between;}
+  .summary-row + .summary-row{margin-top:6px;}
+  .summary-note{margin-top:8px;color:var(--muted-foreground);font-size:12px;}
+
+  .bottom-bar{position:fixed;left:0;right:0;bottom:0;max-width:390px;margin:0 auto;display:flex;gap:12px;
+    border-top:1px solid var(--border);background:var(--background);padding:var(--bar-pad) var(--bar-pad) calc(var(--bar-pad) + env(safe-area-inset-bottom));z-index:40;}
+  .btn{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:2px;flex:1;border-radius:var(--radius-md);
+    font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;min-height:var(--tap-primary);border:1px solid transparent;}
+  .btn-primary{background:var(--primary);color:var(--primary-foreground);}
+  .btn-outline{background:transparent;border-color:var(--input);color:var(--foreground);}
+
+  svg{display:block;}
+</style>
+</head>
+<body>
+
+<div class="proto-bar">
+  <span class="proto-nav">
+    <b>Prototype nav:</b>
+    <a href="count-scan.html">Scan</a>
+    <a href="count-fill-tenths.html">Fill tenths</a>
+    <a href="count-sealed-qty.html">Sealed qty</a>
+    <a href="scan-to-enroll.html">Scan-to-enroll</a>
+    <a href="count-session.html">Count session</a>
+  </span>
+</div>
+<div class="proto-controls">
+  <span class="proto-label">Demo controls (not shipped UI):</span>
+  <label>Role
+    <select id="roleSelect">
+      <option value="owner">Owner</option>
+      <option value="manager">Manager</option>
+      <option value="staff">Staff</option>
+    </select>
+  </label>
+</div>
+
+<div class="app">
+  <header class="detail-header">
+    <div class="header-row">
+      <button class="icon-btn" aria-label="Close">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+      <button class="icon-btn" aria-label="More actions">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+      </button>
+    </div>
+    <h1 class="text-header-title" style="margin:14px 0 0">Bacardi Superior Rum</h1>
+    <div class="header-pills">
+      <span class="pill-outline">750ML</span>
+      <span class="pill-outline">STOREROOM</span>
+      <span class="pill-outline">SEALED BACKSTOCK</span>
+    </div>
+  </header>
+
+  <div class="section">
+    <div class="mode-toggle" role="tablist" aria-label="Entry mode">
+      <button class="mode-btn active" id="modeAdd" role="tab" aria-selected="true">Add (+)</button>
+      <button class="mode-btn" id="modeSet" role="tab" aria-selected="false">Set exact count (=)</button>
+    </div>
+    <div class="current-note" id="currentNote">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+      <span>Currently recorded on this line: <b>5 cases, 0 ea</b> (60 units). This screen adds more on top.</span>
+    </div>
+
+    <div class="pair">
+      <div class="qty-card">
+        <span class="text-label lbl" style="color:var(--muted-foreground)">Cases</span>
+        <div class="stepper">
+          <button class="step-btn" id="caseMinus" aria-label="Decrease cases">–</button>
+          <input class="step-input" id="caseInput" type="number" inputmode="numeric" value="0" aria-label="Number of cases" />
+          <button class="step-btn" id="casePlus" aria-label="Increase cases">+</button>
+        </div>
+        <p class="hint">× 12 per case</p>
+      </div>
+      <div class="qty-card">
+        <span class="text-label lbl" style="color:var(--muted-foreground)">Eaches</span>
+        <div class="stepper">
+          <button class="step-btn" id="eachMinus" aria-label="Decrease eaches">–</button>
+          <input class="step-input" id="eachInput" type="number" inputmode="numeric" value="0" aria-label="Number of loose bottles" />
+          <button class="step-btn" id="eachPlus" aria-label="Increase eaches">+</button>
+        </div>
+        <p class="hint">Loose bottles, not part of a case</p>
+      </div>
+    </div>
+
+    <div class="summary">
+      <div class="summary-row">
+        <span class="text-caption" id="summaryLabel">This write adds</span>
+        <span class="text-numeral-sm tabular" id="summaryUnits">0 units</span>
+      </div>
+      <div class="summary-row">
+        <span class="text-caption" id="summaryLabel2">Line total after save</span>
+        <span class="text-numeral-sm tabular" id="summaryTotal">60 units</span>
+      </div>
+      <p class="summary-note">Cases and eaches are stored separately and never merged — this combined figure is for reference only.</p>
+      <p class="summary-note" id="valueNote" style="display:none"></p>
+    </div>
+  </div>
+
+  <div class="bottom-bar">
+    <button class="btn btn-outline">Cancel</button>
+    <button class="btn btn-primary" id="saveBtn">
+      <span class="text-label">Save</span>
+    </button>
+  </div>
+</div>
+
+<div class="proto-annotations">
+  <h2>Design decisions &amp; open questions — count-sealed-qty.html</h2>
+  <h3>Decisions</h3>
+  <ul>
+    <li><b>ADD vs SET is an explicit segmented control</b>, not two separate screens, so a manager who needs the correction path (`setCountLineQuantitiesAction`) doesn't have to leave the line they're already looking at. The active segment uses brand blue, which docs/design-system.md §3 explicitly sanctions for "selected/active states in nav and forms" — this is a UI mode, not a stock/count status, so amber (which would otherwise read as "in progress") is deliberately avoided here.</li>
+    <li><b>Cases and eaches are always two physically separate inputs</b> (invariant 4) — the combined "62 units" figure is clearly labeled reference-only and is never round-tripped as a single value back to the server.</li>
+    <li><b>Correction mode starts from the current server value</b> (5 cases, 0 ea — the "typed 5 instead of 3" scenario from CLAUDE.md), not from zero, because a SET is "dial this to the true number," not "add a delta." Add mode starts from zero because it's additive by design.</li>
+    <li>Numeric inputs double as the stepper's display — you can tap +/- for a small correction or tap directly into the number and type "12", since typing beats twelve taps for the 3–5 second/SKU target.</li>
+  </ul>
+  <h3>Open questions for the owner</h3>
+  <ul>
+    <li>How does a manager discover a line is currently 5 cases when they only intended 3? This screen assumes they already know (they navigated here specifically to fix it) — should there be a review/audit view that flags likely mis-entries (e.g., a value far outside par) so the correction path gets discovered rather than hoped-for?</li>
+    <li>Is "Save correction" strong enough wording, or does a SET need a harder confirmation step (e.g. "Replace 60 units with 36 units?") given it can silently erase a real observation if triggered by mistake?</li>
+  </ul>
+</div>
+
+<script>
+  var CASE_SIZE = 12;
+  var UNIT_COST = 11.25;
+  var CURRENT_CASES = 5; // the "typed 5 instead of 3" mistake, already on the server
+  var CURRENT_EACHES = 0;
+
+  var mode = 'add'; // 'add' -> incrementCountLineAction, 'set' -> setCountLineQuantitiesAction
+  var role = 'owner';
+
+  var caseInput = document.getElementById('caseInput');
+  var eachInput = document.getElementById('eachInput');
+  var modeAdd = document.getElementById('modeAdd');
+  var modeSet = document.getElementById('modeSet');
+  var currentNote = document.getElementById('currentNote');
+  var summaryLabel = document.getElementById('summaryLabel');
+  var summaryLabel2 = document.getElementById('summaryLabel2');
+  var summaryUnits = document.getElementById('summaryUnits');
+  var summaryTotal = document.getElementById('summaryTotal');
+  var valueNote = document.getElementById('valueNote');
+  var saveBtn = document.getElementById('saveBtn');
+
+  function clampInt(v){ v = parseInt(v, 10); return isNaN(v) || v < 0 ? 0 : v; }
+
+  function recompute(){
+    var cases = clampInt(caseInput.value);
+    var eaches = clampInt(eachInput.value);
+
+    if (mode === 'add'){
+      var addedUnits = cases*CASE_SIZE + eaches;
+      var totalCases = CURRENT_CASES + cases;
+      var totalEaches = CURRENT_EACHES + eaches;
+      var totalUnits = totalCases*CASE_SIZE + totalEaches;
+      summaryLabel.textContent = 'This write adds';
+      summaryUnits.textContent = addedUnits + ' units';
+      summaryLabel2.textContent = 'Line total after save';
+      summaryTotal.textContent = totalUnits + ' units (' + totalCases + ' cases, ' + totalEaches + ' ea)';
+      renderValue(addedUnits * UNIT_COST, 'Value added');
+    } else {
+      var setUnits = cases*CASE_SIZE + eaches;
+      var priorUnits = CURRENT_CASES*CASE_SIZE + CURRENT_EACHES;
+      var delta = setUnits - priorUnits;
+      summaryLabel.textContent = 'Correction delta';
+      summaryUnits.textContent = (delta >= 0 ? '+' : '') + delta + ' units';
+      summaryLabel2.textContent = 'Line total after save';
+      summaryTotal.textContent = setUnits + ' units (' + cases + ' cases, ' + eaches + ' ea)';
+      renderValue(setUnits * UNIT_COST, 'Resulting line value');
+    }
+  }
+
+  function renderValue(dollarAmount, label){
+    if (role !== 'owner'){ valueNote.style.display = 'none'; updateSaveButton(undefined); return; }
+    valueNote.style.display = 'block';
+    valueNote.textContent = label + ': $' + dollarAmount.toFixed(2);
+    updateSaveButton(dollarAmount);
+  }
+
+  function updateSaveButton(value){
+    if (typeof value === 'number'){
+      saveBtn.innerHTML = '<span class="text-label">' + (mode === 'add' ? 'Save' : 'Save correction') + '</span>' +
+        '<span class="text-numeral-sm tabular">$' + value.toFixed(2) + '</span>';
+    } else {
+      saveBtn.innerHTML = '<span class="text-label">' + (mode === 'add' ? 'Save' : 'Save correction') + '</span>';
+    }
+  }
+
+  function setMode(next){
+    mode = next;
+    modeAdd.classList.toggle('active', mode === 'add');
+    modeAdd.setAttribute('aria-selected', mode === 'add');
+    modeSet.classList.toggle('active', mode === 'set');
+    modeSet.setAttribute('aria-selected', mode === 'set');
+
+    if (mode === 'add'){
+      caseInput.value = 0; eachInput.value = 0;
+      currentNote.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>' +
+        '<span>Currently recorded on this line: <b>' + CURRENT_CASES + ' cases, ' + CURRENT_EACHES + ' ea</b> (' + (CURRENT_CASES*CASE_SIZE+CURRENT_EACHES) + ' units). This screen adds more on top.</span>';
+    } else {
+      // Correction mode starts from what is actually on the line right now —
+      // exactly the "typed 5 instead of 3" scenario CLAUDE.md describes.
+      caseInput.value = CURRENT_CASES; eachInput.value = CURRENT_EACHES;
+      currentNote.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>' +
+        '<span>Correction mode: this replaces the line\'s total outright. Dial it to the true number on the shelf — started from what\'s recorded now (<b>' + CURRENT_CASES + ' cases</b>).</span>';
+    }
+    recompute();
+  }
+
+  document.getElementById('caseMinus').addEventListener('click', function(){ caseInput.value = clampInt(caseInput.value)-1 < 0 ? 0 : clampInt(caseInput.value)-1; recompute(); });
+  document.getElementById('casePlus').addEventListener('click', function(){ caseInput.value = clampInt(caseInput.value)+1; recompute(); });
+  document.getElementById('eachMinus').addEventListener('click', function(){ eachInput.value = clampInt(eachInput.value)-1 < 0 ? 0 : clampInt(eachInput.value)-1; recompute(); });
+  document.getElementById('eachPlus').addEventListener('click', function(){ eachInput.value = clampInt(eachInput.value)+1; recompute(); });
+  caseInput.addEventListener('input', recompute);
+  eachInput.addEventListener('input', recompute);
+
+  modeAdd.addEventListener('click', function(){ setMode('add'); });
+  modeSet.addEventListener('click', function(){ setMode('set'); });
+
+  document.getElementById('roleSelect').addEventListener('change', function(e){
+    role = e.target.value;
+    recompute();
+  });
+
+  setMode('add');
+</script>
+</body>
+</html>
