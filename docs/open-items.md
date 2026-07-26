@@ -208,20 +208,47 @@ the entry screen is pure overhead. That could be a real speed win on the
 the abstract** — and if the answer is no, delete the action rather than
 leaving a hardened write path that nothing exercises.
 
-## 11. Two location count modes were assigned without the owner
+## 11. One location count mode was assigned without the owner
 
 **Trigger: before the first real count — one question, ask it.**
 
 `location.count_mode` is new (`tenths` | `quantity`), because CLAUDE.md says
 the input mode is "driven entirely by location" and there was nowhere to put
-that. Three assignments come straight from the owner's own notes in
-`locations.csv`: Speed Rail and Back Bar are `tenths`, Storeroom is
-`quantity`. Two were inferred and need confirming:
+that. Speed Rail, Back Bar and Storeroom come straight from the owner's own
+notes in `locations.csv`. One is still inferred:
 
-- **Wine Rack → `tenths`.** Assumes wine by the glass means open bottles
-  with fill levels. If the rack is actually sealed stock, this is wrong.
 - **Walk-In → `quantity`.** From its note, "Packaged beer." If open kegs
   live in there, it needs `tenths` instead.
 
-Getting one wrong is not silent — the screen visibly offers the wrong
-input — but it is annoying enough mid-count to be worth one question first.
+Getting it wrong is not silent — the screen visibly offers the wrong input —
+but it is annoying enough mid-count to be worth one question first.
+
+**Wine Rack is settled: `tenths`, and it does not need confirming.** `tenths`
+is the superset mode — it offers the fill pad *and* sealed quantities, where
+`quantity` offers only quantities. So a tenths location can record anything a
+quantity location can. It is the safe default wherever the answer is
+uncertain or low-stakes, which is exactly the wine situation (item 12).
+
+## 12. Wine features are deferred — DECIDED 2026-07-26
+
+**Trigger: if wine ever becomes a meaningful share of sales. Not before.**
+
+Owner's call: wine volume is limited enough that wine-specific work is not
+worth doing. This is a scope decision, not a gap.
+
+What that means concretely, so a future session doesn't "fix" it:
+
+- **The 5 seeded wines stay varietals** (`Merlot`, `Chardonnay`) with no
+  producer. They cannot be scanned — no barcode maps to a varietal — so in
+  practice they get counted via the search picker, which works fine.
+- **`needs_producer` stays** in `lib/domain/catalog.ts`'s incompleteness
+  predicate and keeps showing its pill in the catalog's "needs attention"
+  view. It is three lines, already written, and describes something true.
+  Deferring wine means *nobody has to act on it*, not that the app should
+  stop reporting it. Leave it alone rather than spending a change to hide
+  a fact.
+- **Nothing is blocked by it.** Unpriced and unscannable wine lines are
+  excluded from valuation and reported as excluded, which is the same path
+  the other 88 uncosted products already take (item 4). Wine is not a
+  special case in any code.
+- Vintage tracking was already a non-goal (spec §16 Q5) and stays one.
