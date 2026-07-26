@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "442a2472-03a0-4388-a564-12105b4e7050",
+  "id": "bf2bf7d6-d965-444b-8109-f9669cb16355",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "account": {
@@ -634,6 +634,14 @@
           "notNull": true,
           "autoincrement": false,
           "default": 0
+        },
+        "count_mode": {
+          "name": "count_mode",
+          "type": "enum('tenths','quantity')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'tenths'"
         },
         "notes": {
           "name": "notes",

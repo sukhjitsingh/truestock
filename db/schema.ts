@@ -59,6 +59,25 @@ export const userRoleEnum = ["owner", "manager", "staff"] as const;
 export const productUnitTypeEnum = ["bottle", "can", "keg"] as const;
 export const barcodePackLevelEnum = ["each", "case"] as const;
 export const countTypeEnum = ["full", "spot", "monthly_close"] as const;
+/**
+ * How a location is counted. CLAUDE.md: "the input-mode switch [is] explicit —
+ * Speed Rail and Back Bar are tenths, Storeroom is quantities only, and that
+ * is driven entirely by location."
+ *
+ * It lives on `location` as a column because it is a property of the place,
+ * not of the screen. The alternative was matching location names in the
+ * frontend, which is how three screens end up with three different opinions
+ * about whether the Wine Rack takes fill levels.
+ *
+ *  - `tenths`   — open bottles are the point here; the fill pad is the primary
+ *                 input. Sealed quantities are still reachable, because a
+ *                 back bar legitimately holds a backup bottle behind the open
+ *                 one.
+ *  - `quantity` — sealed backstock only. No fill UI at all, per "quantities
+ *                 only": offering a fill pad in the storeroom invites someone
+ *                 to tap a level on a sealed case.
+ */
+export const locationCountModeEnum = ["tenths", "quantity"] as const;
 export const countStatusEnum = [
   "draft",
   "in_progress",
@@ -226,6 +245,11 @@ export const location = mysqlTable(
     id: int("id").autoincrement().primaryKey(),
     name: varchar("name", { length: 100 }).notNull(),
     sortOrder: int("sort_order").notNull().default(0),
+    // See `locationCountModeEnum`. Defaults to `tenths` because that mode is
+    // a superset — it also permits sealed quantities — so a location added
+    // later without an explicit mode can still record everything, rather
+    // than silently losing the ability to record open bottles.
+    countMode: mysqlEnum("count_mode", locationCountModeEnum).notNull().default("tenths"),
     // Not in spec §8's column list, but locations.csv carries real operational
     // notes (e.g. "Count first — all open bottles, tenths"; "Test WiFi in
     // here."). Nullable, additive, doesn't touch any invariant — dropping it

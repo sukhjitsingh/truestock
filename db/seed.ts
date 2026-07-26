@@ -135,6 +135,18 @@ async function seedLocations() {
     }
     const notes = trimmedOrNull(row.notes);
 
+    // Which input the counting screen offers here (CLAUDE.md: the input-mode
+    // switch is "driven entirely by location"). Validated rather than
+    // defaulted on a typo — a location that silently fell back to `tenths`
+    // would offer a fill pad in the storeroom, which is the one place
+    // "quantities only" is a hard rule.
+    const countMode = row.count_mode?.trim();
+    if (countMode !== "tenths" && countMode !== "quantity") {
+      throw new Error(
+        `locations.csv: "${name}" has invalid count_mode "${row.count_mode}" (expected "tenths" or "quantity")`,
+      );
+    }
+
     const existing = await db
       .select({ id: location.id })
       .from(location)
@@ -142,12 +154,12 @@ async function seedLocations() {
       .limit(1);
 
     if (existing.length === 0) {
-      await db.insert(location).values({ name, sortOrder, notes });
+      await db.insert(location).values({ name, sortOrder, countMode, notes });
       inserted++;
     } else {
       await db
         .update(location)
-        .set({ sortOrder, notes })
+        .set({ sortOrder, countMode, notes })
         .where(eq(location.id, existing[0].id));
       updated++;
     }

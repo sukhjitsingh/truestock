@@ -243,6 +243,11 @@
   --spacing-section-gap: 1.5rem; /* 24px — gap between page sections */
   --spacing-tap-min: 2.75rem; /* 44px — absolute floor for any tappable target */
   --spacing-tap-primary: 3.5rem; /* 56px — floor for the primary count loop */
+  --spacing-action-bar: 6rem; /* 96px — bottom clearance a scrolling region must
+    reserve so the fixed action bar never covers its last row. 56px button +
+    2×16px bar padding + 8px breathing room. Use as `pb-action-bar` on the
+    scroll container; never eyeball a pb-* value per screen, or the last row
+    ends up half-hidden on exactly one of them. */
 }
 
 @layer base {
@@ -251,10 +256,16 @@
     outline-color: var(--color-ring);
   }
 
-  html {
+  /* `color-scheme` follows the .dark class wherever it lands, not just on
+     <html>. The counting and back-office surfaces are Next.js route groups
+     nested inside one root layout, so each group's own root element carries
+     the class — pinning this to `html.dark` would have left native controls
+     and scrollbars rendering light inside the dark counting app. Applies to
+     descendants, which is what form controls in the group need. */
+  :root {
     color-scheme: light;
   }
-  html.dark {
+  .dark {
     color-scheme: dark;
   }
 

@@ -73,10 +73,10 @@
  * write path funnels through `assertCountWritable` below rather than
  * re-implementing the check.
  */
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/mysql-core";
 import { db } from "@/db";
-import { count, countLine, countLineWrite, product, user } from "@/db/schema";
+import { count, countLine, countLineWrite, location, product, user } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
 import { canSeeCost } from "@/lib/authz";
 import {
@@ -880,9 +880,28 @@ export async function closeCount(
 // Read a count with its lines (role-shaped)
 // ---------------------------------------------------------------------------
 
+/**
+ * A count line with enough product/location context to render a row without
+ * a second round trip.
+ *
+ * Only `getCount` returns this shape. The write paths (scan, increment, set,
+ * edit) deliberately keep returning the lean `CountLineRow`: they are on the
+ * count loop's latency budget, and the caller of a scan already knows which
+ * product it resolved — making every write pay for a join to re-tell it the
+ * name would be a per-scan cost for information the client already holds.
+ */
+export interface CountLineDetail extends CountLineRow {
+  productName: string;
+  productBrand: string | null;
+  category: string;
+  unitType: (typeof product.$inferSelect)["unitType"];
+  sizeMl: number;
+  locationName: string;
+}
+
 export interface CountDetail {
   count: CountSummaryRow;
-  lines: CountLineRow[];
+  lines: CountLineDetail[];
 }
 
 export async function getCount(actor: Actor, countId: number): Promise<CountDetail> {
@@ -891,8 +910,18 @@ export async function getCount(actor: Actor, countId: number): Promise<CountDeta
     throw new NotFoundError("Count");
   }
   const lines = await db
-    .select()
+    .select({
+      line: countLine,
+      productName: product.name,
+      productBrand: product.brand,
+      category: product.category,
+      unitType: product.unitType,
+      sizeMl: product.sizeMl,
+      locationName: location.name,
+    })
     .from(countLine)
+    .innerJoin(product, eq(product.id, countLine.productId))
+    .innerJoin(location, eq(location.id, countLine.locationId))
     .where(eq(countLine.countId, countId))
     .orderBy(desc(countLine.countedAt));
 
@@ -905,7 +934,15 @@ export async function getCount(actor: Actor, countId: number): Promise<CountDeta
       closedAt: row.closedAt,
       notes: row.notes,
     },
-    lines: lines.map((l) => toCountLineRow(actor.role, l)),
+    lines: lines.map((r) => ({
+      ...toCountLineRow(actor.role, r.line),
+      productName: r.productName,
+      productBrand: r.productBrand,
+      category: r.category,
+      unitType: r.unitType,
+      sizeMl: r.sizeMl,
+      locationName: r.locationName,
+    })),
   };
 }
 
@@ -978,6 +1015,40 @@ export async function listCounts(actor: Actor, limit = 50): Promise<CountListRow
     }
     return row;
   });
+}
+
+/**
+ * The count currently being worked, if any — the counting app's entry point.
+ *
+ * Deliberately separate from `listCounts`, which is owner/manager only. A
+ * staff member is count-only (spec §4) and has no back-office history
+ * surface, but still has to be able to walk up to the bar phone and join the
+ * count in progress. Making them depend on someone handing over a URL would
+ * fail the "faster than a clipboard on day one" test the whole project is
+ * judged on. This read answers exactly one question — "what am I working
+ * on?" — and exposes no history and no value.
+ *
+ * Returns the most recently started count that is not yet closed. The MVP
+ * assumes one count in flight at a time; if two were ever open, the newer is
+ * the one someone walking up is being handed.
+ */
+export async function getActiveCount(): Promise<CountSummaryRow | null> {
+  const [row] = await db
+    .select()
+    .from(count)
+    .where(ne(count.status, "closed"))
+    .orderBy(desc(count.startedAt))
+    .limit(1);
+
+  if (!row) return null;
+  return {
+    id: row.id,
+    type: row.type,
+    status: row.status,
+    startedAt: row.startedAt,
+    closedAt: row.closedAt,
+    notes: row.notes,
+  };
 }
 
 // Re-exported so report modules can build ValuationLine[] from raw

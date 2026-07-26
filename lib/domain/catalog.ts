@@ -499,11 +499,20 @@ export interface LocationSummary {
   id: number;
   name: string;
   sortOrder: number;
+  /** Which input the counting screen offers here — see `locationCountModeEnum`. */
+  countMode: (typeof location.$inferSelect)["countMode"];
+  notes: string | null;
 }
 
 export async function listLocations(): Promise<LocationSummary[]> {
   return db
-    .select({ id: location.id, name: location.name, sortOrder: location.sortOrder })
+    .select({
+      id: location.id,
+      name: location.name,
+      sortOrder: location.sortOrder,
+      countMode: location.countMode,
+      notes: location.notes,
+    })
     .from(location)
     .orderBy(location.sortOrder, location.name);
 }

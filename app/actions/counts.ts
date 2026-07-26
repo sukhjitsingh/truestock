@@ -200,6 +200,21 @@ export async function getCountTotalsAction(
 }
 
 /**
+ * The counting app's entry point: the count currently in flight, or null.
+ * All three roles — this is how a staff member joins the count in progress
+ * without a back-office list they aren't entitled to (see the domain
+ * function for the full reasoning).
+ */
+export async function getActiveCountAction(): Promise<
+  ActionResult<counts.CountSummaryRow | null>
+> {
+  return runAction(async () => {
+    await requireRole("owner", "manager", "staff");
+    return counts.getActiveCount();
+  });
+}
+
+/**
  * The back-office counts list. Owner/manager only — staff is count-only and
  * has no back-office surface (spec §4); a staff member works the count they
  * were handed, not a history of every count taken.

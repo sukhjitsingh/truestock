@@ -1,6 +1,6 @@
-location_name,sort_order,notes
-Speed Rail,1,"Count first - all open bottles, tenths"
-Back Bar,2,"Open bottles, tenths"
-Wine Rack,3,
-Walk-In,4,Packaged beer. Test WiFi in here.
-Storeroom,5,"Sealed backstock - quantities only, no fill levels"
+location_name,sort_order,count_mode,notes
+Speed Rail,1,tenths,"Count first - all open bottles, tenths"
+Back Bar,2,tenths,"Open bottles, tenths"
+Wine Rack,3,tenths,"Wine by the glass is open - fill levels apply"
+Walk-In,4,quantity,Packaged beer. Test WiFi in here.
+Storeroom,5,quantity,"Sealed backstock - quantities only, no fill levels"

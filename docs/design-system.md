@@ -177,6 +177,12 @@ Named on top of Tailwind's default 4px scale, usable on any spacing utility
 | `section-gap` | 24px | Gap between page sections |
 | `tap-min` | 44px | **Absolute floor** for any tappable target |
 | `tap-primary` | 56px | Floor for anything on the primary count loop (tenths buttons, scan trigger, close-count) |
+| `action-bar` | 96px | Bottom clearance a scrolling region reserves for the fixed action bar (`pb-action-bar`) |
+
+`action-bar` is 56px button + 2×16px bar padding + 8px breathing room. It exists as a
+token rather than a per-screen `pb-*` guess because the failure is silent and screen-local:
+eyeball it on four screens and the fifth has its last row half-covered by the bar, which
+on the count-session screen is the row someone just scanned.
 
 ### Radius
 `--radius: 1rem` (16px) is the base; the rest follow shadcn's calc convention so a later

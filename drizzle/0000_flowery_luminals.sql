@@ -63,6 +63,7 @@ CREATE TABLE `location` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`name` varchar(100) NOT NULL,
 	`sort_order` int NOT NULL DEFAULT 0,
+	`count_mode` enum('tenths','quantity') NOT NULL DEFAULT 'tenths',
 	`notes` text,
 	`created_at` timestamp NOT NULL DEFAULT (now()),
 	`updated_at` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
