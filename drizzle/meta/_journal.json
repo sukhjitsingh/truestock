@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1785004955044,
+      "tag": "0000_majestic_whiplash",
+      "breakpoints": true
+    }
+  ]
+}
