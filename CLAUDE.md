@@ -148,6 +148,18 @@ Draft is simpler than it looks and should not be special-cased:
   the catalog decays and the whole system dies. This is the highest-risk interaction.
 - **Always offer a search picker beside the scan button** — damaged labels, house
   infusions, and some wine have no usable barcode.
+- **The active location is locked per leg, with an escape hatch.** A count covers all five
+  locations, but scanning is scoped to one at a time: pick a location, count it, tap
+  *Finish section*, move on. A separate "count something elsewhere" action records a stray
+  bottle into another location and returns you to the current leg — it never silently
+  changes which leg you are in.
+  Why it is locked: a wrong active location fails *silently*. Every scan lands on a real,
+  legitimate line in the wrong place; the count total stays correct and only the
+  distribution is wrong, so nothing looks broken until a reorder list is nonsense weeks
+  later. Locking also makes the input-mode switch explicit — Speed Rail and Back Bar are
+  tenths, Storeroom is quantities only, and that is driven entirely by location.
+  Note: `prototypes/count-scan.html` predates this decision and still shows a free-switch
+  dropdown. Do not copy that part of it.
 - **Count-line writes are optimistic.** UI updates immediately, saves in the background,
   pending writes queue in IndexedDB. The server stays authoritative.
 - **One fresh `client_line_id` UUID per write attempt — never one per count line.**
