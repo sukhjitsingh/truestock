@@ -142,13 +142,22 @@ Not blocking, but they shape work that is coming:
 Designing against the real server actions surfaced reads that do not exist yet. None is a
 bug in what was built; each is a hole the UI will otherwise paper over.
 
-- **No live progress totals for an in-progress count.** `totalUnits`, `pricedLineCount`,
-  `excludedLineCount` and `totalValue` are computed only inside `closeCount`. A count session
-  screen showing running totals before close must therefore re-sum valuation client-side —
-  a second implementation of the same arithmetic that can drift from
-  `lib/domain/valuation.ts` silently. **Fix by extracting the totals computation into a
-  read-only action** (`getCountTotals`) that both `closeCount` and the live screen call, so
-  there is one implementation. Do not let the client own this maths.
+- **No live progress totals for an in-progress count. DECIDED 2026-07-26: extract
+  `getCountTotals` before building the count-session screen.** `totalUnits`,
+  `pricedLineCount`, `excludedLineCount` and `totalValue` are computed only inside
+  `closeCount`, so nothing can ask for them mid-count.
+  To be precise about the risk: `getCountAction` already returns per-line `units` and
+  `extendedValue`, so a client would be re-implementing the *summing*, not the valuation
+  rules — a smaller duplication than it first appears. It still matters, because the
+  prototype prints the total on the CLOSE COUNT button itself. If the displayed figure and
+  the figure `closeCount` computes a second later ever disagree, the user saw one number
+  and the immutable record holds another, with no edit path to reconcile them.
+  Extract the `summarizeValuation` call into a read-only `getCountTotals(countId)` that
+  both `closeCount` and the live screen use, so they cannot drift. Gate `totalValue` to
+  owners exactly as `closeCount` does. This also lets the session screen disclose
+  `excludedLineCount` continuously — which matters because **no product has a `case_size`
+  yet**, so `missing_case_size` (units genuinely indeterminate, not zero) will fire
+  constantly on the first real count.
 - **`ProductSummary` carries no on-hand quantity.** The catalog's stock cell (units + a
   par-relative bar) needs on-hand from the latest closed count joined against `ProductPar` —
   the same computation `reorderList()` already performs. Decide whether the catalog read owns

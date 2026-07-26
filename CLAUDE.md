@@ -162,6 +162,14 @@ Draft is simpler than it looks and should not be special-cased:
   dropdown. Do not copy that part of it.
 - **Count-line writes are optimistic.** UI updates immediately, saves in the background,
   pending writes queue in IndexedDB. The server stays authoritative.
+- **A quantity SET shows its before/after on the button, live.** `ADD` and `SET` take the
+  same input in the same box, and afterward the line just reads `3 ea` either way — a SET
+  the user meant as an ADD loses bottles with nothing on screen looking wrong. So the
+  submit button states the consequence as they type: `SET TO 3 EA / was 12 ea · −9`, or
+  `ADD 3 EA / 12 → 15`. No modal — a confirmation dialog on a control used 150 times a
+  count gets clicked through blind inside a week, which is worse than no guard because it
+  feels like one. The `count_line_write` ledger records the delta either way, so this is
+  about the human noticing at the time, not about recovering afterward.
 - **One fresh `client_line_id` UUID per write attempt — never one per count line.**
   Idempotency lives in the append-only `count_line_write` ledger, whose unique index on
   `client_line_id` makes a replayed write roll back and return success. Reuse an id only
