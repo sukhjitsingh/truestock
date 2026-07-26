@@ -78,7 +78,15 @@ user screen is a reasonable later addition; a public one is not.
 
 97 products are seeded; only the 9 draft kegs carry a real cost (from the
 workbook's Draft Economics tab). Every other product has `current_unit_cost`
-NULL, and **no** product has a `case_size`.
+NULL, and no product has a `case_size`.
+
+**Corrected 2026-07-26:** the missing `case_size` is a far smaller job than the
+missing costs, and mostly is not a gap at all. `case_size` applies to **bottled
+beer only** — 16 products. Liquor is counted as bottles, kegs are counted in
+tenths, and for both a NULL case size is correct, not missing. `computeLineUnits`
+only treats NULL as indeterminate when `sealed_case_qty > 0`, so it never
+excludes a line counted purely as eaches or partials. So: 16 case sizes to enter,
+88 unit costs to enter, and the costs are the real work.
 
 The code handles this correctly — `unit_cost_at_count` and `case_size_at_count`
 are nullable, NULL means "unpriced at count time", unpriced lines are excluded

@@ -118,6 +118,15 @@ Things to know about it:
 
 - **Costs are not filled in yet.** They come from supplier invoices. Nothing that depends
   on valuation can be tested until they are.
+- **`case_size` applies to bottled beer, not liquor.** Liquor is counted as bottles —
+  eaches and partial fills — so `case_size` stays NULL for all 62 spirits, the 2 liqueurs,
+  5 wines and 3 NA, and that is correct rather than missing data. Only the **16 bottled
+  beers** are counted both ways and need a case size. Draft kegs don't either: a keg is one
+  unit measured in tenths.
+  This matters because `computeLineUnits` only treats a NULL `case_size` as indeterminate
+  when `sealed_case_qty > 0` — "zero cases of an unknown size" is unambiguously zero. So a
+  NULL case size on liquor never excludes a line. Do not "fix" the catalog by backfilling
+  case sizes onto spirits; that would invent a pack level the bar doesn't use.
 - **Spirits default to 750 ml.** Anything also stocked as a 1.75L handle needs its own
   row — different barcode, different case cost, different pour economics.
 - **`upc` is deliberately blank.** It fills through scan-to-enroll during the first count.
