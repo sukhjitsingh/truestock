@@ -1,0 +1,125 @@
+name: Deploy
+
+# Push to main only (CLAUDE.md: "Deploy on push to main only"). Three gated
+# jobs, each depending on the last, so a failure anywhere stops the
+# pipeline with the previous deployment still live:
+#
+#   verify  -> migrate -> build-and-deploy
+#
+# See docs/deploy.md ("What breaks if this fails halfway") for exactly what
+# state each failure leaves things in.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {} # manual re-run of the current main, e.g. after fixing a Hostinger-side issue
+
+concurrency:
+  # One deploy at a time — a second push landing mid-deploy should queue,
+  # not race the first one's migrate/build/restart sequence.
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: write # only `build-and-deploy` needs this, to publish the rollback release
+
+env:
+  HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+  HOSTINGER_DOMAIN: ${{ secrets.HOSTINGER_DOMAIN }}
+  HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            .next/cache
+          key: ${{ runner.os }}-bun-next-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-next-
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun run test
+      - run: bun run check:migrations-immutable
+
+  migrate:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Apply pending migrations over SSH tunnel
+        env:
+          HOSTINGER_SSH_HOST: ${{ secrets.HOSTINGER_SSH_HOST }}
+          HOSTINGER_SSH_PORT: ${{ secrets.HOSTINGER_SSH_PORT }}
+          HOSTINGER_SSH_USER: ${{ secrets.HOSTINGER_SSH_USER }}
+          HOSTINGER_SSH_PRIVATE_KEY: ${{ secrets.HOSTINGER_SSH_PRIVATE_KEY }}
+          HOSTINGER_DB_USER: ${{ secrets.HOSTINGER_DB_USER }}
+          HOSTINGER_DB_PASSWORD: ${{ secrets.HOSTINGER_DB_PASSWORD }}
+          HOSTINGER_DB_NAME: ${{ secrets.HOSTINGER_DB_NAME }}
+        run: bash scripts/hostinger-migrate.sh
+
+  build-and-deploy:
+    needs: migrate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            .next/cache
+          key: ${{ runner.os }}-bun-next-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-next-
+      - run: bun install --frozen-lockfile
+
+      - name: Build (the expensive step — off Hostinger's shared box on purpose, spec §11)
+        run: bun run build
+
+      - name: Package standalone output for Hostinger's archive API
+        run: bash scripts/package-standalone.sh deploy/handlebar-deploy.zip
+
+      - name: Deploy archive to Hostinger
+        id: deploy
+        run: python3 scripts/hostinger-deploy-archive.py deploy/handlebar-deploy.zip
+
+      - name: Wait for the Hostinger build to finish
+        run: python3 scripts/hostinger-poll-build.py "${{ steps.deploy.outputs.build_uuid }}"
+
+      - name: Restart the Node.js process
+        # Belt-and-braces: a completed build is documented to already
+        # restart the app. This just makes sure env/config picked up on the
+        # Hostinger side (e.g. a DATABASE_URL change made in hPanel) take
+        # effect too, per Hostinger's own documented purpose for this
+        # endpoint.
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \
+            "https://developers.hostinger.com/api/hosting/v1/accounts/${HOSTINGER_USERNAME}/websites/${HOSTINGER_DOMAIN}/nodejs/server/restart"
+
+      - name: Publish this build as a rollback target
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          gh release create "deploy-${SHORT_SHA}" deploy/handlebar-deploy.zip \
+            --title "Deploy ${SHORT_SHA}" \
+            --notes "Automated deploy artifact — used by .github/workflows/rollback.yml. Not a user-facing release." \
+            --target "${GITHUB_SHA}"

@@ -98,35 +98,39 @@ Related, from the workbook itself: the 5 wines are varietals (`Merlot`,
 `Chardonnay`) rather than specific bottles. They need a producer before they can
 be costed or scanned.
 
-## 5. Deployment prerequisites not yet settled
+## 5. ~~Deployment prerequisites not yet settled~~ — CLOSED 2026-07-26
 
-**Trigger: before the first deploy to Hostinger.**
-
-- Confirm Next.js 16.2.11 carries the July 2026 advisory fixes (spec §11:
-  middleware/proxy bypass, SSRF via rewrites and Server Actions, image
-  optimization). It is on npm's `latest` tag, but this was never verified
-  against GitHub Security Advisories — no network access to them from the audit
-  environment.
+Resolved by the devops build-out (`docs/deploy.md`):
+- Next.js 16.2.11 verified directly against GitHub Security Advisories
+  (`api.github.com/repos/vercel/next.js/security-advisories`, not assumed
+  from the npm tag) — it already carries every fix in the July 2026 batch.
+  See `docs/deploy.md` §6 for the advisory-by-advisory table.
 - `poweredByHeader: false` and a `headers()` block (HSTS, `nosniff`,
-  frame-ancestors, a baseline CSP) are not set. Cheap, worth doing once there
-  are real pages.
-- `sharp`'s libvips CVEs are dormant **only because** `images.unoptimized` is
-  true. That setting now has a security reason behind it, not just a hosting
-  one. Do not flip it without re-auditing.
-- Dev-only advisories (`brace-expansion`, `esbuild` via drizzle-kit/tsx) and a
-  `postcss` copy vendored inside Next itself — none reach production, recheck on
-  each Next bump.
+  `X-Frame-Options`, `Permissions-Policy` with `camera=(self)`, and a
+  baseline CSP with `wasm-unsafe-eval` for the barcode-detector WASM
+  polyfill) are now in `next.config.ts`.
+- `images.unoptimized: true` is unchanged, with its security rationale
+  (keeps `sharp`'s libvips CVEs dormant) now documented directly in
+  `next.config.ts`'s own comment, not just here.
 
-## 6. Migrations are regenerated in place — this must stop at launch
+The dev-only-advisory / recheck-on-bump duty from this item doesn't have a
+one-time close — it's now a standing process note in `docs/deploy.md` §5
+("Security patching — ongoing, not one-time") instead of a dangling open
+item.
 
-**Trigger: the moment any migration is applied to a database that matters.**
+## 6. ~~Migrations are regenerated in place — this must stop at launch~~ — CLOSED 2026-07-26
 
-`drizzle/` currently holds a single initial migration that has been deleted and
-regenerated three times as the schema changed, because nothing has ever been
-applied anywhere. That is the right call pre-launch and the wrong one after.
+Enforced now, not just documented: `scripts/check-migrations-immutable.sh`
+runs in CI (`.github/workflows/ci.yml` and the `verify` job in `deploy.yml`)
+and fails the build if any PR modifies, renames, or deletes a `drizzle/*.sql`
+file that already existed on `main`. New migration files are unaffected;
+`drizzle/meta/_journal.json` and the snapshot files are deliberately not
+checked (drizzle-kit owns those, and legitimately appends to them on every
+`generate`).
 
-Once a real database exists, migrations are append-only forever: new file, never
-an edit to an applied one.
+This closes the policy gap, not item #1 below — the check has never yet run
+against a PR that touches an already-merged migration, because nothing has
+merged to `main` yet.
 
 ## 7. Open questions from CLAUDE.md still unanswered
 
