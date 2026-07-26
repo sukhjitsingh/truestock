@@ -74,8 +74,9 @@
  * re-implementing the check.
  */
 import { and, desc, eq } from "drizzle-orm";
+import { alias } from "drizzle-orm/mysql-core";
 import { db } from "@/db";
-import { count, countLine, countLineWrite, product } from "@/db/schema";
+import { count, countLine, countLineWrite, product, user } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
 import { canSeeCost } from "@/lib/authz";
 import {
@@ -728,17 +729,109 @@ export async function reviewCount(countId: number): Promise<CountSummaryRow> {
   return row;
 }
 
+// ---------------------------------------------------------------------------
+// Count totals (shared by closeCount and the live count-session screen)
+// ---------------------------------------------------------------------------
+
+/**
+ * Raw, ungated totals for a count. Deliberately private: `totalValue` here is
+ * the true figure regardless of who asked, because `closeCount` must persist
+ * the real number onto `count.total_value` even when a manager is the one
+ * closing. Role gating happens in `getCountTotals` below, which is what
+ * anything read-facing calls.
+ *
+ * Takes an executor so `closeCount` can run it inside its own transaction —
+ * on the same `FOR UPDATE`-locked snapshot it is about to write from — while
+ * the live screen runs it against the pool. Two callers, one implementation:
+ * the whole point of docs/open-items.md item 8, since a displayed total that
+ * disagrees with the total `closeCount` writes a second later means the user
+ * saw one number and the immutable record holds another, with no edit path to
+ * reconcile them (invariant 1).
+ */
+type Executor = Tx | typeof db;
+
+async function computeCountTotals(
+  executor: Executor,
+  countId: number,
+): Promise<ReturnType<typeof summarizeValuation> & { lineCount: number }> {
+  const lines = await executor.select().from(countLine).where(eq(countLine.countId, countId));
+  return {
+    ...summarizeValuation(lines.map(toValuationLine)),
+    lineCount: lines.length,
+  };
+}
+
+export interface CountTotals {
+  countId: number;
+  status: (typeof count.$inferSelect)["status"];
+  lineCount: number;
+  totalUnits: number;
+  pricedLineCount: number;
+  /**
+   * Lines counted but excluded from valuation — no cost snapshot, no case
+   * size snapshot, or both. Surfaced continuously rather than only at close
+   * because on the current catalog it will fire constantly: no product has a
+   * `case_size` yet and only the 9 draft kegs carry a cost, so a count taken
+   * today is almost entirely unpriced (docs/open-items.md item 4). A user
+   * needs to see that while counting, not discover it at the close screen.
+   */
+  excludedLineCount: number;
+  /** Owner only (invariant 8) — absent, not zero, for manager and staff. */
+  totalValue?: number;
+}
+
+/**
+ * Live progress totals for an in-progress count. Safe to poll — it holds no
+ * locks and writes nothing.
+ *
+ * `totalValue` is gated to owners exactly as `closeCount`'s response is, so
+ * the CLOSE COUNT button can print the same figure the close will compute
+ * without a manager ever seeing a dollar amount they are not entitled to.
+ */
+export async function getCountTotals(actor: Actor, countId: number): Promise<CountTotals> {
+  const [row] = await db
+    .select({ status: count.status })
+    .from(count)
+    .where(eq(count.id, countId))
+    .limit(1);
+  if (!row) {
+    throw new NotFoundError("Count");
+  }
+
+  const totals = await computeCountTotals(db, countId);
+
+  const result: CountTotals = {
+    countId,
+    status: row.status,
+    lineCount: totals.lineCount,
+    totalUnits: totals.totalUnits,
+    pricedLineCount: totals.pricedLineCount,
+    excludedLineCount: totals.excludedLineCount,
+  };
+  if (canSeeCost(actor.role)) {
+    result.totalValue = totals.totalValue;
+  }
+  return result;
+}
+
 /**
  * Locks the count. Computes and stores `total_value` from every line's
  * snapshot cost (invariant 2 — never from current product data), excluding
  * unpriced/unsized lines from the total rather than coercing them to $0
  * (invariant 2 / valuation.ts). The response is still role-shaped by the
  * caller (reports/counts action layer) — see lib/domain/reports.ts.
+ *
+ * Totals come from the same `computeCountTotals` the live session screen
+ * reads through, so the figure shown on the CLOSE COUNT button and the figure
+ * written to `count.total_value` cannot drift apart.
  */
 export async function closeCount(
   actor: Actor,
   countId: number,
-): Promise<{ count: CountSummaryRow; totals: ReturnType<typeof summarizeValuation> }> {
+): Promise<{
+  count: CountSummaryRow;
+  totals: ReturnType<typeof summarizeValuation> & { lineCount: number };
+}> {
   return db.transaction(async (tx) => {
     const [row] = await tx
       .select()
@@ -754,8 +847,7 @@ export async function closeCount(
       );
     }
 
-    const lines = await tx.select().from(countLine).where(eq(countLine.countId, countId));
-    const totals = summarizeValuation(lines.map(toValuationLine));
+    const totals = await computeCountTotals(tx, countId);
 
     await tx
       .update(count)
@@ -815,6 +907,77 @@ export async function getCount(actor: Actor, countId: number): Promise<CountDeta
     },
     lines: lines.map((l) => toCountLineRow(actor.role, l)),
   };
+}
+
+// ---------------------------------------------------------------------------
+// List counts (back-office counts screen)
+// ---------------------------------------------------------------------------
+
+export interface CountListRow extends CountSummaryRow {
+  openedByName: string | null;
+  closedByName: string | null;
+  /**
+   * Owner only (invariant 8). Read from the stored `count.total_value`
+   * snapshot rather than recomputed, so a closed count in this list always
+   * shows exactly the figure that was locked in at close time — never a
+   * value re-derived from data that may have moved since. Null for any count
+   * that isn't closed yet, since the column is only written at close.
+   */
+  totalValue?: number | null;
+}
+
+/**
+ * The counts list. `count` joined against `user` twice — once for who opened
+ * it, once for who closed it — which needs two aliases of the same table
+ * rather than two joins to the same name.
+ *
+ * A LEFT join on both sides on purpose: `closed_by` is null for every count
+ * that isn't closed, and an inner join would silently drop exactly the
+ * in-progress counts this screen exists to show. `opened_by` is NOT NULL in
+ * the schema, but is still left-joined so a future user row disappearing
+ * cannot make history vanish from the list (invariant 6's spirit — history
+ * outlives the rows it references).
+ */
+export async function listCounts(actor: Actor, limit = 50): Promise<CountListRow[]> {
+  const opener = alias(user, "opener");
+  const closer = alias(user, "closer");
+
+  const rows = await db
+    .select({
+      id: count.id,
+      type: count.type,
+      status: count.status,
+      startedAt: count.startedAt,
+      closedAt: count.closedAt,
+      notes: count.notes,
+      totalValue: count.totalValue,
+      openedByName: opener.name,
+      closedByName: closer.name,
+    })
+    .from(count)
+    .leftJoin(opener, eq(opener.id, count.openedBy))
+    .leftJoin(closer, eq(closer.id, count.closedBy))
+    .orderBy(desc(count.startedAt))
+    .limit(limit);
+
+  const showCost = canSeeCost(actor.role);
+
+  return rows.map((r) => {
+    const row: CountListRow = {
+      id: r.id,
+      type: r.type,
+      status: r.status,
+      startedAt: r.startedAt,
+      closedAt: r.closedAt,
+      notes: r.notes,
+      openedByName: r.openedByName,
+      closedByName: r.closedByName,
+    };
+    if (showCost) {
+      row.totalValue = r.totalValue == null ? null : Number(r.totalValue);
+    }
+    return row;
+  });
 }
 
 // Re-exported so report modules can build ValuationLine[] from raw

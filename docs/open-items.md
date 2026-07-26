@@ -143,50 +143,21 @@ Not blocking, but they shape work that is coming:
   be load-bearing (opened vermouth, cream liqueurs), the columns are already
   there.
 
-## 8. Read-side gaps found while designing the UI
+## 8. New reads are written but still unexercised against MySQL
 
-**Trigger: when the React implementation of these screens starts. Before, not during.**
+**Trigger: folded into item 1 — verify when a real database first exists.**
 
-Designing against the real server actions surfaced reads that do not exist yet. None is a
-bug in what was built; each is a hole the UI will otherwise paper over.
+The read-side gaps this section used to list are closed (see the commit that
+removed them). What replaces the item is narrower: the four reads added to
+close them have been typechecked but, like everything else, never run.
 
-- **No live progress totals for an in-progress count. DECIDED 2026-07-26: extract
-  `getCountTotals` before building the count-session screen.** `totalUnits`,
-  `pricedLineCount`, `excludedLineCount` and `totalValue` are computed only inside
-  `closeCount`, so nothing can ask for them mid-count.
-  To be precise about the risk: `getCountAction` already returns per-line `units` and
-  `extendedValue`, so a client would be re-implementing the *summing*, not the valuation
-  rules — a smaller duplication than it first appears. It still matters, because the
-  prototype prints the total on the CLOSE COUNT button itself. If the displayed figure and
-  the figure `closeCount` computes a second later ever disagree, the user saw one number
-  and the immutable record holds another, with no edit path to reconcile them.
-  Extract the `summarizeValuation` call into a read-only `getCountTotals(countId)` that
-  both `closeCount` and the live screen use, so they cannot drift. Gate `totalValue` to
-  owners exactly as `closeCount` does. This also lets the session screen disclose
-  `excludedLineCount` continuously — which matters because **no product has a `case_size`
-  yet**, so `missing_case_size` (units genuinely indeterminate, not zero) will fire
-  constantly on the first real count.
-- **`ProductSummary` carries no on-hand quantity.** The catalog's stock cell (units + a
-  par-relative bar) needs on-hand from the latest closed count joined against `ProductPar` —
-  the same computation `reorderList()` already performs. Decide whether the catalog read owns
-  that join or the stock cell is dropped from the catalog table.
-- **No `listCountsAction`.** The counts-list screen needs `count` joined against `user` twice
-  (`opened_by`, `closed_by`). Nothing reads the count table as a list today.
-- **`countSummary` has no aggregation.** No category/location rollup and no previous-count
-  comparison, both of which §9 of the spec calls for in the Count Summary report. The
-  prototype derives them client-side; the real version should not, and any value aggregate
-  needs the same owner-only gate as the per-line figures.
-
-## 9. Wine varietals have no "needs a producer" representation
-
-**Trigger: when the owner enters real costs, alongside item 4.**
-
-The 5 seeded wines are varietals (`Merlot`, `Chardonnay`), not specific bottles, and cannot
-be costed or scanned until they name a producer. The catalog prototype surfaces this as a
-"Needs producer" pill and a "Needs attention" saved view, but **there is no column backing
-it** — the prototype infers the state from category plus a null brand.
-
-Decide before building the catalog screen: is "incomplete product" a derived predicate
-(brand IS NULL AND category = 'Wine'), or does it deserve real state? A derived predicate is
-probably right and costs nothing; the point is to decide rather than let each screen invent
-its own definition of incomplete.
+- `listCounts` aliases `user` twice in one query (`opened_by`, `closed_by`)
+  and LEFT-joins both. Worth eyeballing the generated SQL once.
+- `previousCountComparison` filters on `lt(count.closedAt, ...)` against a
+  **nullable** column. NULL comparisons are never true in SQL, which is the
+  behaviour wanted here — a count that was never closed must not be a
+  comparison candidate — but it is worth confirming rather than assuming, as
+  a silently empty "vs. previous" reads exactly like a first count.
+- `getCountTotals` runs `computeCountTotals` against the pool while
+  `closeCount` runs the same function inside its `FOR UPDATE` transaction.
+  Confirm the two agree on a count with unpriced lines.

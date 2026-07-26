@@ -12,12 +12,13 @@
  * cost, or extended value. Only `owner` gets those. This is decided in the
  * query/response shape here, not left to the UI to hide.
  */
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, ne } from "drizzle-orm";
 import { db } from "@/db";
-import { count, countLine, product, productPar, vendor } from "@/db/schema";
+import { count, countLine, location, product, productPar, vendor } from "@/db/schema";
 import type { Role } from "@/lib/authz";
 import { canSeeCost } from "@/lib/authz";
 import { NotFoundError } from "@/lib/domain/errors";
+import { getOnHandSnapshot } from "@/lib/domain/on-hand";
 import { computeLineValuation, summarizeValuation, type ValuationLine } from "@/lib/domain/valuation";
 
 // Accepts any select result that carries at least these columns — every
@@ -48,6 +49,34 @@ export interface CountSummaryLine {
   extendedValue?: number;
 }
 
+/**
+ * A category or location rollup. `value` is owner-only, mirroring the
+ * per-line gate — a rollup is just a sum of the same figures, so leaving it
+ * ungated would hand a manager the dollar total the line gate exists to
+ * withhold (invariant 8).
+ */
+export interface SummaryGroup {
+  key: string;
+  label: string;
+  lineCount: number;
+  units: number;
+  /** Lines in this group excluded from valuation. */
+  excludedLineCount: number;
+  /** Owner only. */
+  value?: number;
+}
+
+/** The previous closed count this one is compared against (spec §9.1). */
+export interface PreviousCountComparison {
+  countId: number;
+  closedAt: Date | null;
+  totalUnits: number;
+  unitsDelta: number;
+  /** Owner only — both figures, since a delta alone would leak the total. */
+  totalValue?: number;
+  valueDelta?: number;
+}
+
 export interface CountSummary {
   countId: number;
   status: (typeof count.$inferSelect)["status"];
@@ -56,6 +85,10 @@ export interface CountSummary {
   /** Lines counted but excluded from valuation — no cost and/or no case size snapshot. */
   excludedLineCount: number;
   lines: CountSummaryLine[];
+  byCategory: SummaryGroup[];
+  byLocation: SummaryGroup[];
+  /** Null when this is the first closed count, or when none precedes it. */
+  previous: PreviousCountComparison | null;
   /** Owner only — matches Count.total_value once the count is closed. */
   totalValue?: number;
 }
@@ -77,13 +110,45 @@ export async function countSummary(role: Role, countId: number): Promise<CountSu
       caseSizeAtCount: countLine.caseSizeAtCount,
       productName: product.name,
       category: product.category,
+      locationName: location.name,
     })
     .from(countLine)
     .innerJoin(product, eq(product.id, countLine.productId))
+    .innerJoin(location, eq(location.id, countLine.locationId))
     .where(eq(countLine.countId, countId));
 
   const showCost = canSeeCost(role);
   const totals = summarizeValuation(rows.map(toValuationLine));
+
+  // Aggregate server-side rather than letting the client do it (the reason
+  // docs/open-items.md item 8 listed this): the prototype derived these in
+  // the browser, which both duplicates the exclusion rules and would put an
+  // ungated dollar sum in a manager's payload for the UI to hide. Value is
+  // gated here, in the shape, exactly as the per-line figures are.
+  const categoryGroups = new Map<string, SummaryGroup>();
+  const locationGroups = new Map<string, SummaryGroup>();
+
+  function addTo(
+    groups: Map<string, SummaryGroup>,
+    key: string,
+    label: string,
+    units: number | null,
+    value: number | null,
+  ): void {
+    let group = groups.get(key);
+    if (!group) {
+      group = { key, label, lineCount: 0, units: 0, excludedLineCount: 0 };
+      if (showCost) group.value = 0;
+      groups.set(key, group);
+    }
+    group.lineCount += 1;
+    group.units += units ?? 0;
+    if (value == null) {
+      group.excludedLineCount += 1;
+    } else if (showCost) {
+      group.value = Math.round(((group.value ?? 0) + value) * 100) / 100;
+    }
+  }
 
   const lines: CountSummaryLine[] = rows.map((r) => {
     const v = computeLineValuation(toValuationLine(r));
@@ -97,8 +162,13 @@ export async function countSummary(role: Role, countId: number): Promise<CountSu
     if (showCost) {
       line.extendedValue = v.extendedValue ?? undefined;
     }
+    addTo(categoryGroups, r.category, r.category, v.units, v.extendedValue);
+    addTo(locationGroups, String(r.locationId), r.locationName, v.units, v.extendedValue);
     return line;
   });
+
+  const byUnitsDesc = (a: SummaryGroup, b: SummaryGroup) =>
+    b.units - a.units || a.label.localeCompare(b.label);
 
   const summary: CountSummary = {
     countId,
@@ -107,11 +177,84 @@ export async function countSummary(role: Role, countId: number): Promise<CountSu
     pricedLineCount: totals.pricedLineCount,
     excludedLineCount: totals.excludedLineCount,
     lines,
+    byCategory: [...categoryGroups.values()].sort(byUnitsDesc),
+    byLocation: [...locationGroups.values()].sort(byUnitsDesc),
+    previous: await previousCountComparison(showCost, countRow, totals),
   };
   if (showCost) {
     summary.totalValue = totals.totalValue;
   }
   return summary;
+}
+
+/**
+ * "vs. previous count" (spec §9.1). Compares against the most recent count
+ * closed *before this one started* — not simply the previous row by id.
+ *
+ * Two deliberate choices. Only closed counts are candidates, because an
+ * abandoned draft is not a measurement and comparing against one would show
+ * an enormous fictional drop. And the cutoff is the current count's
+ * `startedAt`, not its own close time, so a count that was left open for a
+ * week still compares against the state of the bar when it began rather than
+ * against another count taken and closed in the middle of it.
+ *
+ * The previous count's figures come from its stored `total_value` snapshot
+ * (invariant 2 — never re-valued from current product data), and its units
+ * are recomputed from its own snapshot columns, which are immutable once
+ * closed.
+ */
+async function previousCountComparison(
+  showCost: boolean,
+  countRow: typeof count.$inferSelect,
+  totals: ReturnType<typeof summarizeValuation>,
+): Promise<PreviousCountComparison | null> {
+  const [prev] = await db
+    .select({ id: count.id, closedAt: count.closedAt, totalValue: count.totalValue })
+    .from(count)
+    .where(
+      and(
+        eq(count.status, "closed"),
+        ne(count.id, countRow.id),
+        lt(count.closedAt, countRow.startedAt),
+      ),
+    )
+    .orderBy(desc(count.closedAt))
+    .limit(1);
+
+  if (!prev) {
+    return null;
+  }
+
+  const prevLines = await db
+    .select({
+      sealedCaseQty: countLine.sealedCaseQty,
+      sealedEachQty: countLine.sealedEachQty,
+      partialFills: countLine.partialFills,
+      unitCostAtCount: countLine.unitCostAtCount,
+      caseSizeAtCount: countLine.caseSizeAtCount,
+    })
+    .from(countLine)
+    .where(eq(countLine.countId, prev.id));
+
+  const prevTotals = summarizeValuation(prevLines.map(toValuationLine));
+
+  const comparison: PreviousCountComparison = {
+    countId: prev.id,
+    closedAt: prev.closedAt,
+    totalUnits: prevTotals.totalUnits,
+    unitsDelta: Math.round((totals.totalUnits - prevTotals.totalUnits) * 100) / 100,
+  };
+
+  if (showCost) {
+    // The stored snapshot is the authority for a closed count's value
+    // (invariant 2). Falling back to the recomputed figure only covers a
+    // count closed before total_value was ever written.
+    const prevValue = prev.totalValue == null ? prevTotals.totalValue : Number(prev.totalValue);
+    comparison.totalValue = prevValue;
+    comparison.valueDelta = Math.round((totals.totalValue - prevValue) * 100) / 100;
+  }
+
+  return comparison;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,40 +283,14 @@ export interface ReorderList {
 }
 
 export async function reorderList(): Promise<ReorderList> {
-  const [latestClosed] = await db
-    .select({ id: count.id })
-    .from(count)
-    .where(eq(count.status, "closed"))
-    .orderBy(desc(count.closedAt))
-    .limit(1);
+  // On-hand comes from the shared snapshot in lib/domain/on-hand.ts, which
+  // the back-office catalog's stock cell also reads. Two screens showing two
+  // different on-hand numbers for the same bottle is the kind of quiet
+  // disagreement this codebase spends most of its comments avoiding.
+  const { asOfCountId, byProduct: onHandByProduct } = await getOnHandSnapshot();
 
-  if (!latestClosed) {
+  if (asOfCountId == null) {
     return { asOfCountId: null, items: [] };
-  }
-
-  const lines = await db
-    .select({
-      productId: countLine.productId,
-      sealedCaseQty: countLine.sealedCaseQty,
-      sealedEachQty: countLine.sealedEachQty,
-      partialFills: countLine.partialFills,
-      unitCostAtCount: countLine.unitCostAtCount,
-      caseSizeAtCount: countLine.caseSizeAtCount,
-    })
-    .from(countLine)
-    .where(eq(countLine.countId, latestClosed.id));
-
-  // Sum on-hand units per product across all locations. A line whose units
-  // are indeterminate (sealed cases counted but no case_size snapshot —
-  // see lib/domain/valuation.ts) contributes 0 rather than being guessed —
-  // documented limitation: this can understate on-hand and trigger an
-  // avoidable reorder suggestion, which is the safer direction to be wrong
-  // in for a beverage program versus silently overstating stock.
-  const onHandByProduct = new Map<number, number>();
-  for (const line of lines) {
-    const v = computeLineValuation(toValuationLine(line));
-    const prev = onHandByProduct.get(line.productId) ?? 0;
-    onHandByProduct.set(line.productId, prev + (v.units ?? 0));
   }
 
   // MVP only ever writes overall par rows (location_id IS NULL) — spec §8.
@@ -188,7 +305,7 @@ export async function reorderList(): Promise<ReorderList> {
     .where(and(eq(product.active, true), isNull(productPar.locationId)));
 
   if (parRows.length === 0) {
-    return { asOfCountId: latestClosed.id, items: [] };
+    return { asOfCountId, items: [] };
   }
 
   const productIds = parRows.map((p) => p.productId);
@@ -242,5 +359,5 @@ export async function reorderList(): Promise<ReorderList> {
     return a.productName.localeCompare(b.productName);
   });
 
-  return { asOfCountId: latestClosed.id, items };
+  return { asOfCountId, items };
 }

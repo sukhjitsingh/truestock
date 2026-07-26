@@ -9,13 +9,14 @@
  * fetches the column, so there is no code path where it could accidentally
  * end up in a response to them.
  */
-import { and, eq, like, or, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNull, like, or, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { product, productBarcode, vendor, location } from "@/db/schema";
+import { product, productBarcode, productPar, vendor, location } from "@/db/schema";
 import type { Role } from "@/lib/authz";
 import { canSeeCost, canManageCost } from "@/lib/authz";
 import { ConflictError, NotFoundError } from "@/lib/domain/errors";
 import { isDuplicateKeyError } from "@/lib/domain/db-errors";
+import { getOnHandSnapshot } from "@/lib/domain/on-hand";
 import type {
   ProductCreateInput,
   ProductUpdateInput,
@@ -39,6 +40,91 @@ export interface ProductSummary {
   active: boolean;
   /** Present only for callers with cost visibility (owner). */
   currentUnitCost?: string;
+  /**
+   * Why this product isn't fully usable yet — empty when it is fine. Derived
+   * on every read, never stored; see `ProductIncompleteReason`. Drives the
+   * catalog's "Needs attention" view and its per-row pills.
+   */
+  incomplete: ProductIncompleteReason[];
+  /**
+   * Stock figures. Present only when the caller asked for them
+   * (`includeOnHand`) — see `searchProducts` for why this is opt-in rather
+   * than always attached. Not cost-gated: quantities and par levels are not
+   * cost data, and a manager runs reordering (spec §4).
+   */
+  stock?: ProductStock;
+}
+
+/**
+ * Why a product is not yet fully usable. DECIDED 2026-07-26
+ * (docs/open-items.md item 9): incompleteness is a **derived predicate**, not
+ * stored state — there is no `incomplete` column and there should not be one.
+ * A stored flag would need maintaining on every write path and would drift
+ * out of agreement with the data it describes; these facts are already in the
+ * row.
+ *
+ * What matters is that the definition lives here, once. The prototype
+ * inferred "needs producer" from category plus a null brand in the markup,
+ * which is how three screens end up with three different ideas of incomplete.
+ *
+ * - `needs_producer` — a wine seeded as a varietal (`Merlot`, `Chardonnay`)
+ *   rather than a specific bottle. It cannot be costed or scanned until it
+ *   names a producer.
+ * - `needs_cost` — no `current_unit_cost`, so this product's lines are
+ *   excluded from every valuation. Owner-only: a manager has no cost
+ *   visibility at all (invariant 8), and "this has no cost set" is still a
+ *   statement about cost.
+ * - `needs_case_size` — bottled beer with no `case_size`. Only beer is
+ *   counted by the case; a NULL case size on a spirit, wine or keg is correct
+ *   rather than missing (CLAUDE.md, "The catalog"), so this deliberately does
+ *   not fire on them.
+ */
+export type ProductIncompleteReason = "needs_producer" | "needs_cost" | "needs_case_size";
+
+interface IncompletenessInput {
+  brand: string | null;
+  category: string;
+  unitType: (typeof product.$inferSelect)["unitType"];
+  caseSize: number | null;
+  currentUnitCost?: string;
+}
+
+function incompleteReasons(row: IncompletenessInput, showCost: boolean): ProductIncompleteReason[] {
+  const reasons: ProductIncompleteReason[] = [];
+  const category = row.category.toLowerCase();
+
+  if (category === "wine" && !row.brand) {
+    reasons.push("needs_producer");
+  }
+  // Bottled beer is the only thing counted both as eaches and as cases, so
+  // it is the only thing a missing case size is a gap for. `unit_type` is
+  // what separates bottled/canned beer from draft here — a keg is one unit
+  // measured in tenths and never has a case size.
+  if (category === "beer" && row.unitType !== "keg" && row.caseSize == null) {
+    reasons.push("needs_case_size");
+  }
+  if (showCost && !row.currentUnitCost) {
+    reasons.push("needs_cost");
+  }
+  return reasons;
+}
+
+export interface ProductStock {
+  /** Units on hand from the latest closed count; null when none exists yet. */
+  onHand: number | null;
+  /**
+   * True when at least one contributing count line had indeterminate units
+   * (sealed cases with no case-size snapshot). `onHand` is then a floor, not
+   * a total, and the UI must not render it as a plain number — this is
+   * currently the common case, since no product has a `case_size` yet
+   * (docs/open-items.md item 4).
+   */
+  onHandIsPartial: boolean;
+  /** MVP writes overall par rows only (location_id IS NULL) — spec §8. */
+  parLevel: number | null;
+  reorderPoint: number | null;
+  /** The closed count `onHand` was derived from; null when none exists. */
+  asOfCountId: number | null;
 }
 
 const BASE_PRODUCT_COLUMNS = {
@@ -73,7 +159,14 @@ async function selectProducts(
       .where(where)
       .orderBy(product.name)
       .limit(limit);
-    return rows.map((r) => ({ ...r, currentUnitCost: r.currentUnitCost ?? undefined }));
+    return rows.map((r) => {
+      const currentUnitCost = r.currentUnitCost ?? undefined;
+      return {
+        ...r,
+        currentUnitCost,
+        incomplete: incompleteReasons({ ...r, currentUnitCost }, true),
+      };
+    });
   }
   const rows = await db
     .select(BASE_PRODUCT_COLUMNS)
@@ -81,13 +174,27 @@ async function selectProducts(
     .where(where)
     .orderBy(product.name)
     .limit(limit);
-  return rows;
+  return rows.map((r) => ({ ...r, incomplete: incompleteReasons(r, false) }));
 }
 
 // ---------------------------------------------------------------------------
 // Search / list
 // ---------------------------------------------------------------------------
 
+/**
+ * Search/list products, optionally with stock figures attached.
+ *
+ * `includeOnHand` is opt-in, and that is the decision docs/open-items.md
+ * item 8 asked for: the catalog read owns the on-hand join rather than the
+ * back office reimplementing what `reorderList()` already does — but it only
+ * pays for it when asked. The two callers have opposite priorities. The
+ * back-office catalog table wants a stock cell and runs at a desk. The
+ * count-time product picker is on the app's latency-critical path (it is the
+ * fallback for a damaged label, mid-count, one-handed) and must stay a single
+ * indexed lookup — it would gain nothing from a scan of the last closed
+ * count's lines. Attaching stock unconditionally would have quietly taxed the
+ * one read that cannot afford it.
+ */
 export async function searchProducts(
   role: Role,
   input: ProductSearchInput,
@@ -107,7 +214,51 @@ export async function searchProducts(
     }
   }
   const where = conditions.length ? and(...conditions) : undefined;
-  return selectProducts(role, where, input.limit);
+  const rows = await selectProducts(role, where, input.limit);
+
+  if (!input.includeOnHand || rows.length === 0) {
+    return rows;
+  }
+  return attachStock(rows);
+}
+
+/**
+ * Attaches on-hand and par to an already-selected page of products. Two
+ * queries total regardless of page size — the shared on-hand snapshot, and
+ * one `IN (...)` over `product_par` for just the ids on this page.
+ */
+async function attachStock(rows: ProductSummary[]): Promise<ProductSummary[]> {
+  const ids = rows.map((r) => r.id);
+  const [snapshot, parRows] = await Promise.all([
+    getOnHandSnapshot(),
+    db
+      .select({
+        productId: productPar.productId,
+        parLevel: productPar.parLevel,
+        reorderPoint: productPar.reorderPoint,
+      })
+      .from(productPar)
+      .where(and(inArray(productPar.productId, ids), isNull(productPar.locationId))),
+  ]);
+
+  const parByProduct = new Map(parRows.map((p) => [p.productId, p]));
+
+  return rows.map((row) => {
+    const par = parByProduct.get(row.id);
+    return {
+      ...row,
+      stock: {
+        // null rather than 0 when there is no closed count to derive from:
+        // "we have never counted this" and "we counted it and there are none"
+        // are different facts, and only one of them should read as empty.
+        onHand: snapshot.asOfCountId == null ? null : (snapshot.byProduct.get(row.id) ?? 0),
+        onHandIsPartial: snapshot.indeterminateProductIds.has(row.id),
+        parLevel: par == null ? null : Number(par.parLevel),
+        reorderPoint: par?.reorderPoint == null ? null : Number(par.reorderPoint),
+        asOfCountId: snapshot.asOfCountId,
+      },
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------

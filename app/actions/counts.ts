@@ -33,6 +33,8 @@ import {
   reviewCountSchema,
   closeCountSchema,
   getCountSchema,
+  getCountTotalsSchema,
+  listCountsSchema,
 } from "@/lib/validation/counts";
 
 /** Any counting role may open a count (spec §4 — all three roles count). */
@@ -177,5 +179,37 @@ export async function getCountAction(
     const actor = await requireRole("owner", "manager", "staff");
     const parsed = getCountSchema.parse(input);
     return counts.getCount(actor, parsed.countId);
+  });
+}
+
+/**
+ * Live progress totals for a count in flight — what the count-session screen
+ * prints on the CLOSE COUNT button. Shares one implementation with
+ * `closeCount` (lib/domain/counts.ts) so the displayed figure and the figure
+ * written to the immutable record cannot disagree. `totalValue` is owner-only
+ * here exactly as it is there (invariant 8).
+ */
+export async function getCountTotalsAction(
+  input: unknown,
+): Promise<ActionResult<counts.CountTotals>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager", "staff");
+    const parsed = getCountTotalsSchema.parse(input);
+    return counts.getCountTotals(actor, parsed.countId);
+  });
+}
+
+/**
+ * The back-office counts list. Owner/manager only — staff is count-only and
+ * has no back-office surface (spec §4); a staff member works the count they
+ * were handed, not a history of every count taken.
+ */
+export async function listCountsAction(
+  input: unknown = {},
+): Promise<ActionResult<counts.CountListRow[]>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = listCountsSchema.parse(input);
+    return counts.listCounts(actor, parsed.limit);
   });
 }

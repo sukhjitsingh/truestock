@@ -138,3 +138,9 @@ export const submitCountSchema = countIdSchema;
 export const reviewCountSchema = countIdSchema;
 export const closeCountSchema = countIdSchema;
 export const getCountSchema = countIdSchema;
+export const getCountTotalsSchema = countIdSchema;
+
+/** Counts list (back office). Bounded so the screen can't ask for everything. */
+export const listCountsSchema = z.object({
+  limit: z.number().int().positive().max(200).optional().default(50),
+});

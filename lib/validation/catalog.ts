@@ -103,6 +103,13 @@ export const productSearchSchema = z.object({
   category: z.string().trim().max(100).optional(),
   activeOnly: z.boolean().optional().default(true),
   limit: z.number().int().positive().max(100).optional().default(25),
+  /**
+   * Attach on-hand/par figures to each result. Defaults to false so the
+   * count-time product picker — the latency-critical fallback path — stays a
+   * plain indexed lookup; the back-office catalog table opts in. See
+   * `searchProducts` in lib/domain/catalog.ts for the full reasoning.
+   */
+  includeOnHand: z.boolean().optional().default(false),
 });
 export type ProductSearchInput = z.infer<typeof productSearchSchema>;
 
