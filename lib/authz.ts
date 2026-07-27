@@ -1,5 +1,5 @@
 /**
- * The single place role rules live for Handlebar (CLAUDE.md invariant 7 /
+ * The single place role rules live for Truestock (CLAUDE.md invariant 7 /
  * spec §11: "check session and role inside every server action and route
  * handler, not only in middleware").
  *

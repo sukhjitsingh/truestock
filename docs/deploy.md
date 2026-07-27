@@ -1,4 +1,4 @@
-# Handlebar — Deploy runbook
+# Truestock — Deploy runbook
 
 Read `CLAUDE.md` and `docs/spec.md` §11 first if you haven't. This is the
 operational half of that plan: what to click in hPanel once, what secrets
@@ -106,7 +106,7 @@ for you.
 
 1. **Create the MySQL database.**
    hPanel → *Databases → MySQL Databases* → create a database named
-   `handlebar` and a database user with a generated password. Note the
+   `truestock` and a database user with a generated password. Note the
    database name, username, and password — you'll need all three twice
    (once for the app's own `DATABASE_URL`, once for the migration secrets
    in §3).
@@ -121,7 +121,7 @@ for you.
    Node.js version: **22.x**.
 
 3. **Point the subdomain at it.**
-   During or after app creation, set the domain to `handlebar.<yourdomain>`.
+   During or after app creation, set the domain to `truestock.<yourdomain>`.
    SSL auto-provisions on Hostinger Cloud plans — confirm the padlock shows
    up after the first successful deploy; camera/barcode APIs refuse to run
    without it.
@@ -130,9 +130,9 @@ for you.
    Node.js app dashboard → *Environment Variables*. Add:
    | Key | Value | Why |
    |---|---|---|
-   | `DATABASE_URL` | `mysql://<user>:<password>@localhost:3306/handlebar` | Read lazily by `db/index.ts` — never at build time |
+   | `DATABASE_URL` | `mysql://<user>:<password>@localhost:3306/truestock` | Read lazily by `db/index.ts` — never at build time |
    | `BETTER_AUTH_SECRET` | output of `openssl rand -base64 32` | Session signing |
-   | `BETTER_AUTH_URL` | `https://handlebar.<yourdomain>` | Better Auth's own base URL |
+   | `BETTER_AUTH_URL` | `https://truestock.<yourdomain>` | Better Auth's own base URL |
    | `NODE_ENV` | `production` | Standalone's `server.js` does not set this itself |
 
 5. **Enable SSH and add a deploy key.**
@@ -140,10 +140,10 @@ for you.
    it gives you. Then add a **dedicated** SSH keypair (don't reuse your
    personal one) generated just for CI:
    ```
-   ssh-keygen -t ed25519 -f handlebar-deploy-key -C "handlebar-ci"
+   ssh-keygen -t ed25519 -f truestock-deploy-key -C "truestock-ci"
    ```
-   Add `handlebar-deploy-key.pub` in hPanel's SSH Keys section. The private
-   key (`handlebar-deploy-key`, no passphrase — CI can't type one) becomes
+   Add `truestock-deploy-key.pub` in hPanel's SSH Keys section. The private
+   key (`truestock-deploy-key`, no passphrase — CI can't type one) becomes
    the `HOSTINGER_SSH_PRIVATE_KEY` GitHub secret in §3. This key only ever
    needs to open a local port-forward to `127.0.0.1:3306` on the box — it
    does not need to do anything else, so don't reuse it elsewhere.
@@ -162,14 +162,14 @@ for you.
 |---|---|---|
 | `HOSTINGER_API_TOKEN` | token from §2.6 | deploy, rollback |
 | `HOSTINGER_USERNAME` | Hostinger account username (the `{username}` in the API path — same string SSH login uses) | deploy, rollback |
-| `HOSTINGER_DOMAIN` | `handlebar.<yourdomain>` | deploy, rollback |
+| `HOSTINGER_DOMAIN` | `truestock.<yourdomain>` | deploy, rollback |
 | `HOSTINGER_SSH_HOST` | host from §2.5 | migrate |
 | `HOSTINGER_SSH_PORT` | port from §2.5 (often a non-default port like `65002`) | migrate |
 | `HOSTINGER_SSH_USER` | SSH username from §2.5 | migrate |
 | `HOSTINGER_SSH_PRIVATE_KEY` | the private key file contents from §2.5 | migrate |
 | `HOSTINGER_DB_USER` | MySQL user from §2.1 | migrate |
 | `HOSTINGER_DB_PASSWORD` | MySQL password from §2.1 | migrate |
-| `HOSTINGER_DB_NAME` | `handlebar` | migrate |
+| `HOSTINGER_DB_NAME` | `truestock` | migrate |
 
 None of these are read by the app itself — the app's own env vars live in
 hPanel (§2.4). These are exclusively for the pipeline.
@@ -200,14 +200,14 @@ Do this once, from your own machine, after §2 and §3 are done:
 1. **Open a tunnel to production MySQL** (same pattern as
    `scripts/hostinger-migrate.sh`, run by hand instead of by CI):
    ```bash
-   ssh -i handlebar-deploy-key -p <HOSTINGER_SSH_PORT> \
+   ssh -i truestock-deploy-key -p <HOSTINGER_SSH_PORT> \
      -L 13306:127.0.0.1:3306 <HOSTINGER_SSH_USER>@<HOSTINGER_SSH_HOST>
    ```
    Leave that running in one terminal.
 
 2. **In another terminal, point at it and migrate, seed, create the owner:**
    ```bash
-   export DATABASE_URL="mysql://<db-user>:<db-password>@127.0.0.1:13306/handlebar"
+   export DATABASE_URL="mysql://<db-user>:<db-password>@127.0.0.1:13306/truestock"
    bun run db:migrate
    bun run db:seed
    bun run create-user -- --email you@yourbar.com --name "Your Name" --role owner

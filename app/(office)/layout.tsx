@@ -23,7 +23,7 @@ export default async function OfficeLayout({
       <header className="border-b border-border">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-6 py-4">
           <Link href="/office" className="text-row-title text-foreground">
-            Handlebar
+            Truestock
           </Link>
           <OfficeNav role={user.role} />
           <div className="hidden text-caption text-muted-foreground sm:block">

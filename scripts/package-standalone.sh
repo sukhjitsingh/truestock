@@ -14,7 +14,7 @@
 # Usage: scripts/package-standalone.sh [output-zip-path]
 set -euo pipefail
 
-OUT_ZIP="${1:-deploy/handlebar-deploy.zip}"
+OUT_ZIP="${1:-deploy/truestock-deploy.zip}"
 STAGE_DIR="$(mktemp -d)"
 trap 'rm -rf "$STAGE_DIR"' EXIT
 

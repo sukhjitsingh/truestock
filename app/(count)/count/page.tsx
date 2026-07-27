@@ -7,7 +7,7 @@ import { StatusPill, countStatusTone, countStatusLabel } from "@/components/ui/s
 import { StartCountButton } from "@/components/count/start-count-button";
 import { formatDate, formatUnits } from "@/lib/utils";
 
-export const metadata = { title: "Count · Handlebar" };
+export const metadata = { title: "Count · Truestock" };
 
 /**
  * The counting app's home. One question: is there a count in flight, and can
@@ -22,7 +22,7 @@ export default async function CountHomePage() {
 
   return (
     <div className="px-bar-pad pb-8 pt-6">
-      <h1 className="text-header-title text-foreground">Handlebar</h1>
+      <h1 className="text-header-title text-foreground">Truestock</h1>
       <p className="mt-1 text-row-subtitle text-muted-foreground">
         Signed in as {user.name}
       </p>

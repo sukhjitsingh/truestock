@@ -1,6 +1,6 @@
-# Handlebar
+# Truestock
 
-Beverage inventory for a single bar/restaurant in Arizona. Get a handle on your bar.
+Beverage and food inventory for bars and restaurants, costed from supplier invoices. Counted, costed, and correct.
 
 **Read `docs/spec.md` before any non-trivial work.** It is the source of truth for scope,
 data model, and rationale. This file is the short version.
@@ -111,7 +111,7 @@ plausible and are wrong, which is the worst failure mode this app has.
 
 ## The catalog
 
-`docs/handlebar-catalog.xlsx` is the seed, built from the owner's two prior spreadsheets.
+`docs/truestock-catalog.xlsx` is the seed, built from the owner's two prior spreadsheets.
 **97 products:** 62 spirits, 16 bottled beers, 9 draft kegs, 5 wines, 2 liqueurs, 3 NA.
 
 Things to know about it:

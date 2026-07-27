@@ -2,7 +2,7 @@ import { requireOfficeUser } from "@/lib/current-user";
 import { searchProductsAction } from "@/app/actions/catalog";
 import { CatalogTable } from "@/components/office/catalog-table";
 
-export const metadata = { title: "Catalog · Handlebar" };
+export const metadata = { title: "Catalog · Truestock" };
 
 /**
  * The catalog. Loads with stock figures attached (`includeOnHand`), which is

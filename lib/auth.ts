@@ -106,7 +106,7 @@ export const auth = betterAuth({
   },
   user: {
     additionalFields: {
-      // Handlebar's own fields on top of Better Auth's core `user` schema
+      // Truestock's own fields on top of Better Auth's core `user` schema
       // (db/schema.ts). `input: false` means these can never be set by a
       // caller through a public Better Auth endpoint (sign-up is disabled
       // anyway, but this is defence in depth against, e.g., a future profile

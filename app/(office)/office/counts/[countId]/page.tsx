@@ -8,7 +8,7 @@ import { StatusPill, countStatusTone, countStatusLabel } from "@/components/ui/s
 import { formatUnits, formatDate } from "@/lib/utils";
 import type { SummaryGroup } from "@/lib/domain/reports";
 
-export const metadata = { title: "Count summary · Handlebar" };
+export const metadata = { title: "Count summary · Truestock" };
 
 /**
  * Count Summary (spec §9.1): totals, category and location rollups, and the

@@ -31,7 +31,7 @@ import { openDB, type IDBPDatabase } from "idb";
  * See CLAUDE.md's working agreement on this.
  */
 
-const DB_NAME = "handlebar";
+const DB_NAME = "truestock";
 const DB_VERSION = 1;
 const STORE = "pending_writes";
 

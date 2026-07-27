@@ -22,7 +22,7 @@ import * as schema from "./schema";
 const POOL_CONNECTION_LIMIT = 10;
 
 declare global {
-  var __handlebarPool: mysql.Pool | undefined;
+  var __truestockPool: mysql.Pool | undefined;
 }
 
 // Everything below is resolved on FIRST USE, never at import time.
@@ -71,9 +71,9 @@ let poolInstance: mysql.Pool | undefined;
 let dbInstance: ReturnType<typeof createDb> | undefined;
 
 function getPool(): mysql.Pool {
-  poolInstance ??= globalThis.__handlebarPool ?? createPool();
+  poolInstance ??= globalThis.__truestockPool ?? createPool();
   if (process.env.NODE_ENV !== "production") {
-    globalThis.__handlebarPool = poolInstance;
+    globalThis.__truestockPool = poolInstance;
   }
   return poolInstance;
 }
@@ -113,5 +113,5 @@ export async function closePool(): Promise<void> {
   await poolInstance.end();
   poolInstance = undefined;
   dbInstance = undefined;
-  globalThis.__handlebarPool = undefined;
+  globalThis.__truestockPool = undefined;
 }

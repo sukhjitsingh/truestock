@@ -4,7 +4,7 @@ import { requireOfficeUser } from "@/lib/current-user";
 import { searchProductsAction, listVendorsAction } from "@/app/actions/catalog";
 import { ProductEditForm } from "@/components/office/product-edit-form";
 
-export const metadata = { title: "Edit product · Handlebar" };
+export const metadata = { title: "Edit product · Truestock" };
 
 /**
  * Product edit. This is where costs and case sizes actually get entered —

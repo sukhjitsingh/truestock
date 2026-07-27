@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "handlebar",
+      "name": "truestock",
       "dependencies": {
         "@hookform/resolvers": "^5.4.2",
         "@tanstack/react-query": "^5.101.4",

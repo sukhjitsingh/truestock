@@ -6,7 +6,7 @@ metadata:
 ---
 
 No MySQL server exists in this dev environment, and as of 2026-07-24 nothing
-has ever been applied to a real Handlebar database anywhere. On code-review
+has ever been applied to a real Truestock database anywhere. On code-review
 feedback about the schema (nullable snapshot columns, new unique index on
 `product(name, size_ml)`, etc.), the coordinator explicitly authorized
 deleting `drizzle/0000_*.sql` + `drizzle/meta/` and regenerating a single

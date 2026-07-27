@@ -5,7 +5,7 @@ import { StatusPill, countStatusTone, countStatusLabel } from "@/components/ui/s
 import { Money } from "@/components/ui/money";
 import { formatDateTime } from "@/lib/utils";
 
-export const metadata = { title: "Counts · Handlebar" };
+export const metadata = { title: "Counts · Truestock" };
 
 /**
  * The counts list. Columns are built PER ROLE — a manager's table does not

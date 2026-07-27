@@ -1,6 +1,6 @@
 ---
 name: project-baseline-audit-2026-07
-description: Kickoff security audit of Handlebar (pre-auth scaffold) — findings, dependency status, and the authorization checklist backend must satisfy
+description: Kickoff security audit of Truestock (pre-auth scaffold) — findings, dependency status, and the authorization checklist backend must satisfy
 metadata:
   type: project
 ---

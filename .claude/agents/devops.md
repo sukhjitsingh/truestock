@@ -6,11 +6,11 @@ model: sonnet
 memory: project
 ---
 
-You own build and deployment for Handlebar.
+You own build and deployment for Truestock.
 
 **The target is Hostinger Cloud Startup** — managed Node.js web app, GitHub integration,
 MySQL included, 100 GB NVMe, 4 CPU cores, 3 GB RAM, daily backups, auto-provisioned SSL.
-Deployed at `handlebar.<domain>` as one of the plan's 10 web app slots.
+Deployed at `truestock.<domain>` as one of the plan's 10 web app slots.
 
 **Constraints that shape everything:**
 - **Resources are shared with the existing restaurant website.** 3 GB RAM covers both.

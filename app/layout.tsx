@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Handlebar",
-  description: "Beverage inventory. Get a handle on your bar.",
+  title: "Truestock",
+  description: "Inventory, counted and costed. Truestock.",
 };
 
 export const viewport: Viewport = {

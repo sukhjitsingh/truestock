@@ -45,12 +45,12 @@ jobs:
           mkdir -p deploy
           gh release download "deploy-${{ inputs.sha }}" \
             --repo "${{ github.repository }}" \
-            --pattern "handlebar-deploy.zip" \
+            --pattern "truestock-deploy.zip" \
             --dir deploy --clobber
 
       - name: Deploy that archive to Hostinger
         id: deploy
-        run: python3 scripts/hostinger-deploy-archive.py deploy/handlebar-deploy.zip
+        run: python3 scripts/hostinger-deploy-archive.py deploy/truestock-deploy.zip
 
       - name: Wait for the Hostinger build to finish
         run: python3 scripts/hostinger-poll-build.py "${{ steps.deploy.outputs.build_uuid }}"

@@ -160,11 +160,11 @@ one is a decision, not an oversight.
    count loop. Tenths controls should be considerably larger than that.
 
 4. **Product thumbnails don't exist here.** The reference leans on product photography in
-   every row. Handlebar's MVP has **no file storage and no photos** — that is explicit scope.
+   every row. Truestock's MVP has **no file storage and no photos** — that is explicit scope.
    **Resolution:** replace the thumbnail with a category glyph or a monogram tile at the same
    64px footprint, so row rhythm is preserved. Do not introduce image upload.
 
-5. **Prices are shown unconditionally.** In Handlebar, cost and value are role-gated
+5. **Prices are shown unconditionally.** In Truestock, cost and value are role-gated
    (invariant 8) and the server *omits the field entirely* for non-owners — `unitCostAtCount`,
    `extendedValue`, and `totalValue` are absent, not zero.
    **Resolution:** the value slot in every row/summary component must render correctly when
@@ -251,7 +251,7 @@ The shot's accent is **orange** (~`#EA6A1E`). See divergence B3 before using it.
 ## Where we deliberately diverge (Part B)
 
 **B1. The stock bar must be driven by par, and par may not exist.**
-The reference's bar implies a known maximum. Handlebar's `ProductPar` has a **nullable
+The reference's bar implies a known maximum. Truestock's `ProductPar` has a **nullable
 `location_id`** and the MVP writes NULL rows only; plenty of products will have no par at
 all. Follow the shot's own empty-state instinct: **no par → no bar and no status word**, just
 the unit count. Never infer a denominator to make the bar drawable.

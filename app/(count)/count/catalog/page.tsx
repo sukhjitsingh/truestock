@@ -1,7 +1,7 @@
 import { requireUser } from "@/lib/current-user";
 import { CountCatalogSearch } from "@/components/count/catalog-search";
 
-export const metadata = { title: "Catalog · Handlebar" };
+export const metadata = { title: "Catalog · Truestock" };
 
 /**
  * Read-only product lookup from the phone — "do we already carry this?"

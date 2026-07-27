@@ -94,11 +94,11 @@ jobs:
         run: bun run build
 
       - name: Package standalone output for Hostinger's archive API
-        run: bash scripts/package-standalone.sh deploy/handlebar-deploy.zip
+        run: bash scripts/package-standalone.sh deploy/truestock-deploy.zip
 
       - name: Deploy archive to Hostinger
         id: deploy
-        run: python3 scripts/hostinger-deploy-archive.py deploy/handlebar-deploy.zip
+        run: python3 scripts/hostinger-deploy-archive.py deploy/truestock-deploy.zip
 
       - name: Wait for the Hostinger build to finish
         run: python3 scripts/hostinger-poll-build.py "${{ steps.deploy.outputs.build_uuid }}"
@@ -119,7 +119,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           SHORT_SHA="$(git rev-parse --short HEAD)"
-          gh release create "deploy-${SHORT_SHA}" deploy/handlebar-deploy.zip \
+          gh release create "deploy-${SHORT_SHA}" deploy/truestock-deploy.zip \
             --title "Deploy ${SHORT_SHA}" \
             --notes "Automated deploy artifact — used by .github/workflows/rollback.yml. Not a user-facing release." \
             --target "${GITHUB_SHA}"

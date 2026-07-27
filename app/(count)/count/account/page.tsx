@@ -2,7 +2,7 @@ import { requireUser } from "@/lib/current-user";
 import { SignOutButton } from "@/components/count/sign-out-button";
 import { Card } from "@/components/ui/card";
 
-export const metadata = { title: "Account · Handlebar" };
+export const metadata = { title: "Account · Truestock" };
 
 export default async function AccountPage() {
   const user = await requireUser();

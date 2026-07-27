@@ -1,9 +1,9 @@
-# Handlebar — Product Spec (Planning Draft v0.1)
+# Truestock — Product Spec (Planning Draft v0.1)
 
-*Beverage inventory for a single bar. Get a handle on your bar.*
+*Beverage inventory for a single bar. Counted, costed, and correct.*
 
 **Status:** Planning. Name and MVP scope locked (§12). No code yet.
-**Repo:** `handlebar` · **Host:** `handlebar.<yourdomain>` · **Database:** `handlebar`
+**Repo:** `truestock` · **Host:** `truestock.<yourdomain>` · **Database:** `truestock`
 **Owner:** Sukhjit
 **Context:** Single bar/restaurant, Arizona. 50–200 bottles per full count. Web app, Chrome on Android. Toast POS. Hostinger Cloud Startup.
 **Date:** July 2026
@@ -12,7 +12,7 @@
 
 ## 1. Executive summary
 
-Handlebar is a web app where a manager walks the bar with a phone, scans each bottle's barcode, and records how much is left — producing a valued inventory count, par-level reorder lists, and an audit-ready record.
+Truestock is a web app where a manager walks the bar with a phone, scans each bottle's barcode, and records how much is left — producing a valued inventory count, par-level reorder lists, and an audit-ready record.
 
 ### Business
 
@@ -262,7 +262,7 @@ CountLineWrite  id, count_line_id, count_id, written_by, applied_at,
 
 ### The decisions behind it
 
-**User is Better Auth's table, not a hand-rolled one.** Better Auth (§11) owns `user`, `session`, `account`, and `verification`; `role` and `active` are Handlebar's own fields added on top. Credential sign-in stores its password hash on `account.password` (Better Auth's credential provider), not on `User` — a `password_hash` column here would just be a second, unused place a password could live. This keeps `count.opened_by`, `count.closed_by`, and `count_line.counted_by` as ordinary integer foreign keys into `user.id`, same as everything else in this model.
+**User is Better Auth's table, not a hand-rolled one.** Better Auth (§11) owns `user`, `session`, `account`, and `verification`; `role` and `active` are Truestock's own fields added on top. Credential sign-in stores its password hash on `account.password` (Better Auth's credential provider), not on `User` — a `password_hash` column here would just be a second, unused place a password could live. This keeps `count.opened_by`, `count.closed_by`, and `count_line.counted_by` as ordinary integer foreign keys into `user.id`, same as everything else in this model.
 
 **Track product-level quantities, not bottle identities.** A bottle isn't an entity with a lifecycle — a line is `sealed_each_qty: 4, partial_fills: [0.3, 0.8]` = 5.1 units. Individual bottle identity only matters for rare or allocated spirits; add it later as an optional flag, never as the base model.
 
@@ -444,7 +444,7 @@ Two notes for that future decision: the Capacitor ML Kit plugin supports CocoaPo
 **Set the database pool small.** You get 100 MySQL user connections, shared with the website. A Node connection pool of **5–10** is plenty for five users and leaves the rest alone. Some ORMs default to larger pools — set this explicitly rather than accepting the default. (This is also why the serverless connection-exhaustion problem never appears here: one long-lived process holds one small pool.)
 
 ### Deployment shape
-- Deploy as a **subdomain** — `handlebar.<yourdomain>` — as a separate Node.js app in hPanel
+- Deploy as a **subdomain** — `truestock.<yourdomain>` — as a separate Node.js app in hPanel
 - Connect the GitHub repo; pushes trigger builds
 - MySQL database created from hPanel
 - Photos written to the plan's storage, served through the CDN with signed/expiring URLs

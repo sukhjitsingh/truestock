@@ -1,4 +1,4 @@
-# Handlebar design system
+# Truestock design system
 
 Binding rules for every screen built after this document. If you need a color, size, or
 component pattern that isn't here, that is a signal to extend this file and

@@ -6,7 +6,7 @@ pooled client in `db/index.ts`. Full data model rationale: `docs/spec.md` §8.
 ## Set up a database
 
 1. Create a MySQL database (locally, or from Hostinger hPanel in production —
-   database name `handlebar` per spec).
+   database name `truestock` per spec).
 2. Copy `.env.example` to `.env.local` and fill in `DATABASE_URL`.
 3. Generate/apply migrations and seed:
 
@@ -64,7 +64,7 @@ open a fresh pool (and fresh MySQL connections) on every file save.
 ## Seeding
 
 `db/seed.ts` reads the three CSVs in `docs/catalog/` (deterministic extracts
-of `docs/handlebar-catalog.xlsx` — never parse the `.xlsx` directly) and
+of `docs/truestock-catalog.xlsx` — never parse the `.xlsx` directly) and
 upserts by natural key (`location.name`, `product.(name, size_ml)` — a
 750ml and a 1.75L "handle" of the same brand are different SKUs, so `name`
 alone isn't enough; see `product_name_size_ml_unique` in the schema). It is
@@ -96,7 +96,7 @@ schema or drizzle config). Field shapes are taken directly from
 `getAuthTables()` in the installed `@better-auth/core@1.6.25`
 (`node_modules/@better-auth/core/dist/db/get-tables.mjs`), so the Drizzle
 adapter can be pointed at this schema with zero field-name remapping.
-`user.role` and `user.active` are Handlebar's own additions on top of
+`user.role` and `user.active` are Truestock's own additions on top of
 Better Auth's core fields. Credential password hashes live on
 `account.password` (provider `"credential"`) — there is no `password_hash`
 column on `user`.

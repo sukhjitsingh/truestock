@@ -1,5 +1,5 @@
 /**
- * Handlebar — Drizzle schema (MySQL)
+ * Truestock — Drizzle schema (MySQL)
  *
  * Source of truth: docs/spec.md §8 (data model) and §11 (MySQL/pool notes).
  * Schema deltas agreed outside spec.md, tracked here until the doc catches up:
@@ -103,7 +103,7 @@ const auditColumns = {
 // `session`, `account`, `verification`. Credential password hashes live on
 // `account.password` (Better Auth's credential provider, providerId
 // "credential"), NOT on `user` — there is no `password_hash` column here
-// anymore. `role` and `active` are Handlebar's own additions to `user`
+// anymore. `role` and `active` are Truestock's own additions to `user`
 // (Better Auth passes unknown fields through as `additionalFields`).
 //
 // Field shapes below are taken directly from `getAuthTables()` in
@@ -144,7 +144,7 @@ export const user = mysqlTable(
     image: varchar("image", { length: 2048 }),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow().onUpdateNow(),
-    // Handlebar additions (docs/spec.md §8), not part of Better Auth's core
+    // Truestock additions (docs/spec.md §8), not part of Better Auth's core
     // schema — passed through as additionalFields.
     role: mysqlEnum("role", userRoleEnum).notNull().default("staff"),
     active: boolean("active").notNull().default(true),

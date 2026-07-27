@@ -1,5 +1,5 @@
 /**
- * Creates a Handlebar user account. This is the ONLY way to create an
+ * Creates a Truestock user account. This is the ONLY way to create an
  * account — there is no public self-signup route (lib/auth.ts sets
  * `emailAndPassword.disableSignUp: true` specifically so that endpoint can
  * never be used to hand out an account, let alone a role, to an anonymous

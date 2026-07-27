@@ -1,6 +1,6 @@
 ---
 name: project-design-foundation
-description: "Handlebar design system foundation (palette, theming mechanism, brand-vs-status rule, role-gated value contract) — read before touching app/globals.css, docs/design-system.md, or prototypes/design-system.html"
+description: "Truestock design system foundation (palette, theming mechanism, brand-vs-status rule, role-gated value contract) — read before touching app/globals.css, docs/design-system.md, or prototypes/design-system.html"
 metadata:
   type: project
 ---

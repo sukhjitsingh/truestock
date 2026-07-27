@@ -1,6 +1,6 @@
 ---
 name: project-backend-auth-audit-2026-07
-description: Deep-dive verification of Handlebar's auth/authz/domain layer against CLAUDE.md invariants 7-8 — result and the two real gaps found
+description: Deep-dive verification of Truestock's auth/authz/domain layer against CLAUDE.md invariants 7-8 — result and the two real gaps found
 metadata:
   type: project
 ---

@@ -325,7 +325,7 @@ async function seedKegCosts() {
 // ---------------------------------------------------------------------------
 
 async function main() {
-  console.log("Seeding Handlebar catalog from docs/catalog/ ...");
+  console.log("Seeding Truestock catalog from docs/catalog/ ...");
   await seedLocations();
   await seedProducts();
   await seedKegCosts();

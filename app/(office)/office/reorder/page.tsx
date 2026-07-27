@@ -2,7 +2,7 @@ import { requireOfficeUser } from "@/lib/current-user";
 import { reorderListAction } from "@/app/actions/reports";
 import { formatUnits } from "@/lib/utils";
 
-export const metadata = { title: "Reorder · Handlebar" };
+export const metadata = { title: "Reorder · Truestock" };
 
 /**
  * The reorder list (spec §9.3), grouped by vendor.

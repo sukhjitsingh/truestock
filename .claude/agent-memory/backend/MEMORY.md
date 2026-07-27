@@ -1,4 +1,4 @@
-# Backend agent memory — Handlebar
+# Backend agent memory — Truestock
 
 - [feedback-review-style](feedback_review_style.md) — how the coordinator reviews this backend (adversarial, race-scenario-driven) and what that implies for how to write code/comments here
 - [project-architecture](project_architecture.md) — layout of lib/auth.ts, lib/authz.ts, lib/domain/*, app/actions/* after the first backend build

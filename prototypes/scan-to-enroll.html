@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Handlebar — Scan-to-Enroll (prototype)</title>
+<title>Truestock — Scan-to-Enroll (prototype)</title>
 <style>
   :root{
     --background:#0B0B0C;--foreground:#F5F5F4;--card:#17181A;--card-foreground:#F5F5F4;
@@ -190,7 +190,7 @@
   <ul>
     <li><b>Barcode</b> — read-only display of the value the scan already produced. Zero interaction cost, which is the whole point of scan-to-enroll.</li>
     <li><b>Name</b> — the one field that must be typed. Autofocused so the keyboard is up and the cursor is ready the instant the screen appears.</li>
-    <li><b>Category</b> — one-tap chip group over a dropdown or free text, because the catalog's real category set is small and closed (spirits/beer/wine/liqueur/draft/N-A per docs/handlebar-catalog.xlsx) — a chip is faster than opening a picker.</li>
+    <li><b>Category</b> — one-tap chip group over a dropdown or free text, because the catalog's real category set is small and closed (spirits/beer/wine/liqueur/draft/N-A per docs/truestock-catalog.xlsx) — a chip is faster than opening a picker.</li>
     <li><b>Size</b> — chip set that changes with category and pre-selects the most common value for that category (750ml for spirits, half barrel for draft, etc.), so the fast path is zero taps if the default is right.</li>
     <li><b>Case size</b> — prefilled from the category default, editable; hidden entirely for Draft Keg since kegs aren't cased.</li>
     <li><b>"This barcode is for a case" checkbox</b> — defaults unchecked (each), since a first scan-to-enroll is almost always off a single bottle/can, not a case carton.</li>
