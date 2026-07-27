@@ -50,13 +50,27 @@ Open bottles are the ones needing a fill level. They are handled differently on 
 ## MVP scope — do not exceed without asking
 
 **In:** catalog, locations, barcode scan, fill level in tenths, quantity input,
-count sessions, valuation, reorder list, auth with three roles.
+count sessions, valuation, reorder list, auth with three roles, multi-tenancy.
 
 **Out (deferred, do not build):** AI fill estimation, bottle photos, invoice OCR,
 Toast PMIX import, variance reporting, compliance packet.
 
 **The MVP contains no AI and no file storage.** If a task seems to need either,
 stop and confirm — it is probably scope creep.
+
+### Two decisions that changed the shape of this, 2026-07-27
+
+**This is going to be sold, so it is multi-tenant** (invariant 9). Done before the
+first migration ever ran, because tenant isolation is the one thing that is cheap
+now and a data migration plus a full invariant re-audit later. What is NOT built:
+a user belonging to more than one organization, an org switcher, billing, signup,
+or per-tenant subdomains. One org per user, seeded by hand. All of that is additive.
+
+**Invoice automation is coming, and it reverses two exclusions above** — it needs
+AI (OCR) and file storage (Arizona's 2-year retention, spec §10). Nothing is built
+for it yet. Before building any of it, settle spec §13's xtraCHEF question: that
+subscription already does invoice line-item capture and archival, and one hour of
+testing decides whether this half needs building at all.
 
 ---
 
@@ -81,7 +95,21 @@ plausible and are wrong, which is the worst failure mode this app has.
    middleware. Several Next.js CVEs are middleware bypasses; defence in depth makes them
    non-events.
 8. **Cost and margin data is gated by role.** Staff never see it.
-9. **Draft depletion is grossed up by the waste factor.** A 16 oz pour draws
+9. **Every query is scoped to one organization.** `organization` is the tenant
+   boundary. `Actor.organizationId` comes from `requireSession`, re-read from the
+   database on every call and never from client input. Every domain read filters on
+   it; every write stamps it. A cross-tenant lookup returns `NotFound`, never an
+   answer that confirms the row is real.
+   Client-supplied ids (`productId`, `locationId`, `countId`, `countLineId`) are
+   **ownership-checked, not just existence-checked** — a foreign key proves a row
+   exists, not whose it is. That gap was a real finding in review: an unchecked
+   `locationId` leaked another tenant's location name.
+   Two constraints are deliberately NOT per-tenant, and both should stay that way:
+   `user.email` (Better Auth resolves sign-in by email with no tenant in hand) and
+   `count_line_write.client_line_id` (a v4 UUID that *is* the idempotency
+   mechanism — scoping it would make the guarantee depend on the retry carrying a
+   matching org).
+10. **Draft depletion is grossed up by the waste factor.** A 16 oz pour draws
    `16 / (1 - waste_factor)` ≈ 17.8 oz from the keg. Theoretical usage that ignores this
    makes every keg look ~10% short and turns the variance report into false positives.
    Applies to *theoretical depletion only* — never to counted inventory, which is measured
