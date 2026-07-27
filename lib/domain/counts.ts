@@ -124,6 +124,7 @@ export async function openCount(actor: Actor, input: OpenCountInput): Promise<Co
   const [inserted] = await db
     .insert(count)
     .values({
+      organizationId: actor.organizationId,
       type: input.type,
       status: "draft",
       openedBy: actor.userId,
@@ -131,7 +132,11 @@ export async function openCount(actor: Actor, input: OpenCountInput): Promise<Co
     })
     .$returningId();
 
-  const [row] = await db.select().from(count).where(eq(count.id, inserted.id)).limit(1);
+  const [row] = await db
+    .select()
+    .from(count)
+    .where(and(eq(count.id, inserted.id), eq(count.organizationId, actor.organizationId)))
+    .limit(1);
   if (!row) {
     throw new NotFoundError("Count");
   }
@@ -145,14 +150,21 @@ export async function openCount(actor: Actor, input: OpenCountInput): Promise<Co
   };
 }
 
+/**
+ * The gate every count-line write passes through. Now also the TENANT gate:
+ * scoping the lookup here means a write aimed at another organization's count
+ * fails as NotFound before any row is touched, rather than relying on each
+ * individual write path to remember to check. One place, on every write.
+ */
 async function assertCountWritable(
   tx: Tx,
+  organizationId: number,
   countId: number,
 ): Promise<(typeof count.$inferSelect)["status"]> {
   const [row] = await tx
     .select({ status: count.status })
     .from(count)
-    .where(eq(count.id, countId))
+    .where(and(eq(count.id, countId), eq(count.organizationId, organizationId)))
     .for("update");
   if (!row) {
     throw new NotFoundError("Count");
@@ -222,11 +234,19 @@ function toCountLineRow(role: Actor["role"], row: CountLineRecord): CountLineRow
  * write for it produced. Two round trips (ledger -> line) rather than one
  * join, kept simple and consistent with every other read in this file.
  */
-async function findReplayedLine(clientLineId: string): Promise<CountLineRecord | null> {
+async function findReplayedLine(
+  organizationId: number,
+  clientLineId: string,
+): Promise<CountLineRecord | null> {
   const [ledgerRow] = await db
     .select({ countLineId: countLineWrite.countLineId })
     .from(countLineWrite)
-    .where(eq(countLineWrite.clientLineId, clientLineId))
+    .where(
+      and(
+        eq(countLineWrite.organizationId, organizationId),
+        eq(countLineWrite.clientLineId, clientLineId),
+      ),
+    )
     .limit(1);
   if (!ledgerRow) {
     return null;
@@ -234,7 +254,12 @@ async function findReplayedLine(clientLineId: string): Promise<CountLineRecord |
   const [line] = await db
     .select()
     .from(countLine)
-    .where(eq(countLine.id, ledgerRow.countLineId))
+    .where(
+      and(
+        eq(countLine.id, ledgerRow.countLineId),
+        eq(countLine.organizationId, organizationId),
+      ),
+    )
     .limit(1);
   return line ?? null;
 }
@@ -246,6 +271,7 @@ async function findReplayedLine(clientLineId: string): Promise<CountLineRecord |
 // ---------------------------------------------------------------------------
 
 interface UpsertCountLineParams {
+  organizationId: number;
   countId: number;
   productId: number;
   locationId: number;
@@ -300,16 +326,45 @@ async function upsertCountLineRow(
   const [productRow] = await tx
     .select({ currentUnitCost: product.currentUnitCost, caseSize: product.caseSize })
     .from(product)
-    .where(eq(product.id, params.productId))
+    .where(
+      and(
+        eq(product.id, params.productId),
+        eq(product.organizationId, params.organizationId),
+      ),
+    )
     .limit(1);
   if (!productRow) {
     throw new NotFoundError("Product");
+  }
+
+  // The location must belong to us too. `location_id` arrives from the client
+  // and its foreign key only proves the row EXISTS, not whose it is — unlike
+  // `count_id`, whose composite FK makes cross-tenant linkage structurally
+  // impossible. Without this check a caller could attach another
+  // organization's location to their own count line: the line's own
+  // organization_id is still stamped from the actor so no data of theirs is
+  // reachable, but the location NAME comes back in `getCount`/`countSummary`,
+  // and "this id is real" versus "this id exists nowhere" becomes a
+  // distinguishable answer across tenants. Found in review, 2026-07-27.
+  const [locationRow] = await tx
+    .select({ id: location.id })
+    .from(location)
+    .where(
+      and(
+        eq(location.id, params.locationId),
+        eq(location.organizationId, params.organizationId),
+      ),
+    )
+    .limit(1);
+  if (!locationRow) {
+    throw new NotFoundError("Location");
   }
 
   try {
     const [inserted] = await tx
       .insert(countLine)
       .values({
+        organizationId: params.organizationId,
         countId: params.countId,
         productId: params.productId,
         locationId: params.locationId,
@@ -393,7 +448,7 @@ async function applyIncrement(actor: Actor, delta: IncrementDelta): Promise<Coun
   // Fast-path pre-check — see the file header. Not the correctness
   // mechanism, just avoids opening a transaction we already know would
   // roll back for the common "ack was lost but the write landed" retry.
-  const preexisting = await findReplayedLine(delta.clientLineId);
+  const preexisting = await findReplayedLine(actor.organizationId, delta.clientLineId);
   if (preexisting) {
     return toCountLineRow(actor.role, preexisting);
   }
@@ -403,9 +458,10 @@ async function applyIncrement(actor: Actor, delta: IncrementDelta): Promise<Coun
 
   try {
     appliedLine = await db.transaction(async (tx) => {
-      await assertCountWritable(tx, delta.countId);
+      await assertCountWritable(tx, actor.organizationId, delta.countId);
 
       const line = await upsertCountLineRow(tx, {
+        organizationId: actor.organizationId,
         countId: delta.countId,
         productId: delta.productId,
         locationId: delta.locationId,
@@ -420,6 +476,7 @@ async function applyIncrement(actor: Actor, delta: IncrementDelta): Promise<Coun
       // violation on client_line_id must roll back everything
       // upsertCountLineRow just did — see the file header.
       await tx.insert(countLineWrite).values({
+        organizationId: actor.organizationId,
         countLineId: line.id,
         countId: delta.countId,
         writtenBy: actor.userId,
@@ -440,7 +497,7 @@ async function applyIncrement(actor: Actor, delta: IncrementDelta): Promise<Coun
     // write left behind and hand it back as an ordinary success — a
     // retrying client must get the same answer it would have gotten the
     // first time, never an error.
-    replayLine = await findReplayedLine(delta.clientLineId);
+    replayLine = await findReplayedLine(actor.organizationId, delta.clientLineId);
     if (!replayLine) {
       // Unreachable in practice: a duplicate-key error on this ledger's
       // only unique index means a row with this client_line_id exists.
@@ -458,7 +515,13 @@ async function applyIncrement(actor: Actor, delta: IncrementDelta): Promise<Coun
     await db
       .update(count)
       .set({ status: "in_progress" })
-      .where(and(eq(count.id, delta.countId), eq(count.status, "draft")));
+      .where(
+        and(
+          eq(count.id, delta.countId),
+          eq(count.organizationId, actor.organizationId),
+          eq(count.status, "draft"),
+        ),
+      );
   }
 
   const finalLine = appliedLine ?? replayLine;
@@ -496,7 +559,7 @@ export async function scanCountLine(
   actor: Actor,
   input: ScanCountLineInput,
 ): Promise<CountLineRow> {
-  const resolved = await resolveBarcodeForCount(input.barcode);
+  const resolved = await resolveBarcodeForCount(actor.organizationId, input.barcode);
   if (!resolved) {
     throw new NotFoundError("Product for this barcode");
   }
@@ -544,7 +607,7 @@ export async function setCountLineQuantities(
   actor: Actor,
   input: SetCountLineQuantitiesInput,
 ): Promise<CountLineRow> {
-  const preexisting = await findReplayedLine(input.clientLineId);
+  const preexisting = await findReplayedLine(actor.organizationId, input.clientLineId);
   if (preexisting) {
     return toCountLineRow(actor.role, preexisting);
   }
@@ -560,17 +623,27 @@ export async function setCountLineQuantities(
       const [unlocked] = await tx
         .select({ countId: countLine.countId })
         .from(countLine)
-        .where(eq(countLine.id, input.countLineId))
+        .where(
+        and(
+          eq(countLine.id, input.countLineId),
+          eq(countLine.organizationId, actor.organizationId),
+        ),
+      )
         .limit(1);
       if (!unlocked) {
         throw new NotFoundError("Count line");
       }
-      await assertCountWritable(tx, unlocked.countId);
+      await assertCountWritable(tx, actor.organizationId, unlocked.countId);
 
       const [line] = await tx
         .select()
         .from(countLine)
-        .where(eq(countLine.id, input.countLineId))
+        .where(
+        and(
+          eq(countLine.id, input.countLineId),
+          eq(countLine.organizationId, actor.organizationId),
+        ),
+      )
         .for("update");
       if (!line) {
         throw new NotFoundError("Count line");
@@ -584,12 +657,18 @@ export async function setCountLineQuantities(
           countedBy: actor.userId,
           countedAt: new Date(),
         })
-        .where(eq(countLine.id, input.countLineId));
+        .where(
+        and(
+          eq(countLine.id, input.countLineId),
+          eq(countLine.organizationId, actor.organizationId),
+        ),
+      );
 
       // Ledger insert SECOND, not caught here — same reasoning as
       // applyIncrement: a duplicate-key on client_line_id must roll back
       // the SET above along with it.
       await tx.insert(countLineWrite).values({
+        organizationId: actor.organizationId,
         countLineId: line.id,
         countId: line.countId,
         writtenBy: actor.userId,
@@ -602,7 +681,12 @@ export async function setCountLineQuantities(
       const [updated] = await tx
         .select()
         .from(countLine)
-        .where(eq(countLine.id, input.countLineId))
+        .where(
+        and(
+          eq(countLine.id, input.countLineId),
+          eq(countLine.organizationId, actor.organizationId),
+        ),
+      )
         .limit(1);
       if (!updated) throw new NotFoundError("Count line");
       return updated;
@@ -611,7 +695,7 @@ export async function setCountLineQuantities(
     if (!isDuplicateKeyError(err)) {
       throw err;
     }
-    replayLine = await findReplayedLine(input.clientLineId);
+    replayLine = await findReplayedLine(actor.organizationId, input.clientLineId);
     if (!replayLine) {
       throw err;
     }
@@ -647,17 +731,27 @@ export async function editCountLineFills(
     const [unlocked] = await tx
       .select({ countId: countLine.countId })
       .from(countLine)
-      .where(eq(countLine.id, input.countLineId))
+      .where(
+        and(
+          eq(countLine.id, input.countLineId),
+          eq(countLine.organizationId, actor.organizationId),
+        ),
+      )
       .limit(1);
     if (!unlocked) {
       throw new NotFoundError("Count line");
     }
-    await assertCountWritable(tx, unlocked.countId);
+    await assertCountWritable(tx, actor.organizationId, unlocked.countId);
 
     const [line] = await tx
       .select()
       .from(countLine)
-      .where(eq(countLine.id, input.countLineId))
+      .where(
+        and(
+          eq(countLine.id, input.countLineId),
+          eq(countLine.organizationId, actor.organizationId),
+        ),
+      )
       .for("update");
     if (!line) {
       throw new NotFoundError("Count line");
@@ -670,12 +764,22 @@ export async function editCountLineFills(
         countedBy: actor.userId,
         countedAt: new Date(),
       })
-      .where(eq(countLine.id, input.countLineId));
+      .where(
+        and(
+          eq(countLine.id, input.countLineId),
+          eq(countLine.organizationId, actor.organizationId),
+        ),
+      );
 
     const [row] = await tx
       .select()
       .from(countLine)
-      .where(eq(countLine.id, input.countLineId))
+      .where(
+        and(
+          eq(countLine.id, input.countLineId),
+          eq(countLine.organizationId, actor.organizationId),
+        ),
+      )
       .limit(1);
     if (!row) throw new NotFoundError("Count line");
     return row;
@@ -688,6 +792,7 @@ export async function editCountLineFills(
 // ---------------------------------------------------------------------------
 
 async function transitionCount(
+  organizationId: number,
   countId: number,
   from: (typeof count.$inferSelect)["status"][],
   to: (typeof count.$inferSelect)["status"],
@@ -697,7 +802,7 @@ async function transitionCount(
     const [row] = await tx
       .select()
       .from(count)
-      .where(eq(count.id, countId))
+      .where(and(eq(count.id, countId), eq(count.organizationId, organizationId)))
       .for("update");
     if (!row) {
       throw new NotFoundError("Count");
@@ -710,22 +815,31 @@ async function transitionCount(
     await tx
       .update(count)
       .set({ status: to, ...extra })
-      .where(eq(count.id, countId));
-    const [updated] = await tx.select().from(count).where(eq(count.id, countId)).limit(1);
+      .where(and(eq(count.id, countId), eq(count.organizationId, organizationId)));
+    const [updated] = await tx
+      .select()
+      .from(count)
+      .where(and(eq(count.id, countId), eq(count.organizationId, organizationId)))
+      .limit(1);
     if (!updated) throw new NotFoundError("Count");
     return updated;
   });
 }
 
 /** Whoever was counting marks it done. Any counting role. */
-export async function submitCount(countId: number): Promise<CountSummaryRow> {
-  const row = await transitionCount(countId, ["draft", "in_progress"], "submitted");
+export async function submitCount(actor: Actor, countId: number): Promise<CountSummaryRow> {
+  const row = await transitionCount(
+    actor.organizationId,
+    countId,
+    ["draft", "in_progress"],
+    "submitted",
+  );
   return row;
 }
 
 /** Supervisory step — owner/manager only (enforced by the action layer too). */
-export async function reviewCount(countId: number): Promise<CountSummaryRow> {
-  const row = await transitionCount(countId, ["submitted"], "reviewed");
+export async function reviewCount(actor: Actor, countId: number): Promise<CountSummaryRow> {
+  const row = await transitionCount(actor.organizationId, countId, ["submitted"], "reviewed");
   return row;
 }
 
@@ -752,9 +866,15 @@ type Executor = Tx | typeof db;
 
 async function computeCountTotals(
   executor: Executor,
+  organizationId: number,
   countId: number,
 ): Promise<ReturnType<typeof summarizeValuation> & { lineCount: number }> {
-  const lines = await executor.select().from(countLine).where(eq(countLine.countId, countId));
+  const lines = await executor
+    .select()
+    .from(countLine)
+    .where(
+      and(eq(countLine.organizationId, organizationId), eq(countLine.countId, countId)),
+    );
   return {
     ...summarizeValuation(lines.map(toValuationLine)),
     lineCount: lines.length,
@@ -792,13 +912,13 @@ export async function getCountTotals(actor: Actor, countId: number): Promise<Cou
   const [row] = await db
     .select({ status: count.status })
     .from(count)
-    .where(eq(count.id, countId))
+    .where(and(eq(count.id, countId), eq(count.organizationId, actor.organizationId)))
     .limit(1);
   if (!row) {
     throw new NotFoundError("Count");
   }
 
-  const totals = await computeCountTotals(db, countId);
+  const totals = await computeCountTotals(db, actor.organizationId, countId);
 
   const result: CountTotals = {
     countId,
@@ -836,7 +956,7 @@ export async function closeCount(
     const [row] = await tx
       .select()
       .from(count)
-      .where(eq(count.id, countId))
+      .where(and(eq(count.id, countId), eq(count.organizationId, actor.organizationId)))
       .for("update");
     if (!row) {
       throw new NotFoundError("Count");
@@ -847,7 +967,7 @@ export async function closeCount(
       );
     }
 
-    const totals = await computeCountTotals(tx, countId);
+    const totals = await computeCountTotals(tx, actor.organizationId, countId);
 
     await tx
       .update(count)
@@ -857,9 +977,13 @@ export async function closeCount(
         closedBy: actor.userId,
         totalValue: totals.totalValue.toFixed(2),
       })
-      .where(eq(count.id, countId));
+      .where(and(eq(count.id, countId), eq(count.organizationId, actor.organizationId)));
 
-    const [updated] = await tx.select().from(count).where(eq(count.id, countId)).limit(1);
+    const [updated] = await tx
+      .select()
+      .from(count)
+      .where(and(eq(count.id, countId), eq(count.organizationId, actor.organizationId)))
+      .limit(1);
     if (!updated) throw new NotFoundError("Count");
 
     return {
@@ -905,7 +1029,11 @@ export interface CountDetail {
 }
 
 export async function getCount(actor: Actor, countId: number): Promise<CountDetail> {
-  const [row] = await db.select().from(count).where(eq(count.id, countId)).limit(1);
+  const [row] = await db
+    .select()
+    .from(count)
+    .where(and(eq(count.id, countId), eq(count.organizationId, actor.organizationId)))
+    .limit(1);
   if (!row) {
     throw new NotFoundError("Count");
   }
@@ -920,9 +1048,27 @@ export async function getCount(actor: Actor, countId: number): Promise<CountDeta
       locationName: location.name,
     })
     .from(countLine)
-    .innerJoin(product, eq(product.id, countLine.productId))
-    .innerJoin(location, eq(location.id, countLine.locationId))
-    .where(eq(countLine.countId, countId))
+    .innerJoin(
+      product,
+      and(
+        eq(product.id, countLine.productId),
+        eq(product.organizationId, actor.organizationId),
+      ),
+    )
+    // Organization on the JOIN, not just the WHERE. Defence in depth behind
+    // the ownership check in upsertCountLineRow: if a cross-tenant location
+    // ever did get attached to a line, this join would drop the row rather
+    // than render another tenant's location name.
+    .innerJoin(
+      location,
+      and(
+        eq(location.id, countLine.locationId),
+        eq(location.organizationId, actor.organizationId),
+      ),
+    )
+    .where(
+      and(eq(countLine.organizationId, actor.organizationId), eq(countLine.countId, countId)),
+    )
     .orderBy(desc(countLine.countedAt));
 
   return {
@@ -994,6 +1140,7 @@ export async function listCounts(actor: Actor, limit = 50): Promise<CountListRow
     .from(count)
     .leftJoin(opener, eq(opener.id, count.openedBy))
     .leftJoin(closer, eq(closer.id, count.closedBy))
+    .where(eq(count.organizationId, actor.organizationId))
     .orderBy(desc(count.startedAt))
     .limit(limit);
 
@@ -1032,11 +1179,13 @@ export async function listCounts(actor: Actor, limit = 50): Promise<CountListRow
  * assumes one count in flight at a time; if two were ever open, the newer is
  * the one someone walking up is being handed.
  */
-export async function getActiveCount(): Promise<CountSummaryRow | null> {
+export async function getActiveCount(actor: Actor): Promise<CountSummaryRow | null> {
   const [row] = await db
     .select()
     .from(count)
-    .where(ne(count.status, "closed"))
+    .where(
+      and(eq(count.organizationId, actor.organizationId), ne(count.status, "closed")),
+    )
     .orderBy(desc(count.startedAt))
     .limit(1);
 

@@ -15,7 +15,7 @@
 import { and, desc, eq, inArray, isNull, lt, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { count, countLine, location, product, productPar, vendor } from "@/db/schema";
-import type { Role } from "@/lib/authz";
+import type { Actor } from "@/lib/authz";
 import { canSeeCost } from "@/lib/authz";
 import { NotFoundError } from "@/lib/domain/errors";
 import { getOnHandSnapshot } from "@/lib/domain/on-hand";
@@ -93,8 +93,15 @@ export interface CountSummary {
   totalValue?: number;
 }
 
-export async function countSummary(role: Role, countId: number): Promise<CountSummary> {
-  const [countRow] = await db.select().from(count).where(eq(count.id, countId)).limit(1);
+export async function countSummary(actor: Actor, countId: number): Promise<CountSummary> {
+  // Tenant scoping is part of the lookup, so a count belonging to another
+  // organization is indistinguishable from one that doesn't exist. That is
+  // deliberate: a distinct "forbidden" answer would confirm the id is real.
+  const [countRow] = await db
+    .select()
+    .from(count)
+    .where(and(eq(count.id, countId), eq(count.organizationId, actor.organizationId)))
+    .limit(1);
   if (!countRow) {
     throw new NotFoundError("Count");
   }
@@ -113,11 +120,31 @@ export async function countSummary(role: Role, countId: number): Promise<CountSu
       locationName: location.name,
     })
     .from(countLine)
-    .innerJoin(product, eq(product.id, countLine.productId))
-    .innerJoin(location, eq(location.id, countLine.locationId))
-    .where(eq(countLine.countId, countId));
+    .innerJoin(
+      product,
+      and(
+        eq(product.id, countLine.productId),
+        eq(product.organizationId, actor.organizationId),
+      ),
+    )
+    // See the same join in lib/domain/counts.ts's getCount — the tenant
+    // predicate belongs on the join, so a cross-tenant location can never
+    // surface its name here.
+    .innerJoin(
+      location,
+      and(
+        eq(location.id, countLine.locationId),
+        eq(location.organizationId, actor.organizationId),
+      ),
+    )
+    .where(
+      and(
+        eq(countLine.organizationId, actor.organizationId),
+        eq(countLine.countId, countId),
+      ),
+    );
 
-  const showCost = canSeeCost(role);
+  const showCost = canSeeCost(actor.role);
   const totals = summarizeValuation(rows.map(toValuationLine));
 
   // Aggregate server-side rather than letting the client do it (the reason
@@ -179,7 +206,7 @@ export async function countSummary(role: Role, countId: number): Promise<CountSu
     lines,
     byCategory: [...categoryGroups.values()].sort(byUnitsDesc),
     byLocation: [...locationGroups.values()].sort(byUnitsDesc),
-    previous: await previousCountComparison(showCost, countRow, totals),
+    previous: await previousCountComparison(actor, showCost, countRow, totals),
   };
   if (showCost) {
     summary.totalValue = totals.totalValue;
@@ -204,6 +231,7 @@ export async function countSummary(role: Role, countId: number): Promise<CountSu
  * closed.
  */
 async function previousCountComparison(
+  actor: Actor,
   showCost: boolean,
   countRow: typeof count.$inferSelect,
   totals: ReturnType<typeof summarizeValuation>,
@@ -213,6 +241,7 @@ async function previousCountComparison(
     .from(count)
     .where(
       and(
+        eq(count.organizationId, actor.organizationId),
         eq(count.status, "closed"),
         ne(count.id, countRow.id),
         lt(count.closedAt, countRow.startedAt),
@@ -234,7 +263,12 @@ async function previousCountComparison(
       caseSizeAtCount: countLine.caseSizeAtCount,
     })
     .from(countLine)
-    .where(eq(countLine.countId, prev.id));
+    .where(
+      and(
+        eq(countLine.organizationId, actor.organizationId),
+        eq(countLine.countId, prev.id),
+      ),
+    );
 
   const prevTotals = summarizeValuation(prevLines.map(toValuationLine));
 
@@ -282,12 +316,14 @@ export interface ReorderList {
   items: ReorderItem[];
 }
 
-export async function reorderList(): Promise<ReorderList> {
+export async function reorderList(actor: Actor): Promise<ReorderList> {
   // On-hand comes from the shared snapshot in lib/domain/on-hand.ts, which
   // the back-office catalog's stock cell also reads. Two screens showing two
   // different on-hand numbers for the same bottle is the kind of quiet
   // disagreement this codebase spends most of its comments avoiding.
-  const { asOfCountId, byProduct: onHandByProduct } = await getOnHandSnapshot();
+  const { asOfCountId, byProduct: onHandByProduct } = await getOnHandSnapshot(
+    actor.organizationId,
+  );
 
   if (asOfCountId == null) {
     return { asOfCountId: null, items: [] };
@@ -302,7 +338,13 @@ export async function reorderList(): Promise<ReorderList> {
     })
     .from(productPar)
     .innerJoin(product, eq(product.id, productPar.productId))
-    .where(and(eq(product.active, true), isNull(productPar.locationId)));
+    .where(
+      and(
+        eq(productPar.organizationId, actor.organizationId),
+        eq(product.active, true),
+        isNull(productPar.locationId),
+      ),
+    );
 
   if (parRows.length === 0) {
     return { asOfCountId, items: [] };
@@ -317,10 +359,15 @@ export async function reorderList(): Promise<ReorderList> {
       vendorId: product.vendorId,
     })
     .from(product)
-    .where(inArray(product.id, productIds));
+    .where(
+      and(eq(product.organizationId, actor.organizationId), inArray(product.id, productIds)),
+    );
   const productById = new Map(products.map((p) => [p.id, p]));
 
-  const vendors = await db.select({ id: vendor.id, name: vendor.name }).from(vendor);
+  const vendors = await db
+    .select({ id: vendor.id, name: vendor.name })
+    .from(vendor)
+    .where(eq(vendor.organizationId, actor.organizationId));
   const vendorById = new Map(vendors.map((v) => [v.id, v.name]));
 
   const items: ReorderItem[] = [];

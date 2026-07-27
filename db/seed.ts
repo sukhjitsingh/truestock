@@ -32,7 +32,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { and, eq } from "drizzle-orm";
 import { closePool, db } from "./index";
-import { location, product, productUnitTypeEnum } from "./schema";
+import { location, organization, product, productUnitTypeEnum } from "./schema";
 
 // ---------------------------------------------------------------------------
 // Minimal CSV reader. Three small, well-formed files don't justify a
@@ -116,10 +116,43 @@ function trimmedOrNull(value: string | undefined): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Organization — the tenant everything below is seeded into
+// ---------------------------------------------------------------------------
+// The seed is single-tenant on purpose: it loads ONE bar's catalog from
+// docs/catalog/, which is the founding customer's own data. Set SEED_ORG_SLUG
+// to seed a different tenant.
+//
+// Idempotent like the rest of this file — re-running resolves the existing
+// organization rather than creating a second one.
+
+const SEED_ORG_SLUG = process.env.SEED_ORG_SLUG?.trim() || "truestock";
+const SEED_ORG_NAME = process.env.SEED_ORG_NAME?.trim() || "Truestock";
+
+async function resolveOrganization(): Promise<number> {
+  const existing = await db
+    .select({ id: organization.id })
+    .from(organization)
+    .where(eq(organization.slug, SEED_ORG_SLUG))
+    .limit(1);
+
+  if (existing.length > 0) {
+    console.log(`  organization: "${SEED_ORG_SLUG}" already exists (id ${existing[0].id})`);
+    return existing[0].id;
+  }
+
+  const [inserted] = await db
+    .insert(organization)
+    .values({ name: SEED_ORG_NAME, slug: SEED_ORG_SLUG })
+    .$returningId();
+  console.log(`  organization: created "${SEED_ORG_SLUG}" (id ${inserted.id})`);
+  return inserted.id;
+}
+
+// ---------------------------------------------------------------------------
 // Locations — docs/catalog/locations.csv (5 rows)
 // ---------------------------------------------------------------------------
 
-async function seedLocations() {
+async function seedLocations(organizationId: number) {
   const rows = readCsv("docs/catalog/locations.csv");
   let inserted = 0;
   let updated = 0;
@@ -150,11 +183,11 @@ async function seedLocations() {
     const existing = await db
       .select({ id: location.id })
       .from(location)
-      .where(eq(location.name, name))
+      .where(and(eq(location.organizationId, organizationId), eq(location.name, name)))
       .limit(1);
 
     if (existing.length === 0) {
-      await db.insert(location).values({ name, sortOrder, countMode, notes });
+      await db.insert(location).values({ organizationId, name, sortOrder, countMode, notes });
       inserted++;
     } else {
       await db
@@ -175,7 +208,7 @@ async function seedLocations() {
 const KEG_WASTE_FACTOR = "0.100";
 const DEFAULT_WASTE_FACTOR = "0.000";
 
-async function seedProducts() {
+async function seedProducts(organizationId: number) {
   const rows = readCsv("docs/catalog/products.csv");
   let inserted = 0;
   let updated = 0;
@@ -211,11 +244,18 @@ async function seedProducts() {
     const existing = await db
       .select({ id: product.id })
       .from(product)
-      .where(and(eq(product.name, name), eq(product.sizeMl, sizeMl)))
+      .where(
+        and(
+          eq(product.organizationId, organizationId),
+          eq(product.name, name),
+          eq(product.sizeMl, sizeMl),
+        ),
+      )
       .limit(1);
 
     if (existing.length === 0) {
       await db.insert(product).values({
+        organizationId,
         name,
         brand,
         category,
@@ -256,12 +296,14 @@ async function seedProducts() {
 // never guessed.
 // ---------------------------------------------------------------------------
 
-async function seedKegCosts() {
+async function seedKegCosts(organizationId: number) {
   const rows = readCsv("docs/catalog/draft-economics.csv");
   const kegProducts = await db
     .select({ id: product.id, name: product.name, currentUnitCost: product.currentUnitCost })
     .from(product)
-    .where(eq(product.unitType, "keg"));
+    .where(
+      and(eq(product.organizationId, organizationId), eq(product.unitType, "keg")),
+    );
 
   let set = 0;
   let alreadySet = 0;
@@ -313,7 +355,7 @@ async function seedKegCosts() {
     await db
       .update(product)
       .set({ currentUnitCost: wholesaleCost.toFixed(4) })
-      .where(eq(product.id, target.id));
+      .where(and(eq(product.id, target.id), eq(product.organizationId, organizationId)));
     set++;
   }
 
@@ -326,9 +368,10 @@ async function seedKegCosts() {
 
 async function main() {
   console.log("Seeding Truestock catalog from docs/catalog/ ...");
-  await seedLocations();
-  await seedProducts();
-  await seedKegCosts();
+  const organizationId = await resolveOrganization();
+  await seedLocations(organizationId);
+  await seedProducts(organizationId);
+  await seedKegCosts(organizationId);
   console.log("Done.");
 }
 

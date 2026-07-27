@@ -20,13 +20,23 @@ import { headers } from "next/headers";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { user as userTable, userRoleEnum } from "@/db/schema";
+import { user as userTable, organization, userRoleEnum } from "@/db/schema";
 
 export type Role = (typeof userRoleEnum)[number];
 
 export interface Actor {
   userId: number;
   role: Role;
+  /**
+   * The tenant this request acts within. Every domain read filters on it and
+   * every domain write stamps it — it is not advisory context.
+   *
+   * Read fresh from the database on every call, alongside `role`, and never
+   * taken from a client-supplied value. A tenant id that a caller could
+   * influence would turn every "scoped" query into a cross-tenant read with
+   * extra steps.
+   */
+  organizationId: number;
 }
 
 /**
@@ -78,8 +88,14 @@ export async function requireSession(): Promise<Actor> {
 
   const userId = Number(sessionData.user.id);
   const rows = await db
-    .select({ role: userTable.role, active: userTable.active })
+    .select({
+      role: userTable.role,
+      active: userTable.active,
+      organizationId: userTable.organizationId,
+      organizationActive: organization.active,
+    })
     .from(userTable)
+    .innerJoin(organization, eq(organization.id, userTable.organizationId))
     .where(eq(userTable.id, userId))
     .limit(1);
   const row = rows[0];
@@ -90,11 +106,18 @@ export async function requireSession(): Promise<Actor> {
   if (!row.active) {
     throw new AuthzError(403, "Account is inactive.");
   }
+  // A deactivated organization locks out every one of its users at once —
+  // the lever for a cancelled or suspended subscription. Checked here rather
+  // than per-action for the same reason `active` is: one place, on every
+  // request, re-read from the database.
+  if (!row.organizationActive) {
+    throw new AuthzError(403, "This account is not currently active.");
+  }
   if (!isKnownRole(row.role)) {
     throw new AuthzError(403, "Account has an unrecognized role.");
   }
 
-  return { userId, role: row.role };
+  return { userId, role: row.role, organizationId: row.organizationId };
 }
 
 /**

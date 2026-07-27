@@ -126,6 +126,19 @@ export const auth = betterAuth({
         input: false,
         defaultValue: true,
       },
+      // The tenant. `input: false` matters more here than anywhere else in
+      // this block: a caller who could set their own `organizationId` through
+      // any Better Auth endpoint would be choosing which tenant's data they
+      // can read, which is the whole boundary. Deliberately has NO
+      // defaultValue — unlike role/active there is no safe fallback tenant,
+      // and a default would let an account be created that points at
+      // somebody's data by accident. `scripts/create-user.ts` resolves and
+      // passes it explicitly through the internal adapter.
+      organizationId: {
+        type: "number",
+        required: true,
+        input: false,
+      },
     },
   },
   databaseHooks: {

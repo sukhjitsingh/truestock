@@ -23,7 +23,7 @@
  * so a zero that means "unknown" is distinguishable from a zero that means
  * "none left" — the whole point of the nullable snapshot columns.
  */
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { count, countLine } from "@/db/schema";
 import { computeLineUnits } from "@/lib/domain/valuation";
@@ -49,11 +49,11 @@ const EMPTY: OnHandSnapshot = {
   indeterminateProductIds: new Set(),
 };
 
-export async function getOnHandSnapshot(): Promise<OnHandSnapshot> {
+export async function getOnHandSnapshot(organizationId: number): Promise<OnHandSnapshot> {
   const [latestClosed] = await db
     .select({ id: count.id, closedAt: count.closedAt })
     .from(count)
-    .where(eq(count.status, "closed"))
+    .where(and(eq(count.organizationId, organizationId), eq(count.status, "closed")))
     .orderBy(desc(count.closedAt))
     .limit(1);
 
@@ -75,7 +75,17 @@ export async function getOnHandSnapshot(): Promise<OnHandSnapshot> {
       caseSizeAtCount: countLine.caseSizeAtCount,
     })
     .from(countLine)
-    .where(eq(countLine.countId, latestClosed.id));
+    // Redundant with the count filter above (the count was already resolved
+    // within this organization), and kept anyway: count_line carries its own
+    // organization_id held true by a composite foreign key, so filtering on
+    // it directly costs nothing and means this query is tenant-safe when read
+    // in isolation rather than only in context.
+    .where(
+      and(
+        eq(countLine.organizationId, organizationId),
+        eq(countLine.countId, latestClosed.id),
+      ),
+    );
 
   const byProduct = new Map<number, number>();
   const indeterminateProductIds = new Set<number>();

@@ -43,7 +43,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { closePool, db } from "@/db";
-import { user as userTable, userRoleEnum } from "@/db/schema";
+import { user as userTable, organization, userRoleEnum } from "@/db/schema";
 
 const MIN_PASSWORD_LENGTH = 12; // keep in sync with lib/auth.ts's emailAndPassword.minPasswordLength
 
@@ -51,6 +51,11 @@ const argsSchema = z.object({
   email: z.email("Not a valid email address."),
   name: z.string().trim().min(1, "Name is required."),
   role: z.enum(userRoleEnum).default("owner"),
+  // Which tenant this account belongs to. Required — `user.organization_id`
+  // is NOT NULL with no default precisely so no account can be created
+  // without someone naming its tenant. Matched against organization.slug,
+  // which db/seed.ts creates (default "truestock").
+  org: z.string().trim().min(1, "An organization slug is required (--org)."),
   password: z
     .string()
     .min(MIN_PASSWORD_LENGTH, `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`),
@@ -141,12 +146,12 @@ async function main() {
       console.error(`  ${issue.path.join(".") || "(root)"}: ${issue.message}`);
     }
     console.error(
-      '\nUsage: tsx scripts/create-user.ts --email you@bar.com --name "Your Name" [--role owner|manager|staff] [--password "..."]',
+      '\nUsage: tsx scripts/create-user.ts --email you@bar.com --name "Your Name" --org <slug> [--role owner|manager|staff] [--password "..."]',
     );
     process.exitCode = 1;
     return;
   }
-  const { email, name, role, password } = parsedArgs.data;
+  const { email, name, role, org, password } = parsedArgs.data;
   const normalizedEmail = email.toLowerCase();
 
   const existing = await db
@@ -162,11 +167,30 @@ async function main() {
 
   const ctx = await auth.$context;
 
+  // Resolve the tenant BEFORE creating anything. Deliberately does not create
+  // an organization on the fly: a typo in --org would otherwise silently
+  // produce a second, empty tenant and an owner who signs in to an empty
+  // catalog and cannot see why. Organizations are created by db/seed.ts.
+  const [org_] = await db
+    .select({ id: organization.id, name: organization.name })
+    .from(organization)
+    .where(eq(organization.slug, org))
+    .limit(1);
+
+  if (!org_) {
+    console.error(
+      `No organization with slug "${org}". Run \`bun run db:seed\` first, or pass an existing slug.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   const createdUser = await ctx.internalAdapter.createUser({
     email: normalizedEmail,
     name,
     emailVerified: true, // operator-created account; no verification email flow in the MVP
     role,
+    organizationId: org_.id,
     active: true,
   });
   if (!createdUser) {
@@ -183,7 +207,9 @@ async function main() {
     password: hash,
   });
 
-  console.log(`Created ${role} account: ${normalizedEmail} (user id ${createdUser.id}).`);
+  console.log(
+    `Created ${role} account: ${normalizedEmail} (user id ${createdUser.id}) in "${org_.name}".`,
+  );
 }
 
 main()

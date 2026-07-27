@@ -16,13 +16,13 @@ export async function countSummaryAction(
   return runAction(async () => {
     const actor = await requireRole("owner", "manager");
     const parsed = getCountSchema.parse(input);
-    return reports.countSummary(actor.role, parsed.countId);
+    return reports.countSummary(actor, parsed.countId);
   });
 }
 
 export async function reorderListAction(): Promise<ActionResult<reports.ReorderList>> {
   return runAction(async () => {
-    await requireRole("owner", "manager");
-    return reports.reorderList();
+    const actor = await requireRole("owner", "manager");
+    return reports.reorderList(actor);
   });
 }

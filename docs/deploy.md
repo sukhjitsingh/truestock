@@ -210,10 +210,19 @@ Do this once, from your own machine, after §2 and §3 are done:
    export DATABASE_URL="mysql://<db-user>:<db-password>@127.0.0.1:13306/truestock"
    bun run db:migrate
    bun run db:seed
-   bun run create-user -- --email you@yourbar.com --name "Your Name" --role owner
+   bun run create-user -- --email you@yourbar.com --name "Your Name" --role owner --org truestock
    ```
    `create-user` will prompt for a password (hidden input) unless you pass
    `--password`, which you shouldn't — it lands in shell history.
+
+   **Order matters here, and `db:seed` is not optional.** `db:seed` is what
+   creates the `truestock` organization; `create-user` resolves `--org`
+   against an existing one and refuses to create it on the fly. That refusal
+   is deliberate — a typo in `--org` would otherwise produce a second, empty
+   tenant and an owner who signs in to an empty catalog with no indication
+   why. To onboard a second customer later, seed their organization first
+   (`SEED_ORG_SLUG=theirbar SEED_ORG_NAME="Their Bar" bun run db:seed`), then
+   create their owner against that slug.
 
 3. **Push to `main`.** From here on, every push runs the full
    `verify → migrate → build-and-deploy` pipeline with no manual steps.

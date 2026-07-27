@@ -31,7 +31,7 @@ export async function searchProductsAction(
   return runAction(async () => {
     const actor = await requireRole("owner", "manager", "staff");
     const parsed = productSearchSchema.parse(input);
-    return catalog.searchProducts(actor.role, parsed);
+    return catalog.searchProducts(actor, parsed);
   });
 }
 
@@ -48,7 +48,7 @@ export async function resolveBarcodeAction(
   return runAction(async () => {
     const actor = await requireRole("owner", "manager", "staff");
     const parsed = resolveBarcodeSchema.parse(input);
-    return catalog.resolveBarcode(actor.role, parsed.barcode);
+    return catalog.resolveBarcode(actor, parsed.barcode);
   });
 }
 
@@ -67,7 +67,7 @@ export async function createProductAction(
   return runAction(async () => {
     const actor = await requireRole("owner", "manager", "staff");
     const parsed = productCreateSchema.parse(input);
-    return catalog.createProduct(actor.role, parsed);
+    return catalog.createProduct(actor, parsed);
   });
 }
 
@@ -82,7 +82,7 @@ export async function updateProductAction(
   return runAction(async () => {
     const actor = await requireRole("owner", "manager");
     const parsed = productUpdateSchema.parse(input);
-    return catalog.updateProduct(actor.role, parsed);
+    return catalog.updateProduct(actor, parsed);
   });
 }
 
@@ -91,9 +91,9 @@ export async function deactivateProductAction(
   input: unknown,
 ): Promise<ActionResult<{ productId: number }>> {
   return runAction(async () => {
-    await requireRole("owner", "manager");
+    const actor = await requireRole("owner", "manager");
     const parsed = productDeactivateSchema.parse(input);
-    await catalog.deactivateProduct(parsed.productId);
+    await catalog.deactivateProduct(actor, parsed.productId);
     return { productId: parsed.productId };
   });
 }
@@ -101,15 +101,15 @@ export async function deactivateProductAction(
 /** Needed by every role to pick a location while counting. */
 export async function listLocationsAction(): Promise<ActionResult<catalog.LocationSummary[]>> {
   return runAction(async () => {
-    await requireRole("owner", "manager", "staff");
-    return catalog.listLocations();
+    const actor = await requireRole("owner", "manager", "staff");
+    return catalog.listLocations(actor);
   });
 }
 
 /** Vendor list — owner/manager (reorder grouping, catalog forms). No cost data. */
 export async function listVendorsAction(): Promise<ActionResult<catalog.VendorSummary[]>> {
   return runAction(async () => {
-    await requireRole("owner", "manager");
-    return catalog.listVendors();
+    const actor = await requireRole("owner", "manager");
+    return catalog.listVendors(actor);
   });
 }

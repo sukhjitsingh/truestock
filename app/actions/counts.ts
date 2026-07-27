@@ -120,9 +120,9 @@ export async function submitCountAction(
   input: unknown,
 ): Promise<ActionResult<counts.CountSummaryRow>> {
   return runAction(async () => {
-    await requireRole("owner", "manager", "staff");
+    const actor = await requireRole("owner", "manager", "staff");
     const parsed = submitCountSchema.parse(input);
-    return counts.submitCount(parsed.countId);
+    return counts.submitCount(actor, parsed.countId);
   });
 }
 
@@ -131,9 +131,9 @@ export async function reviewCountAction(
   input: unknown,
 ): Promise<ActionResult<counts.CountSummaryRow>> {
   return runAction(async () => {
-    await requireRole("owner", "manager");
+    const actor = await requireRole("owner", "manager");
     const parsed = reviewCountSchema.parse(input);
-    return counts.reviewCount(parsed.countId);
+    return counts.reviewCount(actor, parsed.countId);
   });
 }
 
@@ -209,8 +209,8 @@ export async function getActiveCountAction(): Promise<
   ActionResult<counts.CountSummaryRow | null>
 > {
   return runAction(async () => {
-    await requireRole("owner", "manager", "staff");
-    return counts.getActiveCount();
+    const actor = await requireRole("owner", "manager", "staff");
+    return counts.getActiveCount(actor);
   });
 }
 

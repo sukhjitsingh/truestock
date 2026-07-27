@@ -47,6 +47,7 @@ import {
   mysqlEnum,
   index,
   uniqueIndex,
+  foreignKey,
 } from "drizzle-orm/mysql-core";
 import type { SQL } from "drizzle-orm";
 import { sql } from "drizzle-orm";
@@ -98,6 +99,42 @@ const auditColumns = {
 // ---------------------------------------------------------------------------
 // User, Session, Account, Verification — Better Auth's own tables
 // ---------------------------------------------------------------------------
+// Organization — the tenant boundary
+// ---------------------------------------------------------------------------
+// Added 2026-07-27, deliberately BEFORE the first migration was ever applied.
+// Retrofitting tenancy onto a live database is a data migration plus a
+// re-audit of every invariant; doing it while `drizzle/` is still regenerated
+// in place costs a day.
+//
+// "Organization" and not "location": `location` already means Speed Rail /
+// Back Bar / Storeroom — a place *inside* one venue. Overloading it would be
+// genuinely confusing in a codebase where the active location is a
+// correctness concern.
+//
+// One organization per user (`user.organization_id`). A user belonging to
+// several organizations — a multi-unit operator, or a bookkeeper serving
+// three bars — is a later, ADDITIVE change: a membership table plus an
+// org-switcher in the session. What could not be added later cheaply is
+// tenant isolation of the *data*, which is what this is.
+//
+// A single organization may later hold several venues; if that happens, add a
+// nullable `venue_id` to `location` and `count`. Nothing here forecloses it.
+export const organization = mysqlTable(
+  "organization",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    name: varchar("name", { length: 255 }).notNull(),
+    // URL-safe handle, for a future per-tenant subdomain or path segment.
+    slug: varchar("slug", { length: 100 }).notNull(),
+    // Same rule as product: never hard-delete a tenant. Two years of invoices
+    // and immutable closed counts hang off this row (spec §10).
+    active: boolean("active").notNull().default(true),
+    ...auditColumns,
+  },
+  (table) => [uniqueIndex("organization_slug_unique").on(table.slug)],
+);
+
+// ---------------------------------------------------------------------------
 // RESOLVED 2026-07-24 (coordinator decision; database agent verified against
 // the installed library before writing this): Better Auth owns `user`,
 // `session`, `account`, `verification`. Credential password hashes live on
@@ -148,13 +185,25 @@ export const user = mysqlTable(
     // schema — passed through as additionalFields.
     role: mysqlEnum("role", userRoleEnum).notNull().default("staff"),
     active: boolean("active").notNull().default(true),
+    // The tenant this account belongs to. NOT NULL and no default on purpose:
+    // a user with no organization could pass `requireRole` and then query
+    // with an undefined tenant filter, which is the one failure mode this
+    // column exists to make impossible. Every creation path must name an
+    // organization explicitly — today that means scripts/create-user.ts,
+    // since public sign-up is disabled.
+    organizationId: int("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "restrict" }),
   },
   (table) => [
-    // Both Better Auth's own lookup (email/password sign-in resolves the
-    // user by this) and ours (nothing here is app-specific, but this index
-    // is required either way).
+    // Email stays GLOBALLY unique rather than per-organization. Better Auth
+    // resolves a credential sign-in by email alone — it has no organization
+    // to scope by at that point — so a per-tenant email index would let two
+    // tenants register the same address and make sign-in ambiguous. One
+    // address, one account, one tenant.
     uniqueIndex("user_email_unique").on(table.email),
     index("user_active_idx").on(table.active),
+    index("user_organization_id_idx").on(table.organizationId),
   ],
 );
 
@@ -227,14 +276,21 @@ export const verification = mysqlTable(
 // ---------------------------------------------------------------------------
 // Vendor
 // ---------------------------------------------------------------------------
-export const vendor = mysqlTable("vendor", {
-  id: int("id").autoincrement().primaryKey(),
-  name: varchar("name", { length: 255 }).notNull(),
-  contact: varchar("contact", { length: 255 }),
-  orderMethod: varchar("order_method", { length: 255 }),
-  leadTimeDays: int("lead_time_days"),
-  ...auditColumns,
-});
+export const vendor = mysqlTable(
+  "vendor",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    organizationId: int("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "restrict" }),
+    name: varchar("name", { length: 255 }).notNull(),
+    contact: varchar("contact", { length: 255 }),
+    orderMethod: varchar("order_method", { length: 255 }),
+    leadTimeDays: int("lead_time_days"),
+    ...auditColumns,
+  },
+  (table) => [index("vendor_organization_id_idx").on(table.organizationId)],
+);
 
 // ---------------------------------------------------------------------------
 // Location
@@ -243,6 +299,9 @@ export const location = mysqlTable(
   "location",
   {
     id: int("id").autoincrement().primaryKey(),
+    organizationId: int("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "restrict" }),
     name: varchar("name", { length: 100 }).notNull(),
     sortOrder: int("sort_order").notNull().default(0),
     // See `locationCountModeEnum`. Defaults to `tenths` because that mode is
@@ -257,7 +316,11 @@ export const location = mysqlTable(
     notes: text("notes"),
     ...auditColumns,
   },
-  (table) => [uniqueIndex("location_name_unique").on(table.name)],
+  // Per-organization, not global. Every bar has a "Storeroom"; the second
+  // tenant to seed one must not collide with the first.
+  (table) => [
+    uniqueIndex("location_organization_name_unique").on(table.organizationId, table.name),
+  ],
 );
 
 // ---------------------------------------------------------------------------
@@ -267,6 +330,9 @@ export const product = mysqlTable(
   "product",
   {
     id: int("id").autoincrement().primaryKey(),
+    organizationId: int("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "restrict" }),
     name: varchar("name", { length: 255 }).notNull(),
     brand: varchar("brand", { length: 255 }),
     // category/subcategory are free text, not enums — spec §8 only spec's
@@ -306,10 +372,15 @@ export const product = mysqlTable(
     ...auditColumns,
   },
   (table) => [
-    // The real natural key. Also what db/seed.ts upserts on — enforced here
-    // so an app-layer bug can't silently create a duplicate "Coors Light"
-    // 355ml product alongside the existing one.
-    uniqueIndex("product_name_size_ml_unique").on(table.name, table.sizeMl),
+    // The real natural key, scoped to the tenant. Also what db/seed.ts
+    // upserts on — enforced here so an app-layer bug can't silently create a
+    // duplicate "Coors Light" 355ml alongside the existing one. Every bar
+    // stocks Tito's 750ml, so this cannot be global.
+    uniqueIndex("product_organization_name_size_ml_unique").on(
+      table.organizationId,
+      table.name,
+      table.sizeMl,
+    ),
     index("product_vendor_id_idx").on(table.vendorId),
     // Catalog screens and the reorder list filter on active constantly; the
     // counting flow itself only ever shows active products.
@@ -325,6 +396,12 @@ export const productBarcode = mysqlTable(
   "product_barcode",
   {
     id: int("id").autoincrement().primaryKey(),
+    // Denormalized from `product` so the unique index below can be scoped to
+    // the tenant. A unique index cannot span a join, so resolving this any
+    // other way would have meant keeping the barcode globally unique.
+    organizationId: int("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "restrict" }),
     productId: int("product_id")
       .notNull()
       .references(() => product.id, { onDelete: "restrict" }),
@@ -339,9 +416,22 @@ export const productBarcode = mysqlTable(
   (table) => [
     // THE hot-path index: barcode scan → product resolution is the single
     // most latency-sensitive read in the app (per the build brief). Unique
-    // because two products sharing a barcode would make scan resolution
-    // ambiguous — that's a correctness bug, not just a UX one.
-    uniqueIndex("product_barcode_barcode_unique").on(table.barcode),
+    // *within an organization* because two products sharing a barcode would
+    // make scan resolution ambiguous — a correctness bug, not a UX one.
+    //
+    // Scoping this to the tenant is the single most important constraint
+    // change in the multi-tenant conversion. A global unique on `barcode`
+    // means the first bar to scan-enroll a Tito's UPC owns that code for
+    // EVERY tenant, and every other bar's scan-to-enroll fails on a
+    // duplicate key — breaking the interaction the whole catalog depends on
+    // (spec §12), for everyone but the first customer.
+    //
+    // Organization first in the index so it also serves tenant-filtered
+    // lookups, which is every lookup.
+    uniqueIndex("product_barcode_organization_barcode_unique").on(
+      table.organizationId,
+      table.barcode,
+    ),
     index("product_barcode_product_id_idx").on(table.productId),
   ],
 );
@@ -353,6 +443,9 @@ export const productPar = mysqlTable(
   "product_par",
   {
     id: int("id").autoincrement().primaryKey(),
+    organizationId: int("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "restrict" }),
     productId: int("product_id")
       .notNull()
       .references(() => product.id, { onDelete: "restrict" }),
@@ -392,6 +485,9 @@ export const count = mysqlTable(
   "count",
   {
     id: int("id").autoincrement().primaryKey(),
+    organizationId: int("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "restrict" }),
     type: mysqlEnum("type", countTypeEnum).notNull(),
     status: mysqlEnum("status", countStatusEnum).notNull().default("draft"),
     startedAt: timestamp("started_at").notNull().defaultNow(),
@@ -411,6 +507,13 @@ export const count = mysqlTable(
     index("count_status_idx").on(table.status),
     index("count_opened_by_idx").on(table.openedBy),
     index("count_closed_by_idx").on(table.closedBy),
+    // Every counts-list and active-count read filters by tenant then orders
+    // by recency, so the index carries both.
+    index("count_organization_started_at_idx").on(table.organizationId, table.startedAt),
+    // Not for lookups — this exists so `count_line` can carry a COMPOSITE
+    // foreign key on (organization_id, count_id). MySQL requires the
+    // referenced columns of an FK to be indexed. See count_line below.
+    uniqueIndex("count_organization_id_id_unique").on(table.organizationId, table.id),
   ],
 );
 
@@ -421,9 +524,17 @@ export const countLine = mysqlTable(
   "count_line",
   {
     id: int("id").autoincrement().primaryKey(),
-    countId: int("count_id")
+    // Denormalized from `count`. Not a convenience: it is what lets the
+    // composite foreign key below make cross-tenant drift structurally
+    // impossible, rather than something every query has to remember to join
+    // for. See the table-level constraints.
+    organizationId: int("organization_id")
       .notNull()
-      .references(() => count.id, { onDelete: "cascade" }),
+      .references(() => organization.id, { onDelete: "restrict" }),
+    // No single-column FK here — the composite one below covers it and
+    // carries the same ON DELETE CASCADE. Two overlapping FKs on the same
+    // column would just be a second thing to keep in sync.
+    countId: int("count_id").notNull(),
     productId: int("product_id")
       .notNull()
       .references(() => product.id, { onDelete: "restrict" }),
@@ -513,6 +624,19 @@ export const countLine = mysqlTable(
     index("count_line_product_id_idx").on(table.productId),
     index("count_line_location_id_idx").on(table.locationId),
     index("count_line_counted_by_idx").on(table.countedBy),
+    // Tenant integrity, enforced by the database rather than trusted to every
+    // future query. This composite FK makes it IMPOSSIBLE to insert a line
+    // whose organization_id differs from its count's — the row simply won't
+    // write. Without it, `organization_id` here would be a denormalized copy
+    // that could silently drift, which is the usual reason denormalizing a
+    // tenant key is a bad idea; the constraint is what makes it a good one.
+    foreignKey({
+      columns: [table.organizationId, table.countId],
+      foreignColumns: [count.organizationId, count.id],
+      name: "count_line_organization_count_fk",
+    }).onDelete("cascade"),
+    // Referenced by count_line_write's own composite FK — see that table.
+    uniqueIndex("count_line_organization_id_id_unique").on(table.organizationId, table.id),
   ],
 );
 
@@ -577,9 +701,15 @@ export const countLineWrite = mysqlTable(
   "count_line_write",
   {
     id: int("id").autoincrement().primaryKey(),
-    countLineId: int("count_line_id")
+    // Same reasoning as count_line's: denormalized, but held true by the
+    // composite foreign key at the bottom of this table rather than by
+    // convention.
+    organizationId: int("organization_id")
       .notNull()
-      .references(() => countLine.id, { onDelete: "cascade" }),
+      .references(() => organization.id, { onDelete: "restrict" }),
+    // Covered by the composite FK below (which carries the cascade), so no
+    // separate single-column FK here.
+    countLineId: int("count_line_id").notNull(),
     // Denormalized from count_line.count_id so audit queries ("every write
     // in count X") can filter this table directly instead of joining
     // through count_line first. Can't legitimately diverge from
@@ -612,9 +742,26 @@ export const countLineWrite = mysqlTable(
     clientLineId: varchar("client_line_id", { length: 36 }).notNull(),
   },
   (table) => [
+    // DELIBERATELY GLOBAL, not per-organization — the one unique index in
+    // this conversion that must NOT be scoped to the tenant.
+    //
+    // client_line_id is a client-generated UUIDv4, already globally unique by
+    // construction, and this index is the idempotency mechanism itself. If it
+    // were scoped to (organization_id, client_line_id), a replayed write
+    // would still be caught — but the constraint would now depend on the
+    // retry carrying the *same* organization_id as the original. That is one
+    // more thing that has to be right for a silent double-count not to
+    // happen, in exchange for nothing: two tenants colliding on a v4 UUID is
+    // not a real event. Keep the narrower, stronger guarantee.
     uniqueIndex("count_line_write_client_line_id_unique").on(table.clientLineId),
     index("count_line_write_count_line_id_idx").on(table.countLineId),
     index("count_line_write_count_id_idx").on(table.countId),
     index("count_line_write_written_by_idx").on(table.writtenBy),
+    // Tenant integrity — see count_line's equivalent.
+    foreignKey({
+      columns: [table.organizationId, table.countLineId],
+      foreignColumns: [countLine.organizationId, countLine.id],
+      name: "count_line_write_organization_line_fk",
+    }).onDelete("cascade"),
   ],
 );

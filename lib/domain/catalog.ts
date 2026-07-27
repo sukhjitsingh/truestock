@@ -12,7 +12,7 @@
 import { and, eq, inArray, isNull, like, or, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { product, productBarcode, productPar, vendor, location } from "@/db/schema";
-import type { Role } from "@/lib/authz";
+import type { Actor } from "@/lib/authz";
 import { canSeeCost, canManageCost } from "@/lib/authz";
 import { ConflictError, NotFoundError } from "@/lib/domain/errors";
 import { isDuplicateKeyError } from "@/lib/domain/db-errors";
@@ -148,15 +148,21 @@ const BASE_PRODUCT_COLUMNS = {
  * anyone but an owner.
  */
 async function selectProducts(
-  role: Role,
+  actor: Actor,
   where: SQL | undefined,
   limit: number,
 ): Promise<ProductSummary[]> {
-  if (canSeeCost(role)) {
+  // The tenant filter is applied HERE, not by callers, so no caller can
+  // forget it. Every product read in this module goes through this function
+  // for exactly that reason — a `where` built by a caller is always ANDed
+  // with the organization, never used on its own.
+  const scoped = and(eq(product.organizationId, actor.organizationId), where);
+
+  if (canSeeCost(actor.role)) {
     const rows = await db
       .select({ ...BASE_PRODUCT_COLUMNS, currentUnitCost: product.currentUnitCost })
       .from(product)
-      .where(where)
+      .where(scoped)
       .orderBy(product.name)
       .limit(limit);
     return rows.map((r) => {
@@ -171,7 +177,7 @@ async function selectProducts(
   const rows = await db
     .select(BASE_PRODUCT_COLUMNS)
     .from(product)
-    .where(where)
+    .where(scoped)
     .orderBy(product.name)
     .limit(limit);
   return rows.map((r) => ({ ...r, incomplete: incompleteReasons(r, false) }));
@@ -196,7 +202,7 @@ async function selectProducts(
  * one read that cannot afford it.
  */
 export async function searchProducts(
-  role: Role,
+  actor: Actor,
   input: ProductSearchInput,
 ): Promise<ProductSummary[]> {
   const conditions: SQL[] = [];
@@ -214,12 +220,12 @@ export async function searchProducts(
     }
   }
   const where = conditions.length ? and(...conditions) : undefined;
-  const rows = await selectProducts(role, where, input.limit);
+  const rows = await selectProducts(actor, where, input.limit);
 
   if (!input.includeOnHand || rows.length === 0) {
     return rows;
   }
-  return attachStock(rows);
+  return attachStock(actor, rows);
 }
 
 /**
@@ -227,10 +233,10 @@ export async function searchProducts(
  * queries total regardless of page size — the shared on-hand snapshot, and
  * one `IN (...)` over `product_par` for just the ids on this page.
  */
-async function attachStock(rows: ProductSummary[]): Promise<ProductSummary[]> {
+async function attachStock(actor: Actor, rows: ProductSummary[]): Promise<ProductSummary[]> {
   const ids = rows.map((r) => r.id);
   const [snapshot, parRows] = await Promise.all([
-    getOnHandSnapshot(),
+    getOnHandSnapshot(actor.organizationId),
     db
       .select({
         productId: productPar.productId,
@@ -238,7 +244,13 @@ async function attachStock(rows: ProductSummary[]): Promise<ProductSummary[]> {
         reorderPoint: productPar.reorderPoint,
       })
       .from(productPar)
-      .where(and(inArray(productPar.productId, ids), isNull(productPar.locationId))),
+      .where(
+        and(
+          eq(productPar.organizationId, actor.organizationId),
+          inArray(productPar.productId, ids),
+          isNull(productPar.locationId),
+        ),
+      ),
   ]);
 
   const parByProduct = new Map(parRows.map((p) => [p.productId, p]));
@@ -278,18 +290,23 @@ export interface BarcodeResolution {
  * scan-to-enroll rather than an error state.
  */
 export async function resolveBarcode(
-  role: Role,
+  actor: Actor,
   barcode: string,
 ): Promise<BarcodeResolution | null> {
   const [hit] = await db
     .select({ productId: productBarcode.productId, packLevel: productBarcode.packLevel })
     .from(productBarcode)
-    .where(eq(productBarcode.barcode, barcode))
+    .where(
+      and(
+        eq(productBarcode.organizationId, actor.organizationId),
+        eq(productBarcode.barcode, barcode),
+      ),
+    )
     .limit(1);
   if (!hit) {
     return null;
   }
-  const rows = await selectProducts(role, eq(product.id, hit.productId), 1);
+  const rows = await selectProducts(actor, eq(product.id, hit.productId), 1);
   const found = rows[0];
   if (!found) {
     return null;
@@ -306,12 +323,18 @@ export async function resolveBarcode(
  * count line, but that never flows back into a response to non-owner roles.
  */
 export async function resolveBarcodeForCount(
+  organizationId: number,
   barcode: string,
 ): Promise<{ productId: number; packLevel: (typeof productBarcode.$inferSelect)["packLevel"] } | null> {
   const [hit] = await db
     .select({ productId: productBarcode.productId, packLevel: productBarcode.packLevel })
     .from(productBarcode)
-    .where(eq(productBarcode.barcode, barcode))
+    .where(
+      and(
+        eq(productBarcode.organizationId, organizationId),
+        eq(productBarcode.barcode, barcode),
+      ),
+    )
     .limit(1);
   return hit ?? null;
 }
@@ -337,10 +360,10 @@ export async function resolveBarcodeForCount(
  * cost visibility" as a role property rather than only a response filter.
  */
 export async function createProduct(
-  role: Role,
+  actor: Actor,
   input: ProductCreateInput,
 ): Promise<ProductSummary> {
-  const allowCost = canManageCost(role);
+  const allowCost = canManageCost(actor.role);
 
   // Scan-to-enroll has a 20-second budget and is the app's highest-risk
   // interaction (CLAUDE.md) — a generic "Something went wrong" on the two
@@ -356,6 +379,7 @@ export async function createProduct(
       [inserted] = await tx
         .insert(product)
         .values({
+          organizationId: actor.organizationId,
           name: input.name,
           brand: input.brand,
           category: input.category,
@@ -380,6 +404,7 @@ export async function createProduct(
     if (input.barcode) {
       try {
         await tx.insert(productBarcode).values({
+          organizationId: actor.organizationId,
           productId: inserted.id,
           barcode: input.barcode.barcode,
           format: input.barcode.format,
@@ -396,7 +421,12 @@ export async function createProduct(
             .select({ name: product.name })
             .from(productBarcode)
             .innerJoin(product, eq(product.id, productBarcode.productId))
-            .where(eq(productBarcode.barcode, input.barcode.barcode))
+            .where(
+              and(
+                eq(productBarcode.organizationId, actor.organizationId),
+                eq(productBarcode.barcode, input.barcode.barcode),
+              ),
+            )
             .limit(1);
           throw new ConflictError(
             owner
@@ -411,7 +441,7 @@ export async function createProduct(
     return inserted.id;
   });
 
-  const rows = await selectProducts(role, eq(product.id, created), 1);
+  const rows = await selectProducts(actor, eq(product.id, created), 1);
   const result = rows[0];
   if (!result) {
     throw new NotFoundError("Product");
@@ -424,10 +454,10 @@ export async function createProduct(
 // ---------------------------------------------------------------------------
 
 export async function updateProduct(
-  role: Role,
+  actor: Actor,
   input: ProductUpdateInput,
 ): Promise<ProductSummary> {
-  const allowCost = canManageCost(role);
+  const allowCost = canManageCost(actor.role);
   const { productId, currentUnitCost, wasteFactor, ...rest } = input;
 
   const patch: Partial<typeof product.$inferInsert> = { ...rest };
@@ -445,7 +475,7 @@ export async function updateProduct(
   // whole update rejected.
 
   if (Object.keys(patch).length === 0) {
-    const rows = await selectProducts(role, eq(product.id, productId), 1);
+    const rows = await selectProducts(actor, eq(product.id, productId), 1);
     const existing = rows[0];
     if (!existing) throw new NotFoundError("Product");
     return existing;
@@ -453,7 +483,15 @@ export async function updateProduct(
 
   let result;
   try {
-    result = await db.update(product).set(patch).where(eq(product.id, productId));
+    // The organization predicate is what turns a cross-tenant update into a
+    // no-op (affectedRows 0 -> NotFoundError) instead of a successful write to
+    // someone else's catalog.
+    result = await db
+      .update(product)
+      .set(patch)
+      .where(
+        and(eq(product.id, productId), eq(product.organizationId, actor.organizationId)),
+      );
   } catch (err) {
     if (isDuplicateKeyError(err)) {
       // product_name_size_ml_unique — only reachable if this update changes
@@ -468,7 +506,7 @@ export async function updateProduct(
     throw new NotFoundError("Product");
   }
 
-  const rows = await selectProducts(role, eq(product.id, productId), 1);
+  const rows = await selectProducts(actor, eq(product.id, productId), 1);
   const updated = rows[0];
   if (!updated) {
     throw new NotFoundError("Product");
@@ -480,11 +518,13 @@ export async function updateProduct(
 // Deactivate — invariant 6: never hard-delete
 // ---------------------------------------------------------------------------
 
-export async function deactivateProduct(productId: number): Promise<void> {
+export async function deactivateProduct(actor: Actor, productId: number): Promise<void> {
   const result = await db
     .update(product)
     .set({ active: false })
-    .where(eq(product.id, productId));
+    .where(
+      and(eq(product.id, productId), eq(product.organizationId, actor.organizationId)),
+    );
   if (result[0].affectedRows === 0) {
     throw new NotFoundError("Product");
   }
@@ -504,7 +544,7 @@ export interface LocationSummary {
   notes: string | null;
 }
 
-export async function listLocations(): Promise<LocationSummary[]> {
+export async function listLocations(actor: Actor): Promise<LocationSummary[]> {
   return db
     .select({
       id: location.id,
@@ -514,6 +554,7 @@ export async function listLocations(): Promise<LocationSummary[]> {
       notes: location.notes,
     })
     .from(location)
+    .where(eq(location.organizationId, actor.organizationId))
     .orderBy(location.sortOrder, location.name);
 }
 
@@ -530,7 +571,7 @@ export interface VendorSummary {
   leadTimeDays: number | null;
 }
 
-export async function listVendors(): Promise<VendorSummary[]> {
+export async function listVendors(actor: Actor): Promise<VendorSummary[]> {
   return db
     .select({
       id: vendor.id,
@@ -540,5 +581,6 @@ export async function listVendors(): Promise<VendorSummary[]> {
       leadTimeDays: vendor.leadTimeDays,
     })
     .from(vendor)
+    .where(eq(vendor.organizationId, actor.organizationId))
     .orderBy(vendor.name);
 }

@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { user as userTable } from "@/db/schema";
+import { user as userTable, organization } from "@/db/schema";
 import type { Role } from "@/lib/authz";
 
 export interface CurrentUser {
@@ -12,6 +12,8 @@ export interface CurrentUser {
   name: string;
   email: string;
   role: Role;
+  organizationId: number;
+  organizationName: string;
 }
 
 /**
@@ -47,15 +49,29 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
       email: userTable.email,
       role: userTable.role,
       active: userTable.active,
+      organizationId: userTable.organizationId,
+      organizationName: organization.name,
+      organizationActive: organization.active,
     })
     .from(userTable)
+    .innerJoin(organization, eq(organization.id, userTable.organizationId))
     .where(eq(userTable.id, userId))
     .limit(1);
 
-  if (!row || !row.active) {
+  // Same fail-closed set as lib/authz.ts's requireSession, including the
+  // organization's own active flag — a suspended tenant has no signed-in
+  // users, not users who can render pages but not act.
+  if (!row || !row.active || !row.organizationActive) {
     return null;
   }
-  return { userId, name: row.name, email: row.email, role: row.role as Role };
+  return {
+    userId,
+    name: row.name,
+    email: row.email,
+    role: row.role as Role,
+    organizationId: row.organizationId,
+    organizationName: row.organizationName,
+  };
 });
 
 /** Resolve the signed-in user or bounce to the sign-in screen. */
