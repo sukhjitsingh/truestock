@@ -7,7 +7,19 @@ name: CI
 # endorses Bun for install *and* build/CI use; only the deployed, *running*
 # process is Node).
 on:
+  # `push` is scoped to main deliberately. An unscoped `push:` alongside
+  # `pull_request:` runs this whole workflow TWICE for every commit on a PR
+  # branch — once for the push, once for the PR — and the concurrency group
+  # below cannot collapse them, because the two events carry different
+  # `github.ref` values (`refs/heads/<branch>` vs `refs/pull/<n>/merge`).
+  # Observed on PR #1: two identical passing runs of the same commit.
+  #
+  # Split this way, a PR is gated by `pull_request` and main by `push` — every
+  # commit still checked exactly once. The trade is that a branch pushed with
+  # no PR open gets no CI, which is fine here: deploy.yml re-runs verify on
+  # main before it ships anything.
   push:
+    branches: [main]
   pull_request:
 
 concurrency:
