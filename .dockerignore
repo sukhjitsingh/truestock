@@ -1,0 +1,24 @@
+# Keeps the build context small and, more importantly, keeps host-built
+# artifacts out of the image. node_modules here is darwin/x86_64; the image
+# needs linux/x86_64, and docker/app/Dockerfile installs its own.
+node_modules
+.next
+out
+build
+
+.git
+.github
+
+# Never let a filled-in env file into an image layer. .env.example is the
+# only one that is safe, and the Dockerfile does not need it.
+.env
+.env.*
+
+*.tsbuildinfo
+.DS_Store
+coverage
+
+# Large and irrelevant to a build: docs, design prototypes, the catalog
+# workbook.
+docs
+prototypes

@@ -1,0 +1,125 @@
+# Local development and test environment for Truestock.
+#
+# This file IS the local environment definition — there is no "and then run
+# this one command I typed once." Everything a fresh clone needs is here:
+#
+#   bun run docker:up      # database + app, waits until actually ready
+#   bun run docker:migrate # apply migrations
+#   bun run docker:seed    # seed the catalog
+#   bun run test:docker    # run the suite against a real MySQL
+#
+# Nothing here touches Hostinger. Production is deployed by
+# .github/workflows/deploy.yml from the `output: 'standalone'` build, which
+# does not use this file or docker/app/Dockerfile.
+
+services:
+  db:
+    image: mysql:8.4
+    container_name: truestock-mysql
+    restart: unless-stopped
+    command:
+      # Pinned rather than inherited. Nothing in db/schema.ts or drizzle/*.sql
+      # declares a charset, so every table takes the database default —
+      # db/README.md documents that requirement but cannot enforce it. Setting
+      # it at the server makes CREATE DATABASE correct by construction.
+      # (Schema audit 2026-07-27, finding F3.)
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      # Every `timestamp` column in db/schema.ts uses defaultNow(). A container
+      # on SYSTEM time zone and a shared host on something else produce quietly
+      # different started_at values — the kind of difference that only surfaces
+      # in a variance report weeks later. Pin it here; compare to production
+      # once the version probe has run.
+      - --default-time-zone=+00:00
+      # Mirrors Hostinger Cloud Startup's cap, shared with the restaurant
+      # website (CLAUDE.md). If a pool or query pattern is going to exhaust
+      # connections in production, it should exhaust them here first.
+      - --max-connections=100
+      - --innodb-buffer-pool-size=256M
+      - --local-infile=0
+    environment:
+      # Local-only credentials, deliberately boring. Keep them alphanumeric:
+      # they end up inside a DATABASE_URL, and anything needing
+      # percent-encoding there is a trap you will hit at the worst moment.
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: truestock
+      MYSQL_USER: truestock
+      MYSQL_PASSWORD: truestock
+    ports:
+      # 3307 on the host, not 3306: Homebrew MySQL 8.0.12 is installed on this
+      # machine with a registered LaunchAgent. It is stopped today, but
+      # `brew services start mysql` would silently take 3306 and you would
+      # spend an afternoon debugging a schema mismatch against a 2018 server.
+      #
+      # Bound to 127.0.0.1 rather than published on 0.0.0.0 — Docker's default
+      # would put a root-password-`root` MySQL on your LAN.
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - truestock-mysql-data:/var/lib/mysql
+      # Runs ONCE, on a fresh volume, after the entrypoint creates the database
+      # and grants the app user. This is why `down -v` is the real reset.
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # Pings over TCP (-h 127.0.0.1), not the unix socket. The MySQL
+      # entrypoint runs a TEMPORARY server with --skip-networking while it
+      # initialises the data directory; a socket ping passes against that temp
+      # server, so `depends_on: service_healthy` would fire before the real
+      # database exists. TCP cannot reach the temp server, so it only goes
+      # green for the one you actually want.
+      test:
+        - CMD-SHELL
+        - 'mysqladmin ping -h 127.0.0.1 -u root -p"$$MYSQL_ROOT_PASSWORD" --silent'
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      # First boot initialises the data directory. Without this grace period
+      # the retries burn out before the server is ever up.
+      start_period: 40s
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/app/Dockerfile
+    container_name: truestock-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Container-internal address: the `db` service on its standard port, not
+      # the host's 3307. `environment` wins over anything in .env.local, and
+      # dotenv (loaded by drizzle.config.ts) does not override an already-set
+      # process.env value — so this is authoritative inside the container while
+      # .env.local stays authoritative for commands you run on the host.
+      DATABASE_URL: mysql://truestock:truestock@db:3306/truestock
+      TEST_DATABASE_URL: mysql://truestock:truestock@db:3306/truestock_test
+      BETTER_AUTH_URL: http://localhost:3000
+      # Dev-only, and fine to have in a committed file precisely because it is
+      # worthless: it signs sessions for a throwaway local database. Production
+      # reads its secret from hPanel (docs/deploy.md §2.4) and must never see
+      # this value.
+      BETTER_AUTH_SECRET: dev-only-local-secret-not-used-anywhere-real
+      NEXT_TELEMETRY_DISABLED: "1"
+      # macOS bind mounts do not deliver inotify events reliably, so the dev
+      # server's file watcher misses edits without polling. Costs some idle
+      # CPU; buys hot reload that actually works.
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      # Source is bind-mounted so edits on the host are live in the container.
+      - .:/app
+      # ...but node_modules and .next are NAMED volumes deliberately, so the
+      # bind mount does not shadow them. Your host node_modules was built for
+      # darwin/x86_64; the container needs linux/x86_64. Sharing one directory
+      # between them breaks any package with a native binding. Named volumes
+      # are seeded from the image on first creation, so these arrive already
+      # populated by the Dockerfile's `bun install`.
+      - truestock-node-modules:/app/node_modules
+      - truestock-next-cache:/app/.next
+
+volumes:
+  truestock-mysql-data:
+  truestock-node-modules:
+  truestock-next-cache:

@@ -14,7 +14,18 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx db/seed.ts",
-    "create-user": "tsx scripts/create-user.ts"
+    "create-user": "tsx scripts/create-user.ts",
+    "docker:up": "docker compose up -d --wait",
+    "docker:down": "docker compose down",
+    "docker:build": "docker compose build",
+    "docker:logs": "docker compose logs -f",
+    "docker:shell": "docker compose exec app bash",
+    "docker:migrate": "docker compose exec -T app bun run db:migrate",
+    "docker:seed": "docker compose exec -T app bun run db:seed",
+    "docker:reset": "docker compose down -v && docker compose up -d --wait && docker compose exec -T app bun run db:migrate && docker compose exec -T app bun run db:seed",
+    "db:shell": "docker compose exec db mysql -utruestock -ptruestock truestock",
+    "db:logs": "docker compose logs -f db",
+    "test:docker": "docker compose exec -T app bun test"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.2",
