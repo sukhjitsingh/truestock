@@ -1,9 +1,9 @@
-# Handlebar — Product Spec (Planning Draft v0.1)
+# Truestock — Product Spec (Planning Draft v0.1)
 
-*Beverage inventory for a single bar. Get a handle on your bar.*
+*Beverage inventory for a single bar. Counted, costed, and correct.*
 
 **Status:** Planning. Name and MVP scope locked (§12). No code yet.
-**Repo:** `handlebar` · **Host:** `handlebar.<yourdomain>` · **Database:** `handlebar`
+**Repo:** `truestock` · **Host:** `truestock.<yourdomain>` · **Database:** `truestock`
 **Owner:** Sukhjit
 **Context:** Single bar/restaurant, Arizona. 50–200 bottles per full count. Web app, Chrome on Android. Toast POS. Hostinger Cloud Startup.
 **Date:** July 2026
@@ -12,7 +12,7 @@
 
 ## 1. Executive summary
 
-Handlebar is a web app where a manager walks the bar with a phone, scans each bottle's barcode, and records how much is left — producing a valued inventory count, par-level reorder lists, and an audit-ready record.
+Truestock is a web app where a manager walks the bar with a phone, scans each bottle's barcode, and records how much is left — producing a valued inventory count, par-level reorder lists, and an audit-ready record.
 
 ### Business
 
@@ -215,14 +215,18 @@ On-device is appealing — free, private, works without signal — but it doesn'
 MVP tables. Deferred tables (Invoice, InvoiceLine, Depletion) are sketched at the end so today's schema doesn't block them.
 
 ```
-User            id, email, password_hash, role, active
+User            id, name, email, email_verified, image, role, active
                 role: owner | manager | staff
+                owned by Better Auth — session, account, and verification
+                are its tables too; credential password hashes live on
+                account.password, not on User
 
 Vendor          id, name, contact, order_method, lead_time_days
 
 Product         id, name, brand, category, unit_type,
                 size_ml, case_size, vendor_id,
                 current_unit_cost, empty_weight_g, full_weight_g,
+                waste_factor, shelf_life_days,
                 active
                 unit_type: bottle | can | keg
 
@@ -243,24 +247,38 @@ Count           id, type, status, started_at, closed_at,
 CountLine       id, count_id, product_id, location_id,
                 sealed_case_qty, sealed_each_qty,
                 partial_fills (JSON),
-                unit_cost_at_count, case_size_at_count,
-                counted_by, counted_at, client_line_id
+                unit_cost_at_count, case_size_at_count (both nullable),
+                opened_at,
+                counted_by, counted_at
                 UNIQUE (count_id, product_id, location_id)
+
+CountLineWrite  id, count_line_id, count_id, written_by, applied_at,
+                sealed_case_delta, sealed_each_delta,
+                partial_fills_delta (JSON), client_line_id
+                UNIQUE (client_line_id)
+                append-only — one row per write applied to a CountLine,
+                never updated or deleted
 ```
 
 ### The decisions behind it
+
+**User is Better Auth's table, not a hand-rolled one.** Better Auth (§11) owns `user`, `session`, `account`, and `verification`; `role` and `active` are Truestock's own fields added on top. Credential sign-in stores its password hash on `account.password` (Better Auth's credential provider), not on `User` — a `password_hash` column here would just be a second, unused place a password could live. This keeps `count.opened_by`, `count.closed_by`, and `count_line.counted_by` as ordinary integer foreign keys into `user.id`, same as everything else in this model.
 
 **Track product-level quantities, not bottle identities.** A bottle isn't an entity with a lifecycle — a line is `sealed_each_qty: 4, partial_fills: [0.3, 0.8]` = 5.1 units. Individual bottle identity only matters for rare or allocated spirits; add it later as an optional flag, never as the base model.
 
 **Barcodes are one-to-many.** A product routinely carries several codes: the bottle UPC and the case UPC differ, vendors change UPCs across packaging revisions, and some bottles carry both UPC-A and EAN-13. A `upc` column on Product means your first case scan creates a phantom duplicate product. `pack_level` also does double duty — scanning a case carton drops the UI into case entry, scanning a loose bottle into eaches. The interaction falls out of the schema for free.
 
-**Snapshot cost and case size onto the count line.** `current_unit_cost` and `case_size` live on Product and change over time. If closed counts reference them live, a March count silently re-values itself in July and the variance history becomes fiction. Copy both onto `CountLine` at count time; closed counts then never move.
+**Snapshot cost and case size onto the count line.** `current_unit_cost` and `case_size` live on Product and change over time. If closed counts reference them live, a March count silently re-values itself in July and the variance history becomes fiction. Copy both onto `CountLine` at count time; closed counts then never move. Both are nullable on `CountLine`: most of the catalog starts with no cost and no case size recorded, and forcing a non-null snapshot would either block counting altogether or invite a silent `0` — the exact plausible-but-wrong failure this app exists to avoid. `NULL` means "unpriced at count time," excluded from valuation rather than counted as free; once a product's cost is entered later, its past `NULL` lines stay `NULL` rather than being repriced.
+
+**`waste_factor` on Product.** Fraction of volume assumed lost to pour waste, spill, and foam — currently meaningful only for draft beer (kegs), 0 for everything else.
+
+**`shelf_life_days` on Product, `opened_at` on CountLine.** Days after opening before a product should be discarded, and the date a specific counted bottle/keg was opened. Both unused by any computation or UI in the MVP — they exist so a later shelf-life feature is additive, not a migration plus a recount.
 
 **Store cases and eaches separately — don't convert at entry.** Beer gets counted both ways here. If "3 cases" is stored as 72 and `case_size` is later corrected from 24 to 12, that historical count is quietly wrong. Store what was observed: `sealed_case_qty: 3, sealed_each_qty: 7`.
 
 **Unique constraint on (count_id, product_id, location_id).** Scanning the same bottle twice must increment the existing line, not create a second one. Without the constraint you get silent double-counting — the worst class of bug, because the total still looks plausible. The same product in two locations correctly produces two lines; that's information you want.
 
-**`client_line_id` for idempotency.** The retry queue (§11) means a submit can arrive twice. A client-generated UUID per line makes writes idempotent. Everything else uses integer primary keys — simpler and readable at this scale.
+**Idempotency needs its own ledger, not a column on CountLine.** The retry queue (§11) means a write can arrive twice, and a single write only ever *creates* a line the first time — every scan after that *increments* an existing one (the unique constraint above). A single `client_line_id` column on `CountLine` can only remember the most recent write, so it can only catch a retry of that one write; an earlier write, retried after a later one has already landed, doesn't match and silently re-applies — a second, invisible increment. `CountLineWrite` fixes this by giving every individual write its own permanent row, keyed by that write's `client_line_id`, UNIQUE. A duplicate-key violation on insert is the signal that a write already applied — enforced by the database, not remembered by a column that can only hold one value at a time. It's also the audit trail §10 needs: summing every write's delta for a line reconstructs exactly what happened, in order, by whom — independent of `CountLine`'s own (mutable, current-state) columns.
 
 **`partial_fills` as a JSON array, not a rollup.** `[0.3, 0.8]` rather than "2 bottles, 1.1 total." Identical math, but you can reopen and correct one bottle without recounting the shelf, and the audit trail shows what was actually observed. MySQL handles JSON natively and you read the whole array at once anyway.
 
@@ -426,7 +444,7 @@ Two notes for that future decision: the Capacitor ML Kit plugin supports CocoaPo
 **Set the database pool small.** You get 100 MySQL user connections, shared with the website. A Node connection pool of **5–10** is plenty for five users and leaves the rest alone. Some ORMs default to larger pools — set this explicitly rather than accepting the default. (This is also why the serverless connection-exhaustion problem never appears here: one long-lived process holds one small pool.)
 
 ### Deployment shape
-- Deploy as a **subdomain** — `handlebar.<yourdomain>` — as a separate Node.js app in hPanel
+- Deploy as a **subdomain** — `truestock.<yourdomain>` — as a separate Node.js app in hPanel
 - Connect the GitHub repo; pushes trigger builds
 - MySQL database created from hPanel
 - Photos written to the plan's storage, served through the CDN with signed/expiring URLs

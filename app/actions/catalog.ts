@@ -1,0 +1,115 @@
+"use server";
+
+/**
+ * Catalog server actions. Every export here checks session + role itself
+ * (CLAUDE.md invariant 7 / spec §11) via lib/authz.ts — never trusts that
+ * middleware already did it. Business logic lives in lib/domain/catalog.ts;
+ * these functions are thin: authorize, validate, call the domain function,
+ * shape the result.
+ */
+import { requireRole } from "@/lib/authz";
+import { runAction, type ActionResult } from "@/lib/action-result";
+import * as catalog from "@/lib/domain/catalog";
+import {
+  productCreateSchema,
+  productUpdateSchema,
+  productDeactivateSchema,
+  productSearchSchema,
+  resolveBarcodeSchema,
+} from "@/lib/validation/catalog";
+
+/**
+ * Search/list products. All three roles need this (staff resolves products
+ * via search when a barcode isn't usable — spec's "always offer a search
+ * picker" working agreement), so this only requires a valid session, not a
+ * specific role. Cost visibility is still gated inside the domain function
+ * by the caller's actual role.
+ */
+export async function searchProductsAction(
+  input: unknown,
+): Promise<ActionResult<catalog.ProductSummary[]>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager", "staff");
+    const parsed = productSearchSchema.parse(input);
+    return catalog.searchProducts(actor, parsed);
+  });
+}
+
+/**
+ * Resolve a scanned barcode to a product. The single most latency-sensitive
+ * read in the app (build brief) — one indexed lookup on `product_barcode`,
+ * one primary-key lookup on `product` (see lib/domain/catalog.ts). Returns
+ * `null` (not an error) for an unknown barcode; the caller routes to
+ * scan-to-enroll.
+ */
+export async function resolveBarcodeAction(
+  input: unknown,
+): Promise<ActionResult<catalog.BarcodeResolution | null>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager", "staff");
+    const parsed = resolveBarcodeSchema.parse(input);
+    return catalog.resolveBarcode(actor, parsed.barcode);
+  });
+}
+
+/**
+ * Scan-to-enroll: create a product (and optionally its first barcode) mid-
+ * count. All three roles may call this — see the long comment in
+ * lib/domain/catalog.ts's createProduct for why (it's the core "unknown
+ * barcode -> fast form -> keep counting" loop, spec's highest-risk
+ * interaction). Cost is accepted as well-formed input but only ever
+ * persisted for an owner caller; that's enforced in the domain layer, not
+ * here, so it can't be bypassed by a differently-shaped request.
+ */
+export async function createProductAction(
+  input: unknown,
+): Promise<ActionResult<catalog.ProductSummary>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager", "staff");
+    const parsed = productCreateSchema.parse(input);
+    return catalog.createProduct(actor, parsed);
+  });
+}
+
+/**
+ * Full catalog edit (back office) — owner/manager only. Staff is
+ * "count only" (spec §4) and doesn't get catalog-management access beyond
+ * scan-to-enroll.
+ */
+export async function updateProductAction(
+  input: unknown,
+): Promise<ActionResult<catalog.ProductSummary>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = productUpdateSchema.parse(input);
+    return catalog.updateProduct(actor, parsed);
+  });
+}
+
+/** Invariant 6: never hard-delete. Owner/manager only. */
+export async function deactivateProductAction(
+  input: unknown,
+): Promise<ActionResult<{ productId: number }>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = productDeactivateSchema.parse(input);
+    await catalog.deactivateProduct(actor, parsed.productId);
+    return { productId: parsed.productId };
+  });
+}
+
+/** Needed by every role to pick a location while counting. */
+export async function listLocationsAction(): Promise<ActionResult<catalog.LocationSummary[]>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager", "staff");
+    return catalog.listLocations(actor);
+  });
+}
+
+/** Vendor list — owner/manager (reorder grouping, catalog forms). No cost data. */
+export async function listVendorsAction(): Promise<ActionResult<catalog.VendorSummary[]>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    return catalog.listVendors(actor);
+  });
+}

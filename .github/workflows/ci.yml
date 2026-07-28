@@ -1,0 +1,81 @@
+name: CI
+
+# Runs on every PR and every push (CLAUDE.md, "CI runs typecheck, lint, and
+# tests on every push"). This is the gate deploy.yml depends on: nothing
+# here means nothing gets shipped. Kept to a single job, no matrix, no
+# extra Node install — bun does the whole thing (spec §11 explicitly
+# endorses Bun for install *and* build/CI use; only the deployed, *running*
+# process is Node).
+on:
+  # `push` is scoped to main deliberately. An unscoped `push:` alongside
+  # `pull_request:` runs this whole workflow TWICE for every commit on a PR
+  # branch — once for the push, once for the PR — and the concurrency group
+  # below cannot collapse them, because the two events carry different
+  # `github.ref` values (`refs/heads/<branch>` vs `refs/pull/<n>/merge`).
+  # Observed on PR #1: two identical passing runs of the same commit.
+  #
+  # Split this way, a PR is gated by `pull_request` and main by `push` — every
+  # commit still checked exactly once. The trade is that a branch pushed with
+  # no PR open gets no CI, which is fine here: deploy.yml re-runs verify on
+  # main before it ships anything.
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # check-migrations-immutable.sh diffs against origin/main; needs
+          # real history, not the default single-commit shallow clone.
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Bun install + Next build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            .next/cache
+          key: ${{ runner.os }}-bun-next-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-next-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Test
+        run: bun run test
+
+      - name: Migrations are append-only
+        run: bun run check:migrations-immutable
+
+      - name: Build
+        # DATABASE_URL is never read at import time (db/index.ts is lazy —
+        # see its own comment) specifically so a build never needs live
+        # database credentials. No env vars are set for this step on
+        # purpose; if the build ever starts requiring one, that's a
+        # regression in db/index.ts's laziness, not something to patch
+        # around here.
+        run: bun run build

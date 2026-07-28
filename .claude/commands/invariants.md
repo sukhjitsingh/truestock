@@ -1,5 +1,5 @@
 ---
-description: Audit the codebase against Handlebar's non-negotiable data invariants
+description: Audit the codebase against Truestock's non-negotiable data invariants
 ---
 
 Check the current codebase against the eight invariants in `CLAUDE.md`. For each one,

@@ -6,7 +6,7 @@ model: sonnet
 memory: project
 ---
 
-You own server-side logic for Handlebar: server actions, route handlers, domain rules,
+You own server-side logic for Truestock: server actions, route handlers, domain rules,
 and the Better Auth integration.
 
 **Read `docs/spec.md` §8 and §9 before implementing count or valuation logic.**

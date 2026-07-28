@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1440, initial-scale=1" />
+<title>Truestock — Reorder list</title>
+<!--
+  Standalone back-office prototype. No build step, no network. Light theme
+  only. Designed at 1440px. See the annotation block at the bottom of this
+  file for design decisions and open questions.
+-->
+<style>
+  :root {
+    --radius: 1rem;
+    --background: #f7f7f5; --foreground: #111111;
+    --card: #ffffff; --card-foreground: #111111;
+    --muted: #efefec; --muted-foreground: #6b6b6b;
+    --primary: #0a0a0a; --primary-foreground: #ffffff;
+    --secondary: #efefec; --secondary-foreground: #111111;
+    --accent: #2563eb; --accent-foreground: #ffffff;
+    --destructive: #c4304f; --destructive-foreground: #ffffff;
+    --border: #e4e4e1; --input: #8c8c8c; --ring: #2563eb;
+    --success: #1f7a3d; --success-bg: #e4f5e6;
+    --warning: #92600a; --warning-bg: #fdf0dc;
+    --negative: #b8305a; --negative-bg: #fde8ec;
+    --radius-sm: calc(var(--radius) - 4px); --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius); --radius-xl: calc(var(--radius) + 4px);
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: var(--background); color: var(--foreground); font-family: var(--font-sans);
+    font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; min-width: 1280px; }
+  h1, h2, h3, p, ol, ul { margin: 0; padding: 0; list-style: none; }
+  button, input { font: inherit; color: inherit; }
+  button { cursor: pointer; background: none; border: none; }
+  svg { display: block; }
+  table { border-collapse: collapse; width: 100%; }
+
+  a, button, input, [tabindex] { outline-offset: 2px; }
+  a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+  .flex { display: flex; } .flex-col { flex-direction: column; } .items-center { align-items: center; }
+  .items-start { align-items: flex-start; } .justify-between { justify-content: space-between; }
+  .justify-center { justify-content: center; } .flex-1 { flex: 1 1 0%; } .gap-2 { gap: .5rem; }
+  .gap-3 { gap: .75rem; } .gap-4 { gap: 1rem; } .mt-1 { margin-top: .25rem; } .mt-2 { margin-top: .5rem; }
+  .mt-3 { margin-top: .75rem; } .mt-4 { margin-top: 1rem; } .mt-6 { margin-top: 1.5rem; }
+  .uppercase { text-transform: uppercase; } .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .rounded-md { border-radius: var(--radius-md); } .rounded-lg { border-radius: var(--radius-lg); } .rounded-full { border-radius: 9999px; }
+  .border { border: 1px solid var(--border); }
+  .bg-card { background: var(--card); } .bg-muted { background: var(--muted); }
+  .text-foreground { color: var(--foreground); } .text-muted-foreground { color: var(--muted-foreground); }
+  .text-accent { color: var(--accent); } .text-warning { color: var(--warning); } .text-negative { color: var(--negative); }
+  .text-header-title { font-size: 1.75rem; line-height: 1.15; font-weight: 600; }
+  .text-row-title { font-size: 1.125rem; line-height: 1.3; font-weight: 600; }
+  .text-numeral-md { font-size: 1.5rem; line-height: 1.1; font-weight: 600; }
+  .text-caption { font-size: .8125rem; line-height: 1.4; }
+  .text-label { font-size: .6875rem; line-height: 1.2; font-weight: 600; letter-spacing: .06em; }
+  .tabular-nums { font-variant-numeric: tabular-nums; }
+
+  .app-shell { display: flex; min-height: 100vh; }
+  .rail { width: 64px; flex-shrink: 0; background: var(--card); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; align-items: center; padding: .75rem 0; gap: .5rem; }
+  .rail-create { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+    border-radius: var(--radius-md); background: var(--accent); color: var(--accent-foreground); margin-bottom: .5rem; }
+  .rail-item { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;
+    border-radius: var(--radius-md); color: var(--muted-foreground); text-decoration: none; }
+  .rail-item[aria-current="page"] { background: var(--card); border: 1px solid var(--border); color: var(--accent); }
+  .rail-spacer { flex: 1; }
+  .rail-expand { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: var(--muted-foreground); }
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .topbar { height: 60px; flex-shrink: 0; display: flex; align-items: center; gap: 1rem; padding: 0 1.5rem;
+    background: var(--card); border-bottom: 1px solid var(--border); }
+  .crumbs { display: flex; align-items: center; gap: .5rem; font-size: .875rem; }
+  .crumbs .workspace { font-weight: 600; } .crumbs .sep { color: var(--muted-foreground); } .crumbs .page { color: var(--muted-foreground); }
+  .avatar-tile { width: 34px; height: 34px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center;
+    background: var(--primary); color: var(--primary-foreground); font-size: .75rem; font-weight: 600; margin-left: auto; }
+
+  .content { flex: 1; padding: 1.5rem 1.5rem 4rem; }
+  .page-header { display: flex; align-items: center; gap: .75rem; margin-bottom: 1.25rem; }
+  .btn-primary { display: inline-flex; align-items: center; gap: .5rem; height: 36px; padding: 0 1rem; border-radius: var(--radius-md);
+    background: var(--primary); color: var(--primary-foreground); font-size: .8125rem; font-weight: 600; }
+  .btn-outline { display: inline-flex; align-items: center; gap: .5rem; height: 36px; padding: 0 .875rem; border-radius: var(--radius-md);
+    border: 1px solid var(--input); background: var(--card); color: var(--foreground); font-size: .8125rem; font-weight: 600; }
+
+  /* ---- as-of banner ---- */
+  .asof-banner { display: flex; align-items: center; gap: .625rem; padding: .75rem 1rem; border-radius: var(--radius-md);
+    background: var(--muted); border: 1px solid var(--border); margin-bottom: 1.25rem; font-size: .875rem; }
+  .asof-banner strong { font-weight: 700; }
+
+  /* ---- empty state (today's real state: asOfCountId === null) ---- */
+  .empty-state { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card);
+    padding: 4rem 2rem; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 1rem; }
+  .empty-icon { width: 64px; height: 64px; border-radius: var(--radius-lg); background: var(--muted); color: var(--muted-foreground);
+    display: flex; align-items: center; justify-content: center; }
+  .empty-state h2 { font-size: 1.125rem; font-weight: 700; }
+  .empty-state p { max-width: 46ch; color: var(--muted-foreground); font-size: .9375rem; line-height: 1.5; }
+
+  .preview-toggle-row { display: flex; justify-content: center; margin-top: 1.5rem; }
+  .preview-banner { display: flex; align-items: center; gap: .625rem; padding: .625rem 1rem; border-radius: var(--radius-md);
+    background: var(--warning-bg); color: var(--warning); font-size: .8125rem; font-weight: 600; margin-bottom: 1rem; }
+
+  /* ---- vendor groups ---- */
+  .vendor-group { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); margin-bottom: 1rem; overflow: hidden; }
+  .vendor-group-header { display: flex; align-items: center; gap: .75rem; padding: .875rem 1.125rem; background: var(--muted); }
+  .vendor-dot { width: 28px; height: 28px; border-radius: 9999px; display: flex; align-items: center; justify-content: center; font-size: .6875rem; font-weight: 700; color: #fff; flex-shrink: 0; }
+  .vendor-name { font-weight: 700; font-size: .9375rem; }
+  .vendor-meta { font-size: .8125rem; color: var(--muted-foreground); }
+  .vendor-group-actions { margin-left: auto; }
+
+  thead th { text-align: left; font-size: .75rem; font-weight: 600; color: var(--muted-foreground); padding: .5rem 1.125rem; border-bottom: 1px solid var(--border); }
+  th.num, td.num { text-align: right; }
+  tbody tr { height: 52px; border-bottom: 1px solid var(--border); }
+  tbody tr:last-child { border-bottom: none; }
+  td { padding: 0 1.125rem; font-size: .875rem; }
+  .product-name { font-weight: 600; }
+  .product-sub { font-size: .8125rem; color: var(--muted-foreground); }
+  .qty-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 2.5rem; padding: .25rem .5rem; border-radius: var(--radius-sm);
+    background: var(--negative-bg); color: var(--negative); font-weight: 700; font-size: .875rem; }
+
+  .summary-strip { display: flex; gap: 1rem; margin-bottom: 1.25rem; }
+  .summary-card { flex: 1; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); padding: 1rem 1.25rem; }
+  .summary-card .label { font-size: .75rem; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+  .summary-card .value { font-size: 1.5rem; font-weight: 700; margin-top: .25rem; }
+
+  #populated-view { display: none; }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <nav class="rail" aria-label="Sections">
+    <button class="rail-create" aria-label="Create new">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+    </button>
+    <a class="rail-item" href="office-catalog.html" aria-label="Catalog">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round"/></svg>
+    </a>
+    <a class="rail-item" href="office-counts-list.html" aria-label="Counts">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5" stroke-linecap="round"/></svg>
+    </a>
+    <a class="rail-item" aria-current="page" href="office-reorder.html" aria-label="Reorder">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M3 3h2l2.4 12.4a2 2 0 0 0 2 1.6h7.2a2 2 0 0 0 2-1.6L20 8H6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/></svg>
+    </a>
+    <a class="rail-item" href="office-count-summary.html" aria-label="Reports">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 20V10M12 20V4M20 20v-7" stroke-linecap="round"/></svg>
+    </a>
+    <div class="rail-spacer"></div>
+    <button class="rail-expand" aria-label="Expand sidebar">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </nav>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="crumbs"><span class="workspace">Truestock</span><span class="sep">/</span><span class="page">Reorder list</span></div>
+      <div class="avatar-tile" aria-hidden="true">JM</div>
+    </header>
+
+    <div class="content">
+      <div class="page-header">
+        <h1 class="text-header-title">Reorder list</h1>
+        <button class="btn-outline" style="margin-left:auto;" id="preview-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" stroke-linejoin="round"/><circle cx="12" cy="12" r="3"/></svg>
+          Preview with a closed count
+        </button>
+      </div>
+
+      <!-- ================= EMPTY STATE — TODAY'S ACTUAL DATA STATE ================= -->
+      <div id="empty-view">
+        <div class="empty-state">
+          <div class="empty-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 3h2l2.4 12.4a2 2 0 0 0 2 1.6h7.2a2 2 0 0 0 2-1.6L20 8H6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/></svg>
+          </div>
+          <h2>No reorder list yet</h2>
+          <p>
+            Reorder quantities are computed from the on-hand figures in the most recently
+            <strong>closed</strong> count — never from a live or in-progress one. No count has
+            ever been closed yet, so there's nothing to suggest ordering. This is the correct,
+            honest empty state, not a loading glitch.
+          </p>
+          <a href="office-counts-list.html" class="btn-primary" style="margin-top:.5rem;">Go to counts</a>
+        </div>
+      </div>
+
+      <!-- ================= POPULATED PREVIEW (labeled, not live data) ================= -->
+      <div id="populated-view">
+        <div class="preview-banner">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 9v4M12 17h.01" stroke-linecap="round"/><circle cx="12" cy="12" r="9"/></svg>
+          Example preview with sample data — not connected to a real count. Shown only to demonstrate the populated layout.
+        </div>
+
+        <div class="asof-banner">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" style="color:var(--muted-foreground)" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4" stroke-linecap="round"/></svg>
+          <span>As of count <strong>#47</strong> — closed <strong>July 21, 2026</strong> by Jordan M.</span>
+          <a href="office-count-summary.html" class="text-accent" style="margin-left:auto; font-size:.8125rem; font-weight:600; text-decoration:none;">View that count's summary →</a>
+        </div>
+
+        <div class="summary-strip">
+          <div class="summary-card"><div class="label">Products below reorder point</div><div class="value">11</div></div>
+          <div class="summary-card"><div class="label">Vendors involved</div><div class="value">4</div></div>
+          <div class="summary-card"><div class="label">Total units to order</div><div class="value">142</div></div>
+        </div>
+
+        <!-- Hensley Beverage Company -->
+        <div class="vendor-group">
+          <div class="vendor-group-header">
+            <span class="vendor-dot" style="background:#b8305a;">HB</span>
+            <div>
+              <div class="vendor-name">Hensley Beverage Company</div>
+              <div class="vendor-meta">Beer &amp; draft · lead time 3 days</div>
+            </div>
+          </div>
+          <table>
+            <thead><tr><th style="width:40%;">Product</th><th class="num">On hand</th><th class="num">Par</th><th class="num">Reorder point</th><th class="num">Suggested order</th></tr></thead>
+            <tbody>
+              <tr><td><div class="product-name">Blue Moon Belgian White</div><div class="product-sub">Sixtel · Draft keg</div></td><td class="num tabular-nums">0</td><td class="num tabular-nums">2</td><td class="num tabular-nums">1</td><td class="num"><span class="qty-badge">2</span></td></tr>
+              <tr><td><div class="product-name">Michelob Ultra</div><div class="product-sub">12 oz · Bottled beer</div></td><td class="num tabular-nums">0</td><td class="num tabular-nums">48</td><td class="num tabular-nums">12</td><td class="num"><span class="qty-badge">48</span></td></tr>
+              <tr><td><div class="product-name">Modelo Especial</div><div class="product-sub">Half barrel · Draft keg</div></td><td class="num tabular-nums">1</td><td class="num tabular-nums">3</td><td class="num tabular-nums">1</td><td class="num"><span class="qty-badge">2</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Southern Glazer's -->
+        <div class="vendor-group">
+          <div class="vendor-group-header">
+            <span class="vendor-dot" style="background:#2563eb;">SG</span>
+            <div>
+              <div class="vendor-name">Southern Glazer's Wine &amp; Spirits</div>
+              <div class="vendor-meta">Spirits &amp; liqueur · lead time 5 days</div>
+            </div>
+          </div>
+          <table>
+            <thead><tr><th style="width:40%;">Product</th><th class="num">On hand</th><th class="num">Par</th><th class="num">Reorder point</th><th class="num">Suggested order</th></tr></thead>
+            <tbody>
+              <tr><td><div class="product-name">Patrón Silver Tequila</div><div class="product-sub">750 ml</div></td><td class="num tabular-nums">0</td><td class="num tabular-nums">12</td><td class="num tabular-nums">4</td><td class="num"><span class="qty-badge">12</span></td></tr>
+              <tr><td><div class="product-name">Grey Goose Vodka</div><div class="product-sub">750 ml</div></td><td class="num tabular-nums">6</td><td class="num tabular-nums">18</td><td class="num tabular-nums">6</td><td class="num"><span class="qty-badge">12</span></td></tr>
+              <tr><td><div class="product-name">Kahlúa Coffee Liqueur</div><div class="product-sub">750 ml</div></td><td class="num tabular-nums">4</td><td class="num tabular-nums">6</td><td class="num tabular-nums">2</td><td class="num"><span class="qty-badge">2</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Breakthru Beverage Arizona -->
+        <div class="vendor-group">
+          <div class="vendor-group-header">
+            <span class="vendor-dot" style="background:#92600a;">BB</span>
+            <div>
+              <div class="vendor-name">Breakthru Beverage Arizona</div>
+              <div class="vendor-meta">Spirits &amp; liqueur · lead time 4 days</div>
+            </div>
+          </div>
+          <table>
+            <thead><tr><th style="width:40%;">Product</th><th class="num">On hand</th><th class="num">Par</th><th class="num">Reorder point</th><th class="num">Suggested order</th></tr></thead>
+            <tbody>
+              <tr><td><div class="product-name">Jameson Irish Whiskey</div><div class="product-sub">1.75 L · Handle</div></td><td class="num tabular-nums">3</td><td class="num tabular-nums">10</td><td class="num tabular-nums">4</td><td class="num"><span class="qty-badge">7</span></td></tr>
+              <tr><td><div class="product-name">St-Germain Elderflower Liqueur</div><div class="product-sub">750 ml</div></td><td class="num tabular-nums">3</td><td class="num tabular-nums">4</td><td class="num tabular-nums">1</td><td class="num"><span class="qty-badge">1</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Young's Market -->
+        <div class="vendor-group">
+          <div class="vendor-group-header">
+            <span class="vendor-dot" style="background:#1f7a3d;">YM</span>
+            <div>
+              <div class="vendor-name">Young's Market Co. of Arizona</div>
+              <div class="vendor-meta">Wine &amp; spirits · lead time 6 days</div>
+            </div>
+          </div>
+          <table>
+            <thead><tr><th style="width:40%;">Product</th><th class="num">On hand</th><th class="num">Par</th><th class="num">Reorder point</th><th class="num">Suggested order</th></tr></thead>
+            <tbody>
+              <tr><td><div class="product-name">Hendrick's Gin</div><div class="product-sub">750 ml</div></td><td class="num tabular-nums">11</td><td class="num tabular-nums">12</td><td class="num tabular-nums">4</td><td class="num"><span class="qty-badge">1</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  var btn = document.getElementById("preview-btn");
+  var empty = document.getElementById("empty-view");
+  var populated = document.getElementById("populated-view");
+  var showingPreview = false;
+  btn.addEventListener("click", function () {
+    showingPreview = !showingPreview;
+    empty.style.display = showingPreview ? "none" : "";
+    populated.style.display = showingPreview ? "" : "none";
+    btn.lastChild.textContent = showingPreview ? " Back to today's state" : " Preview with a closed count";
+  });
+</script>
+
+<!-- =====================================================================
+     ANNOTATIONS — design decisions & open questions for the owner
+     ===================================================================== -->
+<div style="max-width:900px; margin:2rem auto 4rem; padding:0 1.5rem; font-size:.875rem; line-height:1.6; color:var(--muted-foreground);">
+  <h2 style="color:var(--foreground); font-size:1rem; font-weight:700; margin-bottom:.5rem;">Design decisions</h2>
+  <ul style="padding-left:1.25rem; list-style:disc;">
+    <li><strong>The empty state is the default view, on purpose</strong> — this reflects <code>reorderList()</code>'s actual current return (<code>asOfCountId: null</code>, <code>items: []</code>) since no count has ever closed. It reads as a real, expected state ("close your first count to see this"), not a broken page.</li>
+    <li>A "Preview with a closed count" toggle reveals a second, explicitly-labeled mock so the grouped-by-vendor layout can still be reviewed — every section of that preview carries a persistent warning-colored banner saying it isn't live data, so it can't be mistaken for the real thing (this addresses the same "plausible but wrong" failure mode CLAUDE.md warns about, applied to the prototype itself).</li>
+    <li>"As of count #N — closed [date]" sits in its own banner directly under the page title, above the summary cards — this is the single most load-bearing line on the screen per divergence B2 ("do not label anything Current") and it needs to be seen before any quantity is read.</li>
+    <li>No cost or dollar figures appear anywhere on this screen. <code>reorderList()</code> genuinely has none to gate — par levels and quantities are the only inputs — so there's no owner/manager split needed here, unlike the other four screens.</li>
+    <li>Suggested-order quantities use a small filled badge (neutral, not a status color) since "you should order N of this" is an instruction, not a stock-status reading — the on-hand number itself, not this badge, is where success/warning/negative would apply if this screen also showed per-item stock status (it doesn't, to avoid redundant color coding against the reorder-worthy filter already applied).</li>
+  </ul>
+  <h2 style="color:var(--foreground); font-size:1rem; font-weight:700; margin:1.5rem 0 .5rem;">Open questions</h2>
+  <ul style="padding-left:1.25rem; list-style:disc;">
+    <li><strong>No per-item "mark as ordered" or export action exists yet.</strong> Once a real reorder list has items, does the owner need a way to check items off, print/export to a vendor, or send an order? Out of scope for MVP per CLAUDE.md, but this screen currently has no next action beyond reading the list.</li>
+    <li><strong>Reorder point vs. par fallback.</strong> <code>reorderList()</code> already handles a null <code>reorderPoint</code> by falling back to par level as the threshold — worth deciding whether the UI should visually distinguish "using par as the threshold" from "has its own reorder point," since right now both render identically.</li>
+  </ul>
+</div>
+
+</body>
+</html>

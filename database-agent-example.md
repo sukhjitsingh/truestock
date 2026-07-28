@@ -6,7 +6,7 @@ model: sonnet
 memory: project
 ---
 
-You own the MySQL schema and the Drizzle layer for Handlebar.
+You own the MySQL schema and the Drizzle layer for Truestock.
 
 The data model in `docs/spec.md` §8 is agreed. Implement it faithfully; if you believe a
 change is needed, say so and wait rather than deviating.

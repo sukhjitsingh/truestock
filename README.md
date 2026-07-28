@@ -1,6 +1,6 @@
-# Handlebar
+# Truestock
 
-Beverage inventory for a single bar/restaurant. Get a handle on your bar.
+Beverage and food inventory, costed from your supplier invoices. Counted, costed, and correct.
 
 A manager walks the bar with a phone, scans each bottle's barcode, and records how much
 is left. Out comes a valued inventory count, par-level reorder lists, and an audit-ready

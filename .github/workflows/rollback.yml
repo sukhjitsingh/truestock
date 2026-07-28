@@ -1,0 +1,62 @@
+name: Rollback
+
+# The one-command rollback: `gh workflow run rollback.yml -f sha=<short-sha>`.
+# Redeploys a previously-built archive that deploy.yml already published as
+# a GitHub Release (tag `deploy-<short-sha>`) — no rebuild, no dependency on
+# whether that old commit still installs cleanly today. Find candidates
+# with `gh release list --limit 20` (look for the `deploy-*` tags).
+#
+# This rolls back the *application code only*. It does not run, and cannot
+# safely run, a database rollback — migrations are append-only (open-items.md
+# #6; db/README.md); reversing a schema change means writing and deploying a
+# new migration that undoes it, not un-applying the old one. If the commit
+# you're rolling back to expected a column/table a later migration added,
+# rolling back the app while that migration stays applied is exactly the
+# forward/backward-compatible "expand" pattern this project already commits
+# to for its migrations — confirm that's true for the specific migration
+# before rolling back across it, rather than assuming.
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Short SHA of the deploy to roll back to (see `gh release list` for deploy-* tags)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+  HOSTINGER_DOMAIN: ${{ secrets.HOSTINGER_DOMAIN }}
+  HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the archived deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p deploy
+          gh release download "deploy-${{ inputs.sha }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "truestock-deploy.zip" \
+            --dir deploy --clobber
+
+      - name: Deploy that archive to Hostinger
+        id: deploy
+        run: python3 scripts/hostinger-deploy-archive.py deploy/truestock-deploy.zip
+
+      - name: Wait for the Hostinger build to finish
+        run: python3 scripts/hostinger-poll-build.py "${{ steps.deploy.outputs.build_uuid }}"
+
+      - name: Restart the Node.js process
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \
+            "https://developers.hostinger.com/api/hosting/v1/accounts/${HOSTINGER_USERNAME}/websites/${HOSTINGER_DOMAIN}/nodejs/server/restart"
