@@ -86,10 +86,33 @@ export const auth = betterAuth({
    * A manual verification pass that used curl missed it entirely. Any future
    * check of this path must send `Origin`, or it is not testing what a browser
    * does.
+   *
+   * `DEV_LAN_ORIGIN` widens it once more, for the same reason and with the
+   * same failure mode: counting on a real phone means loading the app from
+   * http://192.168.x.x:3000, which is a third origin for the same server.
+   * Without it, sign-in from the phone returns 403 and the login form says
+   * "check your email and password" — so you retype a correct password on a
+   * small keyboard in a dim bar and conclude the phone is broken. It is set
+   * only by scripts/dev-lan.sh and is unreachable in production, both because
+   * this whole block is skipped there and because nothing sets the variable.
+   *
+   * It is comma-separated because the phone has TWO origins, not one: plain
+   * http on :3000, and https on :3443 through the TLS proxy that the camera
+   * requires. Different scheme and different port both make a different
+   * origin, so trusting one says nothing about the other.
    */
   ...(process.env.NODE_ENV === "production"
     ? {}
-    : { trustedOrigins: ["http://localhost:3000", "http://127.0.0.1:3000"] }),
+    : {
+        trustedOrigins: [
+          "http://localhost:3000",
+          "http://127.0.0.1:3000",
+          ...(process.env.DEV_LAN_ORIGIN ?? "")
+            .split(",")
+            .map((origin) => origin.trim())
+            .filter(Boolean),
+        ],
+      }),
   emailAndPassword: {
     enabled: true,
     // No public self-signup path (build brief, invariant: "no public

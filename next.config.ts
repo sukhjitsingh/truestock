@@ -37,7 +37,43 @@ const SECURITY_HEADERS = [
   },
 ];
 
+// Hosts allowed to request Next's own dev resources (/_next/*, /__nextjs*).
+// Next 16 blocks cross-origin access to them by default and only ever trusts
+// `localhost` plus the dev server's own -H value — which docker/app/Dockerfile
+// sets to 0.0.0.0, so a LAN IP is NOT covered by it.
+//
+// Entries are bare HOSTNAMES, not origins: no scheme, no port. Passing
+// "http://192.168.1.10:3000" here silently matches nothing. Verified against
+// node_modules/next/dist/server/lib/router-utils/block-cross-site-dev.js,
+// which compares `parseUrl(origin).hostname` against this list.
+//
+// Only the HMR websocket actually trips this — same-origin document and asset
+// GETs send no Origin header and are never blocked — so getting it wrong costs
+// you hot reload, not the app. Set by scripts/dev-lan.sh; empty otherwise, and
+// `next dev` is the only thing that reads it.
+// `127.0.0.1` is listed because Next's built-in allowance covers `localhost`
+// and `*.localhost` ONLY — the IP literal is a different host to that check,
+// so `/_next/*` returns 403 and the client bundle never runs. The page still
+// renders and returns 200; it simply never hydrates, which is the same silent
+// failure shape as the CSP incident. Confirmed by request, not by reading:
+// the same chunk returns 403 for an `Origin` of 127.0.0.1:3000 and 200 for
+// localhost:3000.
+//
+// It is listed here rather than left alone because lib/auth.ts deliberately
+// trusts `http://127.0.0.1:3000` as a dev origin, and docker-compose.yml
+// publishes on 127.0.0.1 by default. Those said 127.0.0.1 was supported while
+// this said otherwise, and the disagreement was invisible.
+// DEV_LAN_ORIGIN is comma-separated (http on :3000 and https on :3443 are two
+// origins), but this list wants HOSTNAMES — so both collapse to the same entry
+// and the Set removes the duplicate.
+const devLanHosts = (process.env.DEV_LAN_ORIGIN ?? "")
+  .split(",")
+  .map((origin) => URL.parse(origin.trim())?.hostname)
+  .filter((host): host is string => Boolean(host));
+const devOrigins = [...new Set(["127.0.0.1", ...devLanHosts])];
+
 const nextConfig: NextConfig = {
+  allowedDevOrigins: devOrigins,
   // Hostinger managed Node hosting: emit a minimal self-contained server.
   // Do not remove — the deployed footprint depends on it (CLAUDE.md, spec §11).
   output: "standalone",

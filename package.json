@@ -16,6 +16,7 @@
     "db:seed": "tsx db/seed.ts",
     "create-user": "tsx scripts/create-user.ts",
     "docker:up": "docker compose up -d --wait",
+    "docker:up:lan": "bash scripts/dev-lan.sh",
     "docker:down": "docker compose down",
     "docker:build": "docker compose build",
     "docker:logs": "docker compose logs -f",
