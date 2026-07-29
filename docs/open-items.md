@@ -35,8 +35,35 @@ can enrol the same UPC, and that accented product names round-trip. The
 `count_line` gap-lock deadlock was also reproduced (1213) and the
 `withLockRetry` fix verified end to end.
 
-The *application* half is still unexercised — no query from app code has run
-against a real database. Specifically unverified:
+**Auth is closed, 2026-07-28.** The first application-level queries have now run
+against a real database — the whole auth path, against MariaDB 11.8.8 in Docker.
+Three bullets below moved from "unverified" to verified:
+
+- **Better Auth under `generateId: "serial"` works.**
+  `bun run create-user -- --email owner@truestock.local --name "Local Owner"
+  --role owner --org truestock` returned **user id `1`** — an integer, not a
+  nanoid string. This was the "if this is misconfigured, every auth write
+  fails" item; it is configured correctly.
+- **`scripts/create-user.ts` produces a usable credential account.**
+  `POST /api/auth/sign-in/email` with that account returns 200, a session
+  token, and a cookie. `internalAdapter.linkAccount` and the password hash
+  round-trip correctly through the int-PK `account` table.
+- **The inactive-user check works, and the control proves it.** With the
+  session cookie: `/office`, `/office/catalog`, `/office/reorder` and `/count`
+  all return 200. Without it, all four 307 to `/login`. Then, holding a
+  *still-valid* Better Auth session and setting `user.active = 0` directly in
+  the database, `/office` 307s to `/login` — and returns to 200 when `active`
+  goes back to 1. That is `requireSession()`'s defence-in-depth re-read doing
+  exactly its job: Better Auth's own session was never invalidated, and the
+  request was refused anyway.
+
+  The control row is the point. Without the unauthenticated 307s, four 200s
+  would prove the pages render, not that anything is gated.
+
+The rest of the *application* half is still unexercised — **no write path has
+run against a real database.** These are the ones that produce wrong numbers
+rather than an error page, which makes them the more dangerous half.
+Specifically unverified:
 
 - **The replay rollback in `applyIncrement`** (`lib/domain/counts.ts`) — the crux
   of the double-count fix. The design assumes InnoDB leaves a transaction
@@ -46,10 +73,12 @@ against a real database. Specifically unverified:
   been — see above — but the duplicate-key replay itself has not.) Confirm this
   on MariaDB directly rather than inheriting the MySQL reasoning.
 - `count_line_write` → `count_line` foreign key and cascade behaviour.
-- Better Auth's actual SQL under `advanced.database.generateId: "serial"` against
-  the int-PK auth tables. If this is misconfigured, every auth write fails.
-- The inactive-user session hook end to end (sign in → session refused).
-- `scripts/create-user.ts` inserting a working credential account.
+- ~~Better Auth's actual SQL under `advanced.database.generateId: "serial"`~~ —
+  **verified 2026-07-28**, see above.
+- ~~The inactive-user session hook end to end~~ — **verified 2026-07-28**,
+  including the negative control.
+- ~~`scripts/create-user.ts` inserting a working credential account~~ —
+  **verified 2026-07-28**, sign-in returns a working session.
 - `partial_fills` JSON round-tripping, and mysql2's real `ER_DUP_ENTRY` error
   shape in this Drizzle version — the increment path branches on it.
   *Partly answered 2026-07-28:* a raw `mysql2` round-trip of `[0.3, 0.8]`
@@ -62,10 +91,25 @@ against a real database. Specifically unverified:
   (`144.0000`) from the server. Not yet confirmed through drizzle's string
   mode specifically, which is the part that matters for valuation.
 
-**How to close it:** `bun run docker:up && bun run docker:migrate &&
-bun run docker:seed` (both now done and reproducible), create an owner, then
-drive one count through draft → closed including a deliberate duplicate submit
-and a mistyped-then-corrected sealed quantity. That last part is what remains.
+**How to close it.** The first four steps are done and reproducible from a cold
+clone:
+
+```bash
+bun run docker:up          # MariaDB 11.8 + Node 22 app
+bun run docker:migrate
+bun run docker:seed
+docker compose exec -T app bun run create-user -- \
+  --email owner@truestock.local --name "Local Owner" \
+  --role owner --org truestock --password '<12+ chars>'
+```
+
+(`--password` only because `exec -T` has no TTY for the hidden prompt. Never do
+that against production — use the prompt, which is why it exists.)
+
+**What remains is the write path:** drive one count through draft → closed,
+including a deliberate duplicate submit and a mistyped-then-corrected sealed
+quantity. Until that runs, the ledger, the replay rollback, and the valuation
+snapshot are all still only reasoned about.
 
 ## 1b. Nothing sweeps expired sessions
 

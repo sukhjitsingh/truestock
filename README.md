@@ -42,6 +42,19 @@ bun run docker:migrate   # apply migrations
 bun run docker:seed      # load the 97-product catalog
 ```
 
+Then create an account to sign in with — there is no public signup, and no dev
+bypass, deliberately (authorization is re-read from the database on every request;
+see invariant 7):
+
+```bash
+docker compose exec -T app bun run create-user -- \
+  --email owner@truestock.local --name "Local Owner" \
+  --role owner --org truestock --password '<12+ chars>'
+```
+
+`--password` is only safe here because `exec -T` has no TTY and this is a
+throwaway local database. Against production, omit it and use the hidden prompt.
+
 The app is then on http://localhost:3000. `bun run docker:reset` wipes the volume
 and rebuilds from empty; `bun run db:shell` opens a SQL prompt.
 
