@@ -32,7 +32,7 @@ Open bottles are the ones needing a fill level. They are handled differently on 
 | Hosting | Hostinger Cloud Startup, managed Node.js web app |
 | Runtime | Node (not Bun, not Deno — the host decides this) |
 | Framework | Next.js 16, App Router, TypeScript |
-| Database | MySQL (included with the plan) |
+| Database | MariaDB 11.8 (what Hostinger's "MySQL" actually is — see below) |
 | ORM | Drizzle + drizzle-kit |
 | Auth | Better Auth (NOT NextAuth — it is in maintenance mode) |
 | UI | Tailwind + shadcn/ui |
@@ -43,7 +43,28 @@ Open bottles are the ones needing a fill level. They are handled differently on 
 **Config that must not drift:**
 - `output: 'standalone'` in `next.config.ts`
 - `images: { unoptimized: true }`
-- MySQL connection pool of 5–10 (the plan allows 100 connections, shared with the website)
+- Database connection pool of 5–10 (the plan allows 100 connections, shared with the website)
+
+**The database is MariaDB, not MySQL — corrected 2026-07-28.** hPanel's menu says
+"MySQL Databases" and every document in this repo took that at face value.
+`SELECT VERSION()` against the real host returns `11.8.8-MariaDB-log`. Local
+development runs `mariadb:11.8` in Docker (`docker-compose.yml`) so the gate
+tests the engine production actually runs.
+
+What does **not** change, and should not be "fixed": the driver stays `mysql2`,
+drizzle's dialect stays `"mysql"`, and `DATABASE_URL` keeps the `mysql://`
+scheme. All three are correct for MariaDB — it speaks the MySQL wire protocol.
+
+The schema was re-verified on MariaDB 11.8 and is portable: migrations apply
+clean from empty, the `product_par` generated column still rejects a second
+overall par (1062), composite tenant foreign keys still reject a cross-tenant
+id (1452), and `DECIMAL(10,4)` round-trips exactly.
+
+One real difference to keep in mind: **MariaDB has no native JSON type** —
+`JSON` is an alias for `longtext`. `partial_fills` still comes back as a parsed
+array because mysql2 parses it, and drizzle has no `mapFromDriverValue` of its
+own for MySQL JSON. That makes the guarantee a *driver* one, not a schema one,
+so it must be covered by a test rather than assumed after a driver bump.
 
 ---
 

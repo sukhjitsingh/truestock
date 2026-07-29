@@ -8,18 +8,43 @@ Close an item by deleting its section and saying so in the commit message.
 
 ---
 
-## 1. Nothing has ever run against MySQL
+## 1. Most of the stack has still never run against a real database
 
 **Trigger: the first time a real database exists. Do this before anything else.**
 
-The entire stack has been typechecked, linted and built, but no query has ever
-executed. No migration has been applied. Specifically unverified:
+**Engine correction, 2026-07-28.** Production is **MariaDB 11.8.8**, not MySQL —
+hPanel's "MySQL Databases" label had been taken at face value everywhere.
+The whole chain plus the seed was re-verified against `mariadb:11.8`, and the
+schema proved portable: same 14 tables, same 1452 on a cross-tenant id, same
+1062 on a second overall par, `DECIMAL(10,4)` exact, `partial_fills` still a
+parsed array. No migration needed changing. Local development now runs MariaDB
+via `docker-compose.yml`, so everything below is exercised against the engine
+production actually runs.
+
+The `partial_fills` result deserves one flag: MariaDB stores `JSON` as a
+`longtext` alias, so the parsed array comes from `mysql2`, not from the column
+type. That belongs in the test suite — a driver bump could change it silently.
+
+**Partially closed 2026-07-27.** The schema half is now verified: the full
+migration chain `0000 → 0001 → 0002` was applied to MySQL 8.0 in Docker, and
+probe queries confirmed the composite tenant foreign keys reject cross-tenant
+`vendor_id` / `product_id` / `location_id` (FK 1452), that a NULL foreign id
+correctly skips the check, that `product_par`'s generated `location_scope`
+collapses NULL to 0 and blocks a second "overall" par (1062), that two tenants
+can enrol the same UPC, and that accented product names round-trip. The
+`count_line` gap-lock deadlock was also reproduced (1213) and the
+`withLockRetry` fix verified end to end.
+
+The *application* half is still unexercised — no query from app code has run
+against a real database. Specifically unverified:
 
 - **The replay rollback in `applyIncrement`** (`lib/domain/counts.ts`) — the crux
-  of the double-count fix. The design assumes MySQL/InnoDB leaves a transaction
+  of the double-count fix. The design assumes InnoDB leaves a transaction
   continuable after a duplicate-key error and that rolling back undoes the
   increment written earlier in the same transaction. Standard InnoDB behaviour,
-  reasoned not exercised.
+  reasoned not exercised. (The *deadlock* rollback path underneath it now has
+  been — see above — but the duplicate-key replay itself has not.) Confirm this
+  on MariaDB directly rather than inheriting the MySQL reasoning.
 - `count_line_write` → `count_line` foreign key and cascade behaviour.
 - Better Auth's actual SQL under `advanced.database.generateId: "serial"` against
   the int-PK auth tables. If this is misconfigured, every auth write fails.
@@ -27,11 +52,41 @@ executed. No migration has been applied. Specifically unverified:
 - `scripts/create-user.ts` inserting a working credential account.
 - `partial_fills` JSON round-tripping, and mysql2's real `ER_DUP_ENTRY` error
   shape in this Drizzle version — the increment path branches on it.
+  *Partly answered 2026-07-28:* a raw `mysql2` round-trip of `[0.3, 0.8]`
+  through a `JSON` column returns a parsed array on MariaDB 11.8.8 as well as
+  MySQL 8.4, despite MariaDB storing it as `longtext`. Not yet confirmed
+  through drizzle's own column mapping on the real `count_line` row, and
+  `ER_DUP_ENTRY` is still untested.
 - `DECIMAL(10,4)` precision round-trip through drizzle's string mode.
+  *Partly answered 2026-07-28:* seeded keg costs read back exactly
+  (`144.0000`) from the server. Not yet confirmed through drizzle's string
+  mode specifically, which is the part that matters for valuation.
 
-**How to close it:** stand up MySQL, `db:migrate`, `db:seed`, create an owner,
-then drive one count through draft → closed including a deliberate duplicate
-submit and a mistyped-then-corrected sealed quantity.
+**How to close it:** `bun run docker:up && bun run docker:migrate &&
+bun run docker:seed` (both now done and reproducible), create an owner, then
+drive one count through draft → closed including a deliberate duplicate submit
+and a mistyped-then-corrected sealed quantity. That last part is what remains.
+
+## 1b. Nothing sweeps expired sessions
+
+**Trigger: first production deploy, or the first time `session` row count is
+noticed growing. Not urgent — at 3–5 users per tenant this is years away from
+mattering.**
+
+`session` gains a row per login and nothing ever deletes one. The index needed
+to sweep them cheaply now exists (`session_expires_at_idx`, added by migration
+0002 for exactly this reason), so the remaining work is only the job itself:
+
+```sql
+DELETE FROM session WHERE expires_at < NOW() LIMIT 1000;
+```
+
+Hostinger cron is already available (`hosting_createAccountCronJobV1` via the
+Hostinger MCP), so this is a scheduled task, not a feature. Batch the delete —
+an unbounded one on a large table locks longer than a nightly job should.
+
+Schema audit 2026-07-27, finding F4. The index half is done; this is the half
+that was deliberately deferred.
 
 ## 2. `editCountLineFills` writes no ledger entry
 
@@ -147,7 +202,7 @@ Not blocking, but they shape work that is coming:
   be load-bearing (opened vermouth, cream liqueurs), the columns are already
   there.
 
-## 8. New reads are written but still unexercised against MySQL
+## 8. New reads are written but still unexercised against a real database
 
 **Trigger: folded into item 1 — verify when a real database first exists.**
 

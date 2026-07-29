@@ -53,7 +53,7 @@ Two count buckets, because they need different handling: sealed backstock is 60�
 | Hosting | Hostinger Cloud Startup — already owned, 1 of 10 web app slots |
 | Runtime | Node (managed) |
 | Framework | Next.js 16 App Router, TypeScript |
-| Database | MySQL, included |
+| Database | MariaDB 11.8, included (hPanel calls it "MySQL") |
 | ORM | Drizzle + drizzle-kit |
 | Auth | Better Auth, self-hosted |
 | UI | Tailwind + shadcn/ui |
@@ -61,7 +61,7 @@ Two count buckets, because they need different handling: sealed backstock is 60�
 | Forms / data | React Hook Form + Zod, TanStack Query & Table |
 | Later | PapaParse (Toast CSV), `@google/genai` (fill estimation) |
 
-**Config that matters:** `output: 'standalone'`, `images: { unoptimized: true }`, MySQL pool of 5–10.
+**Config that matters:** `output: 'standalone'`, `images: { unoptimized: true }`, database pool of 5–10.
 
 **Security is yours now** — self-hosting means you patch. Update Next.js promptly, and check session and role inside every server action, not just middleware.
 
@@ -280,7 +280,9 @@ CountLineWrite  id, count_line_id, count_id, written_by, applied_at,
 
 **Idempotency needs its own ledger, not a column on CountLine.** The retry queue (§11) means a write can arrive twice, and a single write only ever *creates* a line the first time — every scan after that *increments* an existing one (the unique constraint above). A single `client_line_id` column on `CountLine` can only remember the most recent write, so it can only catch a retry of that one write; an earlier write, retried after a later one has already landed, doesn't match and silently re-applies — a second, invisible increment. `CountLineWrite` fixes this by giving every individual write its own permanent row, keyed by that write's `client_line_id`, UNIQUE. A duplicate-key violation on insert is the signal that a write already applied — enforced by the database, not remembered by a column that can only hold one value at a time. It's also the audit trail §10 needs: summing every write's delta for a line reconstructs exactly what happened, in order, by whom — independent of `CountLine`'s own (mutable, current-state) columns.
 
-**`partial_fills` as a JSON array, not a rollup.** `[0.3, 0.8]` rather than "2 bottles, 1.1 total." Identical math, but you can reopen and correct one bottle without recounting the shelf, and the audit trail shows what was actually observed. MySQL handles JSON natively and you read the whole array at once anyway.
+**`partial_fills` as a JSON array, not a rollup.** `[0.3, 0.8]` rather than "2 bottles, 1.1 total." Identical math, but you can reopen and correct one bottle without recounting the shelf, and the audit trail shows what was actually observed. You read the whole array at once anyway, so nothing is lost by storing it as one value.
+
+> **Correction, 2026-07-28.** This originally said "MySQL handles JSON natively." The database is MariaDB (see §11), where `JSON` is an *alias for `longtext`* with a validity check, not a native type. It still works — `mysql2` returns a parsed array on both engines, verified on MariaDB 11.8.8 — but the guarantee comes from the driver, not the column type, since drizzle has no `mapFromDriverValue` of its own here. Treat a driver upgrade as something that must re-prove this, and cover it with a test.
 
 **Par lives in its own table with a nullable `location_id`.** Null means one par for the product overall; populated means per-location. The MVP only ever writes null rows. If you later want 2 bottles of Tito's on the rail and 6 in the storeroom, that's a new row rather than a schema change. Costs one join, buys the option.
 
@@ -426,10 +428,10 @@ Two notes for that future decision: the Capacitor ML Kit plugin supports CocoaPo
 | Need | Covered by |
 |---|---|
 | App runtime | **Node.js web apps** — supported on Cloud plans, with GitHub integration, ZIP upload, or IDE deploy. Cloud Startup allows up to 10 Node.js apps, so the inventory app sits alongside the restaurant site. |
-| Database | **MySQL**, included, managed from hPanel |
+| Database | **MariaDB 11.8**, included, managed from hPanel — where the menu is labelled "MySQL Databases" |
 | File storage | **100 GB NVMe.** Your photo volume is ~2 GB/year — a rounding error. |
 | Compute | 4 CPU cores, 3 GB RAM, 100 PHP workers |
-| Database connections | 100 max MySQL user connections |
+| Database connections | 100 max user connections |
 | Backups | **Daily**, included on all Cloud tiers |
 | SSL | Auto-provisioned (required for camera access) |
 | Network | Dedicated IP, free CDN, unlimited bandwidth |
@@ -441,12 +443,12 @@ Two notes for that future decision: the Capacitor ML Kit plugin supports CocoaPo
 
 **Resources are shared, not dedicated per app.** The 3 GB RAM, 4 cores, and 100 GB storage cover *everything* on the plan — your existing restaurant website plus this app. A Node process for an app this size idles around 100–200 MB, so there's ample room, but it isn't isolated. If the website is WordPress it's already drawing on the same pool. Worth watching after you deploy, not worth worrying about in advance.
 
-**Set the database pool small.** You get 100 MySQL user connections, shared with the website. A Node connection pool of **5–10** is plenty for five users and leaves the rest alone. Some ORMs default to larger pools — set this explicitly rather than accepting the default. (This is also why the serverless connection-exhaustion problem never appears here: one long-lived process holds one small pool.)
+**Set the database pool small.** You get 100 user connections, shared with the website. A Node connection pool of **5–10** is plenty for five users and leaves the rest alone. Some ORMs default to larger pools — set this explicitly rather than accepting the default. (This is also why the serverless connection-exhaustion problem never appears here: one long-lived process holds one small pool.)
 
 ### Deployment shape
 - Deploy as a **subdomain** — `truestock.<yourdomain>` — as a separate Node.js app in hPanel
 - Connect the GitHub repo; pushes trigger builds
-- MySQL database created from hPanel
+- Database created from hPanel (*Databases → MySQL Databases* — the label is MySQL, the server is MariaDB)
 - Photos written to the plan's storage, served through the CDN with signed/expiring URLs
 - Environment variables for the Gemini API key — server-side only, never in client code
 
@@ -458,8 +460,8 @@ Two notes for that future decision: the Capacitor ML Kit plugin supports CocoaPo
 | **Framework** | **Next.js 16 (App Router)** | One codebase for the phone counting UI, the desktop back office, and the API routes. Supported by Hostinger's managed Node.js hosting. |
 | **Styling** | Tailwind CSS | Fast, and suits the big-tap-target, high-contrast, dark-mode UI a dim bar needs |
 | **Components** | shadcn/ui | Copy-in, no dependency bloat. Its slider and dialog primitives are exactly the fill-level UI. |
-| **Database** | MySQL | Included with the plan |
-| **ORM** | **Drizzle** + drizzle-kit | TypeScript-first, near-zero runtime, generates readable SQL, first-class MySQL. Lighter than Prisma's query engine on shared hosting. |
+| **Database** | MariaDB | Included with the plan |
+| **ORM** | **Drizzle** + drizzle-kit | TypeScript-first, near-zero runtime, generates readable SQL, first-class MySQL — which is what MariaDB speaks. Lighter than Prisma's query engine on shared hosting. |
 | **Auth** | **Better Auth** (Drizzle adapter) | Self-hosted, data in your own database, no per-user fees, MIT licensed |
 | **Validation** | Zod | One schema shared by forms, API routes, CSV import, and parsing Gemini's JSON |
 | **Forms** | React Hook Form + Zod resolver | |
@@ -477,7 +479,7 @@ Its headline strengths — ISR, edge, image optimization, Vercel integration —
 SvelteKit is lighter and less churn-prone if that appeals. It's a defensible alternative, not a better one.
 
 ### Auth: use Better Auth, not NextAuth
-The landscape shifted in early 2026 — Better Auth absorbed Auth.js, and the library formerly known as NextAuth is now in maintenance mode receiving security patches only. Better Auth is TypeScript-first, runs entirely inside your app with no external service, stores users in your own MySQL, and has a Drizzle adapter. For five users with three roles (§4), it's a config file and a schema generation command.
+The landscape shifted in early 2026 — Better Auth absorbed Auth.js, and the library formerly known as NextAuth is now in maintenance mode receiving security patches only. Better Auth is TypeScript-first, runs entirely inside your app with no external service, stores users in your own database, and has a Drizzle adapter. For five users with three roles (§4), it's a config file and a schema generation command.
 
 ### Self-hosting configuration
 - **`output: 'standalone'`** in `next.config.ts` — Next traces dependencies and emits a minimal self-contained server, which keeps the deployed footprint small on shared hosting.
@@ -496,7 +498,7 @@ The landscape shifted in early 2026 — Better Auth absorbed Auth.js, and the li
 |---|---|---|
 | Gemini vision call | 5–15s | No |
 | Photo upload over bar WiFi | 1–3s | No |
-| MySQL query against ~10k rows | <1ms | No |
+| Database query against ~10k rows | <1ms | No |
 | Human picks up bottle, taps fill level | 3–6s | No |
 | Node handling the request | negligible at 5 users | — |
 
@@ -522,8 +524,10 @@ Two rules that make this manageable:
 1. **Subscribe to Next.js security releases and update promptly.** Set a recurring reminder — this is a compliance-adjacent app holding two years of invoices.
 2. **Never rely on middleware/proxy alone for authorization.** Check the session and role inside every server action and route handler as well. Several of these CVEs are middleware bypasses; with defence in depth they become non-events for you.
 
-### Schema note — MySQL, not Postgres
-The conceptual model in §8 is unchanged, with one adjustment: `partial_fills[]` becomes a **JSON column** rather than a Postgres array. MySQL handles JSON natively and you'll be reading the whole array at once anyway. Everything else maps directly.
+### Schema note — MariaDB, not Postgres
+The conceptual model in §8 is unchanged, with one adjustment: `partial_fills[]` becomes a **JSON column** rather than a Postgres array. You'll be reading the whole array at once anyway. Everything else maps directly.
+
+**Corrected 2026-07-28:** this section said "MySQL" throughout, because hPanel labels the database "MySQL". `SELECT VERSION()` against the real host returns `11.8.8-MariaDB-log`. The practical consequences are small — `mysql2`, drizzle's `"mysql"` dialect and the `mysql://` scheme all remain correct, because MariaDB speaks the MySQL wire protocol — with one exception worth carrying: MariaDB's `JSON` is an alias for `longtext`, not a native type. See the correction under §8's `partial_fills` note.
 
 ### The one thing worth adding — offsite invoice backup
 

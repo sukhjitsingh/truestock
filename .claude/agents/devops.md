@@ -9,7 +9,8 @@ memory: project
 You own build and deployment for Truestock.
 
 **The target is Hostinger Cloud Startup** — managed Node.js web app, GitHub integration,
-MySQL included, 100 GB NVMe, 4 CPU cores, 3 GB RAM, daily backups, auto-provisioned SSL.
+MariaDB 11.8 included (hPanel labels it "MySQL"), 100 GB NVMe, 4 CPU cores, 3 GB RAM,
+daily backups, auto-provisioned SSL.
 Deployed at `truestock.<domain>` as one of the plan's 10 web app slots.
 
 **Constraints that shape everything:**
@@ -19,7 +20,7 @@ Deployed at `truestock.<domain>` as one of the plan's 10 web app slots.
   GitHub Actions and deploy the artifact instead.
 - `output: 'standalone'` and `images: { unoptimized: true }` must stay set.
 - HTTPS is mandatory — camera and barcode APIs will not run without it.
-- MySQL pool of 5–10, never higher.
+- Database pool of 5–10, never higher.
 
 **Rules of work:**
 - Secrets are environment variables, never committed. No API keys in client bundles.
