@@ -130,6 +130,13 @@ domain layer; nobody has yet driven a count through the actual screens on a
 phone, and item 9's offline queue is still entirely unexercised in a browser.
 Those are now the shortest path to a genuinely trustworthy first count.
 
+**Partially addressed 2026-07-28.** The back office has now been driven in a
+real browser for the first time — signed in through the actual form, landed on
+the new dashboard, navigated the office routes, console clean. That is what
+surfaced item 13, which had made every client-side interaction in the app
+non-functional while every server-side check passed. The counting screens on a
+phone, and the offline queue, remain untouched.
+
 ## 1b. Nothing sweeps expired sessions
 
 **Trigger: first production deploy, or the first time `session` row count is
@@ -224,9 +231,12 @@ Resolved by the devops build-out (`docs/deploy.md`):
   from the npm tag) — it already carries every fix in the July 2026 batch.
   See `docs/deploy.md` §6 for the advisory-by-advisory table.
 - `poweredByHeader: false` and a `headers()` block (HSTS, `nosniff`,
-  `X-Frame-Options`, `Permissions-Policy` with `camera=(self)`, and a
-  baseline CSP with `wasm-unsafe-eval` for the barcode-detector WASM
-  polyfill) are now in `next.config.ts`.
+  `X-Frame-Options`, `Permissions-Policy` with `camera=(self)`) are in
+  `next.config.ts`.
+- **Corrected 2026-07-28: the CSP is no longer one of them.** It shipped
+  here as a static header and broke the entire client bundle — see item 13.
+  It now lives in `middleware.ts` with a per-request nonce and must stay
+  there.
 - `images.unoptimized: true` is unchanged, with its security rationale
   (keeps `sharp`'s libvips CVEs dormant) now documented directly in
   `next.config.ts`'s own comment, not just here.
@@ -370,3 +380,75 @@ What that means concretely, so a future session doesn't "fix" it:
   the other 88 uncosted products already take (item 4). Wine is not a
   special case in any code.
 - Vintage tracking was already a non-goal (spec §16 Q5) and stays one.
+
+## 13. ~~A static CSP blocked every inline script — nothing hydrated~~ — CLOSED 2026-07-28
+
+Recorded rather than deleted, because the *shape* of this failure is the
+lesson, and the production half is not yet verified.
+
+`next.config.ts` served a static `script-src 'self' 'wasm-unsafe-eval'`. Next's
+App Router ships the request id (`self.__next_r`) and the streamed RSC payload
+(`self.__next_f.push`) as **inline** `<script>` tags; a static header cannot
+carry a nonce, so both were blocked and the client bundle threw during
+bootstrap:
+
+```
+InvariantError: Expected a request ID to be defined for the document
+via self.__next_r.   at createDebugChannel   at appBootstrap
+```
+
+Nothing on any page hydrated. Proven at runtime rather than inferred — the
+`<script>` tag was present in the DOM carrying the assignment while
+`self.__next_r` was `undefined`.
+
+**Why it survived every gate.** The server rendered correctly and returned 200,
+so `curl`, `next build`, the `/ship` gate and every status-code assertion
+passed against an app in which no button worked. It also caused a credential
+leak: with no hydration the login form's `onSubmit` never attached, so submits
+fell back to a native GET and put the plaintext password in the query string
+and the server access log.
+
+**Fixed** by moving the CSP to `middleware.ts` with a per-request nonce
+(development additionally gets `'unsafe-eval'` and `ws:` for Turbopack HMR,
+scoped by `NODE_ENV`), and removing it from `next.config.ts` — two CSP headers
+are intersected by the browser, so leaving both would have kept blocking.
+The login form now carries `method="post"` and a hydrated-gated submit.
+
+**Still open: the production CSP is unverified.** Development proves the nonce
+mechanism works (`'unsafe-eval'` does not permit inline `<script>`, and
+`'unsafe-inline'` is absent, so the nonce is what made it run). Production
+drops `'unsafe-eval'` and `ws:`. **Trigger: before the first deploy.** Run
+`next build && next start` and load a page in a real browser — a 200 is not
+evidence, which is the entire point of this item.
+
+## 14. The dashboard's stat tiles are computed from capped queries
+
+**Trigger: when the catalog passes ~100 products, or counts pass ~50. Sooner
+if either number starts being quoted to anyone.**
+
+`app/(office)/office/page.tsx` derives two figures from list reads that take a
+`limit`:
+
+- "N active products" and the unpriced count come from
+  `searchProductsAction({ activeOnly: true, limit: 100 })`. At 101 products the
+  tile silently understates.
+- The last-closed-count tile finds its count inside
+  `listCountsAction({ limit: 50 })`. With 50 non-closed counts ahead of it, it
+  would report "no count has been closed yet" against a database full of them.
+
+Both are correct against today's 97-product seed and would stay plausible
+while becoming wrong — the failure mode CLAUDE.md names as this app's worst.
+Reusing the existing actions was the right call for a first cut (no new
+unscoped reads, tenancy enforced in one place), but the fix is a dedicated
+aggregate read in `lib/domain/`, not a bigger `limit`.
+
+## 15. The dashboard's owner-only value branch has never rendered
+
+**Trigger: the first time a count is actually closed.**
+
+The "last closed count" tile's `Money` value and its vs-previous `valueDelta`
+have never executed — no closed count exists yet, so that branch has only ever
+taken its empty path. The "count in progress" branch *has* now rendered with
+real data (a draft count, with its Resume action).
+
+Cheap to close: close one count and look at the tile.

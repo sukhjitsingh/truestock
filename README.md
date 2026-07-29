@@ -8,8 +8,16 @@ record.
 
 ## Status
 
-MVP foundation built: schema and migrations, auth, the counting app, the back office,
-and a deploy pipeline. Not yet deployed — no production database has been migrated.
+MVP foundation built: schema and migrations, auth, the counting app, the back office
+(dashboard, counts, catalog, reorder), and a deploy pipeline. Not yet deployed — no
+production database has been migrated.
+
+The schema, the auth path and the count write path are verified against a real
+MariaDB 11.8 in Docker, the last of those by a 17-test suite wired into CI. The
+back office has been driven in a browser; **the counting screens have not** —
+nobody has taken a phone through a real count, and the offline write queue is
+still unexercised. That is the shortest path to a trustworthy first count.
+
 See [`docs/spec.md`](docs/spec.md) for the full product spec and
 [`docs/open-items.md`](docs/open-items.md) for what is deliberately unfinished.
 
