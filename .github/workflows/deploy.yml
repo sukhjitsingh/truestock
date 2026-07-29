@@ -30,7 +30,26 @@ env:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
+    # Mirrors ci.yml's service. This job gates a production deploy, so it has
+    # to run the same suite against the same engine — a deploy verified
+    # without the database tests would be verifying strictly less than a PR.
+    services:
+      db:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: truestock_test
+          MARIADB_USER: truestock
+          MARIADB_PASSWORD: truestock
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mariadb-admin ping -h 127.0.0.1 -u root -proot --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+          --health-start-period=40s
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,7 +67,11 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun run lint
+      # truestock_test, never production — the suite truncates every table and
+      # its own guard refuses any database not ending in "_test".
       - run: bun run test
+        env:
+          DATABASE_URL: mysql://truestock:truestock@127.0.0.1:3306/truestock_test
       - run: bun run check:migrations-immutable
 
   migrate:

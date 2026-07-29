@@ -60,36 +60,49 @@ Three bullets below moved from "unverified" to verified:
   The control row is the point. Without the unauthenticated 307s, four 200s
   would prove the pages render, not that anything is gated.
 
-The rest of the *application* half is still unexercised — **no write path has
-run against a real database.** These are the ones that produce wrong numbers
-rather than an error page, which makes them the more dangerous half.
-Specifically unverified:
+**The write path is closed, 2026-07-28**, by `tests/count-write-path.test.ts` —
+17 tests against MariaDB 11.8 in Docker, wired into CI as a service container so
+this stays true rather than being a thing that was once true. Every item below
+now has a test rather than an argument:
 
-- **The replay rollback in `applyIncrement`** (`lib/domain/counts.ts`) — the crux
-  of the double-count fix. The design assumes InnoDB leaves a transaction
-  continuable after a duplicate-key error and that rolling back undoes the
-  increment written earlier in the same transaction. Standard InnoDB behaviour,
-  reasoned not exercised. (The *deadlock* rollback path underneath it now has
-  been — see above — but the duplicate-key replay itself has not.) Confirm this
-  on MariaDB directly rather than inheriting the MySQL reasoning.
-- `count_line_write` → `count_line` foreign key and cascade behaviour.
-- ~~Better Auth's actual SQL under `advanced.database.generateId: "serial"`~~ —
-  **verified 2026-07-28**, see above.
-- ~~The inactive-user session hook end to end~~ — **verified 2026-07-28**,
-  including the negative control.
-- ~~`scripts/create-user.ts` inserting a working credential account~~ —
-  **verified 2026-07-28**, sign-in returns a working session.
-- `partial_fills` JSON round-tripping, and mysql2's real `ER_DUP_ENTRY` error
-  shape in this Drizzle version — the increment path branches on it.
-  *Partly answered 2026-07-28:* a raw `mysql2` round-trip of `[0.3, 0.8]`
-  through a `JSON` column returns a parsed array on MariaDB 11.8.8 as well as
-  MySQL 8.4, despite MariaDB storing it as `longtext`. Not yet confirmed
-  through drizzle's own column mapping on the real `count_line` row, and
-  `ER_DUP_ENTRY` is still untested.
-- `DECIMAL(10,4)` precision round-trip through drizzle's string mode.
-  *Partly answered 2026-07-28:* seeded keg costs read back exactly
-  (`144.0000`) from the server. Not yet confirmed through drizzle's string
-  mode specifically, which is the part that matters for valuation.
+- ~~**The replay rollback in `applyIncrement`**~~ — **verified.** The same
+  `clientLineId` applied twice increments exactly once, leaves one ledger row,
+  and — sent a second time with a *different* payload — leaves the original
+  line completely untouched. InnoDB does roll the whole transaction back on the
+  ledger's duplicate-key violation, on MariaDB, as designed.
+- ~~`count_line_write` → `count_line` foreign key~~ — **verified**, an insert
+  against a non-existent line is rejected.
+- ~~Better Auth's SQL under `generateId: "serial"`~~ — **verified**, see above.
+- ~~The inactive-user session hook~~ — **verified**, with negative control.
+- ~~`scripts/create-user.ts`~~ — **verified**, sign-in returns a session.
+- ~~`partial_fills` JSON round-tripping~~ — **verified through drizzle**, not
+  just through raw mysql2: `[0.3, 0.8]` reads back as a real `number[]` off the
+  actual `count_line` row, and a second write appends rather than replaces.
+- ~~`DECIMAL(10,4)` through drizzle's string mode~~ — **verified**, asserted as
+  the exact string `"24.5000"` rather than with a float tolerance, because a
+  tolerance would pass even if string mode broke.
+
+**These tests have teeth, and that was checked rather than assumed.** Deleting
+the ledger insert from `applyIncrement` — the entire idempotency mechanism —
+makes exactly the four dependent tests fail and leaves the unrelated ones
+passing. A suite that goes green against a broken implementation is worse than
+no suite, so this is worth re-doing after any significant change to the write
+path.
+
+Also covered while the harness existed, all previously untested: closed counts
+refuse writes (invariant 1), the cost snapshot survives a later change to the
+product's price (invariant 2), three scans of one product in one location make
+one row (invariant 3), a manager never receives cost fields even though the
+database row carries them (invariant 8), and a cross-tenant `locationId` or
+`countId` is refused rather than silently accepted (invariant 9).
+
+Still untested on the write path:
+
+- **Concurrency.** The gap-lock deadlock and `withLockRetry` were reproduced
+  manually against MySQL, never against MariaDB, and never as a test — bun's
+  test runner needs two genuinely parallel connections to force it.
+- **`editCountLineFills`**, which by design writes no ledger row (item 2).
+- **The `scanCountLine` barcode path**, which nothing calls yet (item 10).
 
 **How to close it.** The first four steps are done and reproducible from a cold
 clone:
@@ -106,10 +119,16 @@ docker compose exec -T app bun run create-user -- \
 (`--password` only because `exec -T` has no TTY for the hidden prompt. Never do
 that against production — use the prompt, which is why it exists.)
 
-**What remains is the write path:** drive one count through draft → closed,
-including a deliberate duplicate submit and a mistyped-then-corrected sealed
-quantity. Until that runs, the ledger, the replay rollback, and the valuation
-snapshot are all still only reasoned about.
+Then run the suite, which needs no manual setup of its own:
+
+```bash
+bun run test:docker    # 17 tests, against truestock_test on the same container
+```
+
+**What remains is the UI**, not the domain. The write path is proven at the
+domain layer; nobody has yet driven a count through the actual screens on a
+phone, and item 9's offline queue is still entirely unexercised in a browser.
+Those are now the shortest path to a genuinely trustworthy first count.
 
 ## 1b. Nothing sweeps expired sessions
 

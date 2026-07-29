@@ -32,7 +32,37 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
+
+    # The test suite runs against a REAL database, deliberately. Every
+    # invariant it covers — the count_line_write replay rollback, composite
+    # tenant foreign keys, DECIMAL and JSON round-tripping — is enforced by the
+    # database rather than by TypeScript, so a mocked test would only assert
+    # that the mock works.
+    #
+    # MariaDB 11.8, matching both Hostinger (verified 2026-07-28,
+    # 11.8.8-MariaDB) and docker-compose.yml. Pinned to the same minor so a CI
+    # pass means the same thing a local pass does.
+    services:
+      db:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: truestock_test
+          MARIADB_USER: truestock
+          MARIADB_PASSWORD: truestock
+        ports:
+          - 3306:3306
+        # Same reasoning as docker-compose.yml: ping over TCP, not the socket,
+        # because the entrypoint's temporary init server answers on the socket
+        # and would report healthy before the real database exists.
+        options: >-
+          --health-cmd="mariadb-admin ping -h 127.0.0.1 -u root -proot --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+          --health-start-period=40s
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -66,6 +96,15 @@ jobs:
         run: bun run lint
 
       - name: Test
+        # Points at truestock_test, and the suite's own guard refuses to run
+        # against any database whose name does not end in "_test" — it
+        # truncates every table between files.
+        #
+        # The service container creates the database; the tests apply the
+        # migration chain themselves, which means CI also proves the
+        # migrations apply cleanly from empty on every run.
+        env:
+          DATABASE_URL: mysql://truestock:truestock@127.0.0.1:3306/truestock_test
         run: bun run test
 
       - name: Migrations are append-only
