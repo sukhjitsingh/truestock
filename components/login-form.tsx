@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,12 @@ export function LoginForm({ className }: { className?: string }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  // Sign-in is a client-side call to Better Auth, so this form genuinely
+  // cannot work before React attaches. Tracking that explicitly lets the
+  // submit stay inert until it can do the right thing — see the `method`
+  // comment on the <form> for the failure this prevents.
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -39,7 +45,24 @@ export function LoginForm({ className }: { className?: string }) {
   }
 
   return (
-    <form onSubmit={onSubmit} className={className} noValidate>
+    /*
+      `method="post"` is a safety net, not a working submit path. `onSubmit`
+      calls preventDefault(), so this method is only ever reached if React
+      has not attached — and then the browser submits natively. A form with
+      no method defaults to **GET**, which serializes every field into the
+      query string: the typed password lands in the server access log, the
+      user's history, and the Referer of any later outbound link. That is not
+      hypothetical — a CSP that blocked Next's inline scripts stopped this
+      page hydrating entirely, and the dev password ended up in the container
+      log exactly this way (docs/session-handoff.md). POST degrades to a bare
+      405 instead, which leaks nothing.
+
+      The disabled-until-hydrated submit below closes the same hole from the
+      other side, so the native path is not normally reachable at all. Both
+      are kept: the flag handles the ordinary race, the method handles
+      hydration failing outright, which is the case that actually happened.
+    */
+    <form onSubmit={onSubmit} method="post" className={className} noValidate>
       <div className="flex flex-col gap-4">
         <Field label="Email" htmlFor="email">
           <Input
@@ -73,7 +96,7 @@ export function LoginForm({ className }: { className?: string }) {
           1-day session, undermining the policy (see lib/auth.ts's session
           comment). This phone is shared across shifts and left on the bar.
         */}
-        <Button type="submit" size="primary" full disabled={pending}>
+        <Button type="submit" size="primary" full disabled={pending || !hydrated}>
           {pending ? "Signing in…" : "Sign in"}
         </Button>
       </div>
