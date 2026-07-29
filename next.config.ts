@@ -4,40 +4,15 @@ import type { NextConfig } from "next";
 // platform-side mitigation exists, so these are the whole defense, not a
 // supplement to one.
 //
-// CSP notes, all deliberate, none of them a default we forgot to tighten:
-// - `script-src 'self' 'wasm-unsafe-eval'`: the barcode scanner
-//   (`barcode-detector`'s ZXing-WASM polyfill, used wherever the native
-//   `BarcodeDetector` API isn't available) calls `WebAssembly.instantiate` /
-//   `instantiateStreaming` on a same-origin-fetched .wasm module. Neither
-//   works without `wasm-unsafe-eval`. This does NOT enable arbitrary
-//   `eval()`/`new Function()` — that would need the much broader
-//   `unsafe-eval`, which is deliberately absent.
-// - `style-src 'self' 'unsafe-inline'`: Radix/shadcn primitives (the slider
-//   and dialog used for fill-level entry) set inline `style` attributes for
-//   transforms and positioning. Inline *styles* can't run script, so this is
-//   a much smaller concession than `unsafe-inline` on `script-src`, which
-//   stays out entirely.
-// - `connect-src 'self'`: every fetch in the MVP is same-origin (server
-//   actions, route handlers). No AI vision API, no object storage — neither
-//   is in scope (CLAUDE.md), so nothing external needs an allowance here.
-//   Revisit this the day either is added.
-// - `frame-ancestors 'none'`: this app is never meant to be framed by
-//   anything, including itself.
-// - No `upgrade-insecure-requests` needed — Hostinger's SSL is
-//   auto-provisioned and there is no mixed-content path to begin with.
-const CONTENT_SECURITY_POLICY = [
-  "default-src 'self'",
-  "script-src 'self' 'wasm-unsafe-eval'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
-  "font-src 'self'",
-  "connect-src 'self'",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-].join("; ");
-
+// The Content-Security-Policy is deliberately NOT here. It lives in
+// middleware.ts because it has to carry a per-request nonce, and a static
+// header cannot. Setting it in both places is actively harmful: two CSP
+// headers are intersected by the browser, so the stricter nonce-less one
+// would go on silently blocking Next's inline scripts. See middleware.ts for
+// the full reasoning and the failure it caused.
+//
+// No `upgrade-insecure-requests` is needed — Hostinger's SSL is
+// auto-provisioned and there is no mixed-content path to begin with.
 const SECURITY_HEADERS = [
   {
     // HTTPS is mandatory here anyway (camera/barcode APIs refuse to run over
@@ -60,7 +35,6 @@ const SECURITY_HEADERS = [
     value:
       "camera=(self), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()",
   },
-  { key: "Content-Security-Policy", value: CONTENT_SECURITY_POLICY },
 ];
 
 const nextConfig: NextConfig = {
