@@ -45,6 +45,23 @@ export function BarcodeScanner({
 
     async function start() {
       try {
+        // Checked before anything else because the failure is otherwise
+        // mislabelled. Browsers only expose navigator.mediaDevices in a
+        // secure context (https, or localhost) — on a plain-http origin it is
+        // undefined, so the getUserMedia call below throws a TypeError, lands
+        // in the catch, and reports a camera problem. The camera is fine; the
+        // URL is the problem. This is the normal state of affairs when
+        // testing on a phone over the LAN (scripts/dev-lan.sh), which is the
+        // only way the counting screens can be exercised at all.
+        if (!window.isSecureContext || !navigator.mediaDevices) {
+          setError(
+            `The camera needs a secure origin, and ${window.location.origin} is not one. ` +
+              "Use https or localhost — or, for LAN testing, allow this origin in " +
+              "chrome://flags/#unsafely-treat-insecure-origin-as-secure. Search still works.",
+          );
+          return;
+        }
+
         type DetectorLike = { detect(source: CanvasImageSource): Promise<{ rawValue: string }[]> };
         // Every symbology a liquor bottle or case carton actually carries.
         // Deliberately narrow: each extra format costs detection time on every
