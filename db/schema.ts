@@ -31,11 +31,31 @@
  *     half-barrel keg is close to 70,000 g, so 8 total digits is required.
  *   - Every money/weight/quantity column is DECIMAL, never FLOAT/DOUBLE —
  *     floats would silently corrupt valuation math.
+ *
+ * Primary-key widths (schema audit 2026-07-27, finding F1):
+ *   - `count`, `count_line`, `count_line_write` — and every column that
+ *     references them — use BIGINT. These scale with *scan volume*, not with
+ *     tenant or catalog size: `count_line_write` takes a row per write, so at
+ *     ~20-30k rows/tenant/year a large multi-tenant outcome crosses INT's
+ *     2.1B ceiling within a decade. Widening them while the migration is
+ *     unapplied is a type change; doing it once the ledger holds hundreds of
+ *     millions of rows is an online table rebuild on the append-only audit
+ *     trail spec §10 requires to stay available.
+ *   - Everything else stays INT. `organization`, `user`, `vendor`,
+ *     `location`, `product`, `product_barcode`, `product_par` scale with
+ *     tenant and catalog count (10,000 tenants x 100 products = 1M rows) and
+ *     never approach the ceiling. Widening them would cost index size and
+ *     memory for no benefit.
+ *   - `mode: "number"` throughout, not `"bigint"` — ids stay JS `number` in
+ *     TypeScript (exact to 2^53, far beyond any real row count), so this is
+ *     a storage change with no ripple into `Actor`, action signatures, or
+ *     component props.
  */
 
 import {
   mysqlTable,
   int,
+  bigint,
   varchar,
   text,
   boolean,
@@ -230,6 +250,14 @@ export const session = mysqlTable(
   (table) => [
     uniqueIndex("session_token_unique").on(table.token),
     index("session_user_id_idx").on(table.userId),
+    // Nothing sweeps expired sessions yet, so this table grows by one row per
+    // login, forever, across every tenant. Not a performance problem at 3-5
+    // users per tenant — but without this index the eventual
+    // `DELETE FROM session WHERE expires_at < NOW()` is a full table scan on
+    // the table it is trying to keep small. Free on an empty table, so it
+    // goes in now; the periodic sweep job itself is an ops TODO recorded in
+    // docs/open-items.md. Schema audit 2026-07-27 (F4).
+    index("session_expires_at_idx").on(table.expiresAt),
   ],
 );
 
@@ -289,7 +317,14 @@ export const vendor = mysqlTable(
     leadTimeDays: int("lead_time_days"),
     ...auditColumns,
   },
-  (table) => [index("vendor_organization_id_idx").on(table.organizationId)],
+  (table) => [
+    index("vendor_organization_id_idx").on(table.organizationId),
+    // Not for lookups — the target of `product`'s composite tenant FK, and
+    // MySQL requires an FK's referenced columns to be indexed. Same role as
+    // `count_organization_id_id_unique`. Added by the 2026-07-27 schema audit
+    // (finding B1).
+    uniqueIndex("vendor_organization_id_id_unique").on(table.organizationId, table.id),
+  ],
 );
 
 // ---------------------------------------------------------------------------
@@ -320,6 +355,9 @@ export const location = mysqlTable(
   // tenant to seed one must not collide with the first.
   (table) => [
     uniqueIndex("location_organization_name_unique").on(table.organizationId, table.name),
+    // Target of `product_par`'s composite tenant FK — see `vendor`'s
+    // equivalent. Schema audit 2026-07-27 (B1).
+    uniqueIndex("location_organization_id_id_unique").on(table.organizationId, table.id),
   ],
 );
 
@@ -348,9 +386,9 @@ export const product = mysqlTable(
     // alone is not unique across the catalog.
     sizeMl: int("size_ml").notNull(),
     caseSize: int("case_size"),
-    vendorId: int("vendor_id").references(() => vendor.id, {
-      onDelete: "set null",
-    }),
+    // No single-column FK — the composite tenant FK at the bottom of this
+    // table covers it. Nullable: a product need not have a vendor.
+    vendorId: int("vendor_id"),
     currentUnitCost: decimal("current_unit_cost", { precision: 10, scale: 4 }),
     emptyWeightG: decimal("empty_weight_g", { precision: 8, scale: 2 }),
     fullWeightG: decimal("full_weight_g", { precision: 8, scale: 2 }),
@@ -384,8 +422,45 @@ export const product = mysqlTable(
     index("product_vendor_id_idx").on(table.vendorId),
     // Catalog screens and the reorder list filter on active constantly; the
     // counting flow itself only ever shows active products.
-    index("product_active_idx").on(table.active),
-    index("product_category_idx").on(table.category),
+    //
+    // Organization-first (schema audit 2026-07-27, F2). These were bare
+    // single-column indexes on `active` / `category`. Every real call site —
+    // `searchProducts` in lib/domain/catalog.ts — filters `organization_id`
+    // *together with* one of these, and a boolean or a handful of category
+    // values has terrible standalone selectivity across all tenants combined,
+    // so the optimizer would never pick them: they cost index maintenance on
+    // every write while never being the access path for the query they exist
+    // to serve. Tenant-first makes the same index serve both predicates, the
+    // way `vendor_organization_id_idx` and
+    // `product_barcode_organization_barcode_unique` already do.
+    index("product_organization_active_idx").on(table.organizationId, table.active),
+    index("product_organization_category_idx").on(table.organizationId, table.category),
+    // Target of product_barcode's and product_par's composite tenant FKs.
+    uniqueIndex("product_organization_id_id_unique").on(table.organizationId, table.id),
+    // Tenant integrity for a client-supplied id — the same treatment
+    // `count_line.count_id` already had, extended here by the 2026-07-27
+    // schema audit (B1). A plain FK proves the vendor row exists, not whose
+    // it is, so without this a product could permanently reference another
+    // tenant's vendor. The application also checks ownership explicitly
+    // (`assertVendorOwned`, lib/domain/catalog.ts) so the failure is a clean
+    // NotFound rather than a raw FK violation; this constraint is what makes
+    // it impossible rather than merely checked.
+    //
+    // ON DELETE RESTRICT, not SET NULL as the single-column FK used to be:
+    // MySQL's SET NULL would have to null BOTH referencing columns, and
+    // `organization_id` is NOT NULL, so the constraint cannot be created that
+    // way. RESTRICT matches every other tenant-scoped FK in this file, and
+    // nothing in the codebase hard-deletes a vendor — there is no delete path
+    // for one at all — so this changes no behaviour that exists.
+    //
+    // A NULL `vendor_id` skips the check entirely (SQL MATCH SIMPLE: an FK
+    // with any NULL component is not enforced), which is exactly right for a
+    // product with no vendor.
+    foreignKey({
+      columns: [table.organizationId, table.vendorId],
+      foreignColumns: [vendor.organizationId, vendor.id],
+      name: "product_organization_vendor_fk",
+    }).onDelete("restrict"),
   ],
 );
 
@@ -402,9 +477,8 @@ export const productBarcode = mysqlTable(
     organizationId: int("organization_id")
       .notNull()
       .references(() => organization.id, { onDelete: "restrict" }),
-    productId: int("product_id")
-      .notNull()
-      .references(() => product.id, { onDelete: "restrict" }),
+    // No single-column FK — the composite tenant FK below covers it.
+    productId: int("product_id").notNull(),
     barcode: varchar("barcode", { length: 64 }).notNull(),
     // UPC-A, EAN-13, CODE-128, etc. Free text — the BarcodeDetector API
     // reports format strings we don't want to hardcode an enum against.
@@ -433,6 +507,17 @@ export const productBarcode = mysqlTable(
       table.barcode,
     ),
     index("product_barcode_product_id_idx").on(table.productId),
+    // Tenant integrity — see `product`'s equivalent. Dormant today (every
+    // barcode is created with the product id from the row inserted in the
+    // same transaction), but the "attach another barcode to an existing
+    // product" feature in docs/open-items.md would supply a client id, and
+    // that is the moment this stops being theoretical. Schema audit
+    // 2026-07-27 (B1).
+    foreignKey({
+      columns: [table.organizationId, table.productId],
+      foreignColumns: [product.organizationId, product.id],
+      name: "product_barcode_organization_product_fk",
+    }).onDelete("restrict"),
   ],
 );
 
@@ -446,12 +531,10 @@ export const productPar = mysqlTable(
     organizationId: int("organization_id")
       .notNull()
       .references(() => organization.id, { onDelete: "restrict" }),
-    productId: int("product_id")
-      .notNull()
-      .references(() => product.id, { onDelete: "restrict" }),
-    locationId: int("location_id").references(() => location.id, {
-      onDelete: "restrict",
-    }),
+    // Neither carries a single-column FK — the composite tenant FKs below
+    // cover both.
+    productId: int("product_id").notNull(),
+    locationId: int("location_id"),
     parLevel: decimal("par_level", { precision: 10, scale: 2 }).notNull(),
     reorderPoint: decimal("reorder_point", { precision: 10, scale: 2 }),
     // MySQL unique indexes treat NULL as distinct from every other NULL, so a
@@ -475,6 +558,25 @@ export const productPar = mysqlTable(
       table.locationScope,
     ),
     index("product_par_location_id_idx").on(table.locationId),
+    // Tenant integrity — see `product`'s equivalent. Nothing writes this
+    // table yet, so both constraints are pre-emptive: the par-management
+    // screen named in docs/open-items.md is precisely a feature that takes a
+    // client-supplied product_id and location_id. Closing it now costs one
+    // migration; closing it after that screen ships costs a data audit.
+    // Schema audit 2026-07-27 (B1).
+    foreignKey({
+      columns: [table.organizationId, table.productId],
+      foreignColumns: [product.organizationId, product.id],
+      name: "product_par_organization_product_fk",
+    }).onDelete("restrict"),
+    // A NULL location_id means "one par for the product overall" and skips
+    // this check entirely (MATCH SIMPLE), which is the intended reading of
+    // the nullable column — see `locationScope` above.
+    foreignKey({
+      columns: [table.organizationId, table.locationId],
+      foreignColumns: [location.organizationId, location.id],
+      name: "product_par_organization_location_fk",
+    }).onDelete("restrict"),
   ],
 );
 
@@ -484,7 +586,8 @@ export const productPar = mysqlTable(
 export const count = mysqlTable(
   "count",
   {
-    id: int("id").autoincrement().primaryKey(),
+    // BIGINT — see the primary-key widths note in the file header (F1).
+    id: bigint("id", { mode: "number" }).autoincrement().primaryKey(),
     organizationId: int("organization_id")
       .notNull()
       .references(() => organization.id, { onDelete: "restrict" }),
@@ -504,7 +607,9 @@ export const count = mysqlTable(
     notes: text("notes"),
   },
   (table) => [
-    index("count_status_idx").on(table.status),
+    // Organization-first for the same reason as product's — see F2 there.
+    // `getActiveCount` always filters organization_id together with status.
+    index("count_organization_status_idx").on(table.organizationId, table.status),
     index("count_opened_by_idx").on(table.openedBy),
     index("count_closed_by_idx").on(table.closedBy),
     // Every counts-list and active-count read filters by tenant then orders
@@ -523,7 +628,8 @@ export const count = mysqlTable(
 export const countLine = mysqlTable(
   "count_line",
   {
-    id: int("id").autoincrement().primaryKey(),
+    // BIGINT — see the primary-key widths note in the file header (F1).
+    id: bigint("id", { mode: "number" }).autoincrement().primaryKey(),
     // Denormalized from `count`. Not a convenience: it is what lets the
     // composite foreign key below make cross-tenant drift structurally
     // impossible, rather than something every query has to remember to join
@@ -534,7 +640,9 @@ export const countLine = mysqlTable(
     // No single-column FK here — the composite one below covers it and
     // carries the same ON DELETE CASCADE. Two overlapping FKs on the same
     // column would just be a second thing to keep in sync.
-    countId: int("count_id").notNull(),
+    // BIGINT to match `count.id` — an FK's columns must match the referenced
+    // column's type exactly.
+    countId: bigint("count_id", { mode: "number" }).notNull(),
     productId: int("product_id")
       .notNull()
       .references(() => product.id, { onDelete: "restrict" }),
@@ -700,7 +808,9 @@ export const countLine = mysqlTable(
 export const countLineWrite = mysqlTable(
   "count_line_write",
   {
-    id: int("id").autoincrement().primaryKey(),
+    // BIGINT — this is THE table F1 is about: one row per write attempt,
+    // append-only, never pruned. See the file header.
+    id: bigint("id", { mode: "number" }).autoincrement().primaryKey(),
     // Same reasoning as count_line's: denormalized, but held true by the
     // composite foreign key at the bottom of this table rather than by
     // convention.
@@ -708,8 +818,8 @@ export const countLineWrite = mysqlTable(
       .notNull()
       .references(() => organization.id, { onDelete: "restrict" }),
     // Covered by the composite FK below (which carries the cascade), so no
-    // separate single-column FK here.
-    countLineId: int("count_line_id").notNull(),
+    // separate single-column FK here. BIGINT to match `count_line.id`.
+    countLineId: bigint("count_line_id", { mode: "number" }).notNull(),
     // Denormalized from count_line.count_id so audit queries ("every write
     // in count X") can filter this table directly instead of joining
     // through count_line first. Can't legitimately diverge from
@@ -717,7 +827,7 @@ export const countLineWrite = mysqlTable(
     // whole life — and is set once, at insert, in the same transaction that
     // resolved countLineId. Same cascade lifecycle as countLineId: both
     // ultimately depend on the count row existing.
-    countId: int("count_id")
+    countId: bigint("count_id", { mode: "number" })
       .notNull()
       .references(() => count.id, { onDelete: "cascade" }),
     writtenBy: int("written_by")

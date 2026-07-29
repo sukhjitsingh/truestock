@@ -21,6 +21,30 @@ import * as schema from "./schema";
 // is the number that matters and is set explicitly here.
 const POOL_CONNECTION_LIMIT = 10;
 
+/**
+ * Bound on how many requests may WAIT for a connection once all
+ * `POOL_CONNECTION_LIMIT` are busy. Past this, `getConnection` rejects
+ * immediately instead of joining the queue.
+ *
+ * Why depth and not time (schema audit 2026-07-27, F5): the audit asked for an
+ * acquire *timeout* so overload fails fast and legibly instead of degrading
+ * into creeping latency. mysql2 has no `acquireTimeout` — checked against the
+ * installed typings (`node_modules/mysql2/typings/mysql/lib/Pool.d.ts`), which
+ * expose only `waitForConnections`, `connectionLimit`, `maxIdle`,
+ * `idleTimeout` and `queueLimit`. A bounded queue is the mechanism mysql2
+ * actually offers, and it buys the same property: the failure is a fast,
+ * named error at a known load level rather than an unbounded queue where
+ * every tenant sharing the pool just gets vaguely slower with nothing in the
+ * logs.
+ *
+ * 50 is ~5 deep per connection. At the sub-100ms queries this app runs, a
+ * request at the back of a full queue still returns in well under a second,
+ * so anything rejected here is genuine overload rather than an ordinary
+ * burst. This never engages at today's traffic; it exists so that when it
+ * does, it is visible.
+ */
+const POOL_QUEUE_LIMIT = 50;
+
 declare global {
   var __truestockPool: mysql.Pool | undefined;
 }
@@ -47,7 +71,17 @@ function createPool(): mysql.Pool {
     uri: DATABASE_URL,
     connectionLimit: POOL_CONNECTION_LIMIT,
     waitForConnections: true,
-    queueLimit: 0,
+    queueLimit: POOL_QUEUE_LIMIT,
+    // Pinned, not inherited (schema audit 2026-07-27, F3). No CHARACTER SET
+    // is declared anywhere in db/schema.ts or the migrations, so every table
+    // otherwise takes whatever charset the database had at CREATE DATABASE
+    // time in Hostinger's hPanel — a step db/README.md documents but cannot
+    // enforce. This is a liquor catalog: Cointreau, Château, Jägermeister,
+    // Añejo are ordinary entries, not edge cases, and on a non-utf8mb4
+    // database they mojibake or fail to insert. Setting it on the connection
+    // makes the client side correct regardless; the server side is covered by
+    // the CREATE DATABASE requirement now stated in db/README.md.
+    charset: "utf8mb4",
     // Scoped to DATE columns only (currently just count_line.opened_at).
     // mysql2 returns those as a plain "YYYY-MM-DD" string instead of
     // constructing a JS Date — paired with that column's `mode: "string"`

@@ -8,6 +8,20 @@
       "when": 1785192091586,
       "tag": "0000_elite_nightmare",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1785219856050,
+      "tag": "0001_strong_daimon_hellstrom",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1785273085299,
+      "tag": "0002_wet_abomination",
+      "breakpoints": true
     }
   ]
 }

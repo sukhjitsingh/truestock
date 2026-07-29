@@ -1,0 +1,1795 @@
+{
+  "version": "5",
+  "dialect": "mysql",
+  "id": "29d95ae5-47bb-4afe-af1a-ad72e9aac0ff",
+  "prevId": "7bd03720-c0fc-4fa5-9b96-6efc66ba65b9",
+  "tables": {
+    "account": {
+      "name": "account",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "provider_id": {
+          "name": "provider_id",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "access_token": {
+          "name": "access_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "refresh_token": {
+          "name": "refresh_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "id_token": {
+          "name": "id_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "access_token_expires_at": {
+          "name": "access_token_expires_at",
+          "type": "datetime",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "refresh_token_expires_at": {
+          "name": "refresh_token_expires_at",
+          "type": "datetime",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "password": {
+          "name": "password",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "onUpdate": true,
+          "default": "(now())"
+        }
+      },
+      "indexes": {
+        "account_user_id_idx": {
+          "name": "account_user_id_idx",
+          "columns": [
+            "user_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "account_user_id_user_id_fk": {
+          "name": "account_user_id_user_id_fk",
+          "tableFrom": "account",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "account_id": {
+          "name": "account_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "count": {
+      "name": "count",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "enum('full','spot','monthly_close')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "enum('draft','in_progress','submitted','reviewed','closed')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'draft'"
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "closed_at": {
+          "name": "closed_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "opened_by": {
+          "name": "opened_by",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "closed_by": {
+          "name": "closed_by",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "total_value": {
+          "name": "total_value",
+          "type": "decimal(12,2)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "count_organization_status_idx": {
+          "name": "count_organization_status_idx",
+          "columns": [
+            "organization_id",
+            "status"
+          ],
+          "isUnique": false
+        },
+        "count_opened_by_idx": {
+          "name": "count_opened_by_idx",
+          "columns": [
+            "opened_by"
+          ],
+          "isUnique": false
+        },
+        "count_closed_by_idx": {
+          "name": "count_closed_by_idx",
+          "columns": [
+            "closed_by"
+          ],
+          "isUnique": false
+        },
+        "count_organization_started_at_idx": {
+          "name": "count_organization_started_at_idx",
+          "columns": [
+            "organization_id",
+            "started_at"
+          ],
+          "isUnique": false
+        },
+        "count_organization_id_id_unique": {
+          "name": "count_organization_id_id_unique",
+          "columns": [
+            "organization_id",
+            "id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "count_organization_id_organization_id_fk": {
+          "name": "count_organization_id_organization_id_fk",
+          "tableFrom": "count",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "count_opened_by_user_id_fk": {
+          "name": "count_opened_by_user_id_fk",
+          "tableFrom": "count",
+          "tableTo": "user",
+          "columnsFrom": [
+            "opened_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "count_closed_by_user_id_fk": {
+          "name": "count_closed_by_user_id_fk",
+          "tableFrom": "count",
+          "tableTo": "user",
+          "columnsFrom": [
+            "closed_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "count_id": {
+          "name": "count_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "count_line": {
+      "name": "count_line",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "count_id": {
+          "name": "count_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "product_id": {
+          "name": "product_id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "location_id": {
+          "name": "location_id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "sealed_case_qty": {
+          "name": "sealed_case_qty",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "sealed_each_qty": {
+          "name": "sealed_each_qty",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "partial_fills": {
+          "name": "partial_fills",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "('[]')"
+        },
+        "unit_cost_at_count": {
+          "name": "unit_cost_at_count",
+          "type": "decimal(10,4)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "case_size_at_count": {
+          "name": "case_size_at_count",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "counted_by": {
+          "name": "counted_by",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "counted_at": {
+          "name": "counted_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "opened_at": {
+          "name": "opened_at",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "count_line_count_product_location_unique": {
+          "name": "count_line_count_product_location_unique",
+          "columns": [
+            "count_id",
+            "product_id",
+            "location_id"
+          ],
+          "isUnique": true
+        },
+        "count_line_product_id_idx": {
+          "name": "count_line_product_id_idx",
+          "columns": [
+            "product_id"
+          ],
+          "isUnique": false
+        },
+        "count_line_location_id_idx": {
+          "name": "count_line_location_id_idx",
+          "columns": [
+            "location_id"
+          ],
+          "isUnique": false
+        },
+        "count_line_counted_by_idx": {
+          "name": "count_line_counted_by_idx",
+          "columns": [
+            "counted_by"
+          ],
+          "isUnique": false
+        },
+        "count_line_organization_id_id_unique": {
+          "name": "count_line_organization_id_id_unique",
+          "columns": [
+            "organization_id",
+            "id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "count_line_organization_id_organization_id_fk": {
+          "name": "count_line_organization_id_organization_id_fk",
+          "tableFrom": "count_line",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "count_line_product_id_product_id_fk": {
+          "name": "count_line_product_id_product_id_fk",
+          "tableFrom": "count_line",
+          "tableTo": "product",
+          "columnsFrom": [
+            "product_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "count_line_location_id_location_id_fk": {
+          "name": "count_line_location_id_location_id_fk",
+          "tableFrom": "count_line",
+          "tableTo": "location",
+          "columnsFrom": [
+            "location_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "count_line_counted_by_user_id_fk": {
+          "name": "count_line_counted_by_user_id_fk",
+          "tableFrom": "count_line",
+          "tableTo": "user",
+          "columnsFrom": [
+            "counted_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "count_line_organization_count_fk": {
+          "name": "count_line_organization_count_fk",
+          "tableFrom": "count_line",
+          "tableTo": "count",
+          "columnsFrom": [
+            "organization_id",
+            "count_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "count_line_id": {
+          "name": "count_line_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "count_line_write": {
+      "name": "count_line_write",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "count_line_id": {
+          "name": "count_line_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "count_id": {
+          "name": "count_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "written_by": {
+          "name": "written_by",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "applied_at": {
+          "name": "applied_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "sealed_case_delta": {
+          "name": "sealed_case_delta",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "sealed_each_delta": {
+          "name": "sealed_each_delta",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "partial_fills_delta": {
+          "name": "partial_fills_delta",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "('[]')"
+        },
+        "client_line_id": {
+          "name": "client_line_id",
+          "type": "varchar(36)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "count_line_write_client_line_id_unique": {
+          "name": "count_line_write_client_line_id_unique",
+          "columns": [
+            "client_line_id"
+          ],
+          "isUnique": true
+        },
+        "count_line_write_count_line_id_idx": {
+          "name": "count_line_write_count_line_id_idx",
+          "columns": [
+            "count_line_id"
+          ],
+          "isUnique": false
+        },
+        "count_line_write_count_id_idx": {
+          "name": "count_line_write_count_id_idx",
+          "columns": [
+            "count_id"
+          ],
+          "isUnique": false
+        },
+        "count_line_write_written_by_idx": {
+          "name": "count_line_write_written_by_idx",
+          "columns": [
+            "written_by"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "count_line_write_organization_id_organization_id_fk": {
+          "name": "count_line_write_organization_id_organization_id_fk",
+          "tableFrom": "count_line_write",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "count_line_write_count_id_count_id_fk": {
+          "name": "count_line_write_count_id_count_id_fk",
+          "tableFrom": "count_line_write",
+          "tableTo": "count",
+          "columnsFrom": [
+            "count_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "count_line_write_written_by_user_id_fk": {
+          "name": "count_line_write_written_by_user_id_fk",
+          "tableFrom": "count_line_write",
+          "tableTo": "user",
+          "columnsFrom": [
+            "written_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "count_line_write_organization_line_fk": {
+          "name": "count_line_write_organization_line_fk",
+          "tableFrom": "count_line_write",
+          "tableTo": "count_line",
+          "columnsFrom": [
+            "organization_id",
+            "count_line_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "count_line_write_id": {
+          "name": "count_line_write_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "location": {
+      "name": "location",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "count_mode": {
+          "name": "count_mode",
+          "type": "enum('tenths','quantity')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'tenths'"
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "onUpdate": true,
+          "default": "(now())"
+        }
+      },
+      "indexes": {
+        "location_organization_name_unique": {
+          "name": "location_organization_name_unique",
+          "columns": [
+            "organization_id",
+            "name"
+          ],
+          "isUnique": true
+        },
+        "location_organization_id_id_unique": {
+          "name": "location_organization_id_id_unique",
+          "columns": [
+            "organization_id",
+            "id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "location_organization_id_organization_id_fk": {
+          "name": "location_organization_id_organization_id_fk",
+          "tableFrom": "location",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "location_id": {
+          "name": "location_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "organization": {
+      "name": "organization",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "slug": {
+          "name": "slug",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "active": {
+          "name": "active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "onUpdate": true,
+          "default": "(now())"
+        }
+      },
+      "indexes": {
+        "organization_slug_unique": {
+          "name": "organization_slug_unique",
+          "columns": [
+            "slug"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "organization_id": {
+          "name": "organization_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "product": {
+      "name": "product",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "brand": {
+          "name": "brand",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "category": {
+          "name": "category",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "subcategory": {
+          "name": "subcategory",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "unit_type": {
+          "name": "unit_type",
+          "type": "enum('bottle','can','keg')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "size_ml": {
+          "name": "size_ml",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "case_size": {
+          "name": "case_size",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "vendor_id": {
+          "name": "vendor_id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "current_unit_cost": {
+          "name": "current_unit_cost",
+          "type": "decimal(10,4)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "empty_weight_g": {
+          "name": "empty_weight_g",
+          "type": "decimal(8,2)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "full_weight_g": {
+          "name": "full_weight_g",
+          "type": "decimal(8,2)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "waste_factor": {
+          "name": "waste_factor",
+          "type": "decimal(4,3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'0.000'"
+        },
+        "shelf_life_days": {
+          "name": "shelf_life_days",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "active": {
+          "name": "active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "onUpdate": true,
+          "default": "(now())"
+        }
+      },
+      "indexes": {
+        "product_organization_name_size_ml_unique": {
+          "name": "product_organization_name_size_ml_unique",
+          "columns": [
+            "organization_id",
+            "name",
+            "size_ml"
+          ],
+          "isUnique": true
+        },
+        "product_vendor_id_idx": {
+          "name": "product_vendor_id_idx",
+          "columns": [
+            "vendor_id"
+          ],
+          "isUnique": false
+        },
+        "product_organization_active_idx": {
+          "name": "product_organization_active_idx",
+          "columns": [
+            "organization_id",
+            "active"
+          ],
+          "isUnique": false
+        },
+        "product_organization_category_idx": {
+          "name": "product_organization_category_idx",
+          "columns": [
+            "organization_id",
+            "category"
+          ],
+          "isUnique": false
+        },
+        "product_organization_id_id_unique": {
+          "name": "product_organization_id_id_unique",
+          "columns": [
+            "organization_id",
+            "id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "product_organization_id_organization_id_fk": {
+          "name": "product_organization_id_organization_id_fk",
+          "tableFrom": "product",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "product_organization_vendor_fk": {
+          "name": "product_organization_vendor_fk",
+          "tableFrom": "product",
+          "tableTo": "vendor",
+          "columnsFrom": [
+            "organization_id",
+            "vendor_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "product_id": {
+          "name": "product_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "product_barcode": {
+      "name": "product_barcode",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "product_id": {
+          "name": "product_id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "barcode": {
+          "name": "barcode",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "format": {
+          "name": "format",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "pack_level": {
+          "name": "pack_level",
+          "type": "enum('each','case')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "is_primary": {
+          "name": "is_primary",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        }
+      },
+      "indexes": {
+        "product_barcode_organization_barcode_unique": {
+          "name": "product_barcode_organization_barcode_unique",
+          "columns": [
+            "organization_id",
+            "barcode"
+          ],
+          "isUnique": true
+        },
+        "product_barcode_product_id_idx": {
+          "name": "product_barcode_product_id_idx",
+          "columns": [
+            "product_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "product_barcode_organization_id_organization_id_fk": {
+          "name": "product_barcode_organization_id_organization_id_fk",
+          "tableFrom": "product_barcode",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "product_barcode_organization_product_fk": {
+          "name": "product_barcode_organization_product_fk",
+          "tableFrom": "product_barcode",
+          "tableTo": "product",
+          "columnsFrom": [
+            "organization_id",
+            "product_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "product_barcode_id": {
+          "name": "product_barcode_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "product_par": {
+      "name": "product_par",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "product_id": {
+          "name": "product_id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "location_id": {
+          "name": "location_id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "par_level": {
+          "name": "par_level",
+          "type": "decimal(10,2)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reorder_point": {
+          "name": "reorder_point",
+          "type": "decimal(10,2)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "location_scope": {
+          "name": "location_scope",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "generated": {
+            "as": "ifnull(`product_par`.`location_id`, 0)",
+            "type": "stored"
+          }
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "onUpdate": true,
+          "default": "(now())"
+        }
+      },
+      "indexes": {
+        "product_par_product_location_scope_unique": {
+          "name": "product_par_product_location_scope_unique",
+          "columns": [
+            "product_id",
+            "location_scope"
+          ],
+          "isUnique": true
+        },
+        "product_par_location_id_idx": {
+          "name": "product_par_location_id_idx",
+          "columns": [
+            "location_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "product_par_organization_id_organization_id_fk": {
+          "name": "product_par_organization_id_organization_id_fk",
+          "tableFrom": "product_par",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "product_par_organization_product_fk": {
+          "name": "product_par_organization_product_fk",
+          "tableFrom": "product_par",
+          "tableTo": "product",
+          "columnsFrom": [
+            "organization_id",
+            "product_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "product_par_organization_location_fk": {
+          "name": "product_par_organization_location_fk",
+          "tableFrom": "product_par",
+          "tableTo": "location",
+          "columnsFrom": [
+            "organization_id",
+            "location_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "product_par_id": {
+          "name": "product_par_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "session": {
+      "name": "session",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "datetime",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "token": {
+          "name": "token",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "onUpdate": true,
+          "default": "(now())"
+        },
+        "ip_address": {
+          "name": "ip_address",
+          "type": "varchar(45)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "user_agent": {
+          "name": "user_agent",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "session_token_unique": {
+          "name": "session_token_unique",
+          "columns": [
+            "token"
+          ],
+          "isUnique": true
+        },
+        "session_user_id_idx": {
+          "name": "session_user_id_idx",
+          "columns": [
+            "user_id"
+          ],
+          "isUnique": false
+        },
+        "session_expires_at_idx": {
+          "name": "session_expires_at_idx",
+          "columns": [
+            "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "session_user_id_user_id_fk": {
+          "name": "session_user_id_user_id_fk",
+          "tableFrom": "session",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "session_id": {
+          "name": "session_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "user": {
+      "name": "user",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "email": {
+          "name": "email",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "email_verified": {
+          "name": "email_verified",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "image": {
+          "name": "image",
+          "type": "varchar(2048)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "onUpdate": true,
+          "default": "(now())"
+        },
+        "role": {
+          "name": "role",
+          "type": "enum('owner','manager','staff')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'staff'"
+        },
+        "active": {
+          "name": "active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "user_email_unique": {
+          "name": "user_email_unique",
+          "columns": [
+            "email"
+          ],
+          "isUnique": true
+        },
+        "user_active_idx": {
+          "name": "user_active_idx",
+          "columns": [
+            "active"
+          ],
+          "isUnique": false
+        },
+        "user_organization_id_idx": {
+          "name": "user_organization_id_idx",
+          "columns": [
+            "organization_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "user_organization_id_organization_id_fk": {
+          "name": "user_organization_id_organization_id_fk",
+          "tableFrom": "user",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "user_id": {
+          "name": "user_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "vendor": {
+      "name": "vendor",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "contact": {
+          "name": "contact",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "order_method": {
+          "name": "order_method",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "lead_time_days": {
+          "name": "lead_time_days",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "onUpdate": true,
+          "default": "(now())"
+        }
+      },
+      "indexes": {
+        "vendor_organization_id_idx": {
+          "name": "vendor_organization_id_idx",
+          "columns": [
+            "organization_id"
+          ],
+          "isUnique": false
+        },
+        "vendor_organization_id_id_unique": {
+          "name": "vendor_organization_id_id_unique",
+          "columns": [
+            "organization_id",
+            "id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "vendor_organization_id_organization_id_fk": {
+          "name": "vendor_organization_id_organization_id_fk",
+          "tableFrom": "vendor",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "vendor_id": {
+          "name": "vendor_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "verification": {
+      "name": "verification",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "identifier": {
+          "name": "identifier",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "datetime",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "onUpdate": true,
+          "default": "(now())"
+        }
+      },
+      "indexes": {
+        "verification_identifier_idx": {
+          "name": "verification_identifier_idx",
+          "columns": [
+            "identifier"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "verification_id": {
+          "name": "verification_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    }
+  },
+  "views": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "tables": {},
+    "indexes": {}
+  }
+}
