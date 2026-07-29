@@ -67,6 +67,29 @@ export const auth = betterAuth({
       generateId: "serial",
     },
   },
+  /**
+   * Better Auth refuses any state-changing request whose `Origin` header is not
+   * a trusted origin, and by default the ONLY trusted origin is `baseURL`
+   * (i.e. `BETTER_AUTH_URL`). That default is right, and production keeps it
+   * untouched — this block only widens the list outside production.
+   *
+   * Why it needs widening in development: docker-compose publishes the app on
+   * `127.0.0.1:3000` while `BETTER_AUTH_URL` is `http://localhost:3000`. Those
+   * are the same server and two different origins as far as a browser is
+   * concerned, so signing in from `http://127.0.0.1:3000` got a 403 — which the
+   * login form correctly reports with its deliberately generic "check your email
+   * and password" message, and which then bounces back to /login. The symptom is
+   * indistinguishable from a wrong password, and the password is fine.
+   *
+   * Worth knowing how this hid: `curl` sends no `Origin` header unless told to,
+   * so the sign-in endpoint returns 200 from a terminal and 403 from a browser.
+   * A manual verification pass that used curl missed it entirely. Any future
+   * check of this path must send `Origin`, or it is not testing what a browser
+   * does.
+   */
+  ...(process.env.NODE_ENV === "production"
+    ? {}
+    : { trustedOrigins: ["http://localhost:3000", "http://127.0.0.1:3000"] }),
   emailAndPassword: {
     enabled: true,
     // No public self-signup path (build brief, invariant: "no public
