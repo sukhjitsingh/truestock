@@ -66,9 +66,40 @@ function getDb() {
   return dbPromise;
 }
 
-/** Generate a write id. `crypto.randomUUID` is available in every browser this app targets (HTTPS-only). */
+/**
+ * Generate a write id — the `clientLineId` that makes a write idempotent.
+ *
+ * `crypto.randomUUID` is SECURE-CONTEXT ONLY. That reads as a non-issue
+ * because production is HTTPS, and it was written off as one here. It is not:
+ * the counting screens cannot be exercised anywhere except a phone on the
+ * LAN, and a LAN origin is plain http, so `crypto.randomUUID` is undefined
+ * exactly where this app most needs testing. The first real count on a phone
+ * died on `crypto.randomUUID is not a function` at the first save
+ * (2026-07-28) — the whole write path was unreachable.
+ *
+ * `crypto.getRandomValues` is NOT secure-context gated, so the fallback is a
+ * hand-assembled RFC 4122 v4 from the same CSPRNG. That distinction is
+ * load-bearing and `Math.random()` would be a real bug, not a shortcut: this
+ * id is the idempotency key, and the append-only ledger's unique index treats
+ * a collision as a REPLAY — it rolls the write back and returns success. A
+ * weak generator would therefore drop legitimate scans silently and the count
+ * would just come out short, with no error anywhere. Predictability is not
+ * the risk here; collision is.
+ */
 export function newWriteId(): string {
-  return crypto.randomUUID();
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10xx
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join("-");
 }
 
 export async function enqueue(write: QueuedWrite): Promise<void> {
