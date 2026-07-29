@@ -9,6 +9,11 @@ data model, and rationale. This file is the short version.
 importantly, the trigger that says when each item becomes due. Most are correct to
 ignore until then.
 
+**`STATE.md` says where the project actually is** — specifically what is *proven*
+versus what is merely built, which is the distinction that matters most here.
+`ROADMAP.md` is what comes next. `docs/go-live.md` is the gate before the first
+deploy and the list to verify after it.
+
 ---
 
 ## What we are building

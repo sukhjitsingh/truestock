@@ -18,8 +18,13 @@ back office has been driven in a browser; **the counting screens have not** —
 nobody has taken a phone through a real count, and the offline write queue is
 still unexercised. That is the shortest path to a trustworthy first count.
 
-See [`docs/spec.md`](docs/spec.md) for the full product spec and
-[`docs/open-items.md`](docs/open-items.md) for what is deliberately unfinished.
+- [`STATE.md`](STATE.md) — what is proven, what is merely built, what is next
+- [`ROADMAP.md`](ROADMAP.md) — the phases after the MVP
+- [`docs/go-live.md`](docs/go-live.md) — the pre-launch gate and what to verify
+  after the first production release
+- [`docs/spec.md`](docs/spec.md) — the full product spec
+- [`docs/open-items.md`](docs/open-items.md) — every deliberate gap, with the
+  trigger that makes it due
 
 ## Stack
 
