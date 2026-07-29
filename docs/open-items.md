@@ -452,3 +452,53 @@ taken its empty path. The "count in progress" branch *has* now rendered with
 real data (a draft count, with its Resume action).
 
 Cheap to close: close one count and look at the tile.
+
+## 16. A scanned barcode cannot be attached to an existing product
+
+**Trigger: before the first count at a real bar. Harmless locally, wrong in
+production.**
+
+`product_barcode` ships empty — CLAUDE.md says `upc` is deliberately blank and
+"fills through scan-to-enroll during the first count". But the enroll path only
+*creates*: `count-leg.tsx` sends an unresolved barcode to `EnrollForm`, which
+calls `createProductAction`, and no action attaches a barcode to a product that
+already exists. `searchProductsAction` finds the existing row but offers no way
+to bind the code that was just scanned to it.
+
+So the intended first count — walk the bar, scan each bottle, watch the seeded
+catalog fill in its barcodes — instead produces a **second copy of all 97
+products**, with the count split across the duplicates and the seeded rows left
+at zero. Nothing errors; the totals just describe a catalog that does not exist.
+
+This was found while setting up the phone test (2026-07-28) and is not urgent
+for a throwaway local database, where it is merely a reason to
+`bun run docker:reset` between runs (see `docs/phone-count-test.md`).
+
+What it needs, roughly: when a barcode does not resolve, offer *"link to an
+existing product"* beside *"new product"*, backed by an action that inserts a
+`product_barcode` row after an ownership check on the product id (invariant 9 —
+a foreign key proves the row exists, not whose it is). The `pack_level` on the
+new barcode is the real design question, not the plumbing: the same bottle and
+its case carry different codes, and guessing wrong there silently miscounts
+beer.
+
+## 17. `127.0.0.1` was blocked by Next's dev cross-origin guard — CLOSED 2026-07-28
+
+Recorded because the *shape* is worth remembering, not because it is still
+open. Next 16 blocks `/_next/*` for any host outside `localhost`/`*.localhost`
+plus `allowedDevOrigins`. `127.0.0.1` is not `localhost` to that check, so the
+dev server returned **403 for every client chunk** while the document itself
+returned 200 — the page rendered and never hydrated. Meanwhile `lib/auth.ts`
+explicitly trusted `http://127.0.0.1:3000` and `docker-compose.yml` published
+on it, so two files said the origin was supported and a third silently
+disagreed.
+
+Fixed by listing `127.0.0.1` in `allowedDevOrigins` (`next.config.ts`).
+Confirmed by request rather than inspection: the same chunk returned 403 for an
+`Origin` of `127.0.0.1:3000` and 200 for `localhost:3000`, and afterwards 200
+for both.
+
+**The reusable lesson: "renders but does not hydrate" now has two known
+causes** — a CSP without a nonce (#13) and this. The cheap check for both is
+the same, and it is in `docs/phone-count-test.md`: load `/login` and look at
+whether the submit button is still disabled a second later.

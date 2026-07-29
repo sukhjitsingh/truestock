@@ -74,6 +74,31 @@ and rebuilds from empty; `bun run db:shell` opens a SQL prompt.
 To run against the database without the app container, copy `.env.example` to
 `.env.local` and point `DATABASE_URL` at `127.0.0.1:3307`.
 
+### Counting from a real phone
+
+The counting screens cannot be verified from this machine — they need a camera,
+a bottle, and a dim room. `bun run docker:up:lan` republishes the dev server on
+your LAN address (it is loopback-only by default), generates a self-signed
+certificate naming that address, and starts a TLS proxy beside the app. It
+prints two URLs:
+
+- `https://192.168.x.x:3443` — **use this one.** The camera is only exposed to
+  a secure context, so scanning works here and nowhere else. The certificate is
+  self-signed, so accept the warning once per phone.
+- `http://192.168.x.x:3000` — everything except the camera, with no setup.
+
+It also widens the dev allowlists that would otherwise reject the phone:
+Better Auth's `trustedOrigins`, whose absence shows up as "check your email and
+password" on a correct password, and Next's `allowedDevOrigins`, whose absence
+lets a page render and never hydrate.
+
+Start at **`/count/preflight`** on the phone — it reports secure context,
+camera, decoder, write-id path and IndexedDB before you walk anywhere. The full
+protocol is in [`docs/phone-count-test.md`](docs/phone-count-test.md).
+
+`bun run docker:down && bun run docker:up` stops the proxy and restores the
+loopback-only binding.
+
 ## Working on this
 
 `CLAUDE.md` holds the project conventions and the ten non-negotiable data invariants.
