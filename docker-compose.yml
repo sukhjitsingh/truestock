@@ -14,8 +14,20 @@
 
 services:
   db:
-    image: mysql:8.4
-    container_name: truestock-mysql
+    # MariaDB, not MySQL, and this is not a preference — Hostinger serves
+    # MariaDB 11.8.8. Verified 2026-07-28 by `SELECT VERSION()` against a
+    # throwaway database on the real host. A local MySQL would mean the gate
+    # passes against an engine that is not the one production runs.
+    #
+    # The schema itself turned out to be portable: the migration chain applies
+    # clean from empty, the product_par generated column still rejects a second
+    # overall par (1062), the composite tenant foreign keys still reject a
+    # cross-tenant location (1452), DECIMAL(10,4) round-trips exactly, and
+    # partial_fills still comes back as a parsed array even though MariaDB
+    # stores JSON as a longtext alias. All re-verified on 11.8 before this pin
+    # changed.
+    image: mariadb:11.8
+    container_name: truestock-mariadb
     restart: unless-stopped
     command:
       # Pinned rather than inherited. Nothing in db/schema.ts or drizzle/*.sql
@@ -23,6 +35,12 @@ services:
       # db/README.md documents that requirement but cannot enforce it. Setting
       # it at the server makes CREATE DATABASE correct by construction.
       # (Schema audit 2026-07-27, finding F3.)
+      #
+      # utf8mb4_0900_ai_ci is a MySQL collation name, and it works here:
+      # MariaDB 11.x accepts it as an alias for utf8mb4_uca1400_ai_ci for
+      # MySQL compatibility. Verified on 11.8.8. Spelling it the MySQL way
+      # keeps one collation name across the schema audit, db/README.md and
+      # this file rather than introducing a second name for the same thing.
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_0900_ai_ci
       # Every `timestamp` column in db/schema.ts uses defaultNow(). A container
@@ -41,34 +59,42 @@ services:
       # Local-only credentials, deliberately boring. Keep them alphanumeric:
       # they end up inside a DATABASE_URL, and anything needing
       # percent-encoding there is a trap you will hit at the worst moment.
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: truestock
-      MYSQL_USER: truestock
-      MYSQL_PASSWORD: truestock
+      #
+      # MARIADB_* rather than the legacy MYSQL_* aliases the image also
+      # accepts — same behaviour, but the names match the engine actually
+      # running, so nobody has to wonder whether this file was ported properly.
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: truestock
+      MARIADB_USER: truestock
+      MARIADB_PASSWORD: truestock
     ports:
-      # 3307 on the host, not 3306: Homebrew MySQL 8.0.12 is installed on this
-      # machine with a registered LaunchAgent. It is stopped today, but
+      # 3307 on the host, not 3306: a Homebrew MySQL 8.0.12 is installed on
+      # this machine with a registered LaunchAgent. It is stopped today, but
       # `brew services start mysql` would silently take 3306 and you would
-      # spend an afternoon debugging a schema mismatch against a 2018 server.
+      # spend an afternoon debugging against a 2018 server of the wrong engine
+      # entirely.
       #
       # Bound to 127.0.0.1 rather than published on 0.0.0.0 — Docker's default
-      # would put a root-password-`root` MySQL on your LAN.
+      # would put a root-password-`root` database on your LAN.
       - "127.0.0.1:3307:3306"
     volumes:
-      - truestock-mysql-data:/var/lib/mysql
+      - truestock-mariadb-data:/var/lib/mysql
       # Runs ONCE, on a fresh volume, after the entrypoint creates the database
       # and grants the app user. This is why `down -v` is the real reset.
-      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+      - ./docker/mariadb/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      # Pings over TCP (-h 127.0.0.1), not the unix socket. The MySQL
-      # entrypoint runs a TEMPORARY server with --skip-networking while it
-      # initialises the data directory; a socket ping passes against that temp
-      # server, so `depends_on: service_healthy` would fire before the real
-      # database exists. TCP cannot reach the temp server, so it only goes
-      # green for the one you actually want.
+      # Pings over TCP (-h 127.0.0.1), not the unix socket. The entrypoint runs
+      # a TEMPORARY server with --skip-networking while it initialises the data
+      # directory; a socket ping passes against that temp server, so
+      # `depends_on: service_healthy` would fire before the real database
+      # exists. TCP cannot reach the temp server, so it only goes green for the
+      # one you actually want.
+      #
+      # `mariadb-admin`, not `mysqladmin`: MariaDB 11.x still ships the old
+      # name as a deprecated symlink, and depending on it is borrowed time.
       test:
         - CMD-SHELL
-        - 'mysqladmin ping -h 127.0.0.1 -u root -p"$$MYSQL_ROOT_PASSWORD" --silent'
+        - 'mariadb-admin ping -h 127.0.0.1 -u root -p"$$MARIADB_ROOT_PASSWORD" --silent'
       interval: 5s
       timeout: 5s
       retries: 20
@@ -120,6 +146,6 @@ services:
       - truestock-next-cache:/app/.next
 
 volumes:
-  truestock-mysql-data:
+  truestock-mariadb-data:
   truestock-node-modules:
   truestock-next-cache:
