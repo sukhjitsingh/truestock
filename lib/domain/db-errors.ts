@@ -6,13 +6,42 @@
  * caller (lib/domain/counts.ts, lib/domain/catalog.ts) applies the same
  * discipline: only mysql2 error code 1062 (`ER_DUP_ENTRY`) counts.
  */
+/**
+ * Walks an error and its `cause` chain looking for a driver error.
+ *
+ * REQUIRED, not defensive (found by a test, 2026-07-30): drizzle wraps query
+ * failures in `DrizzleQueryError`, which carries `query`, `params` and
+ * `cause` — and NO `code` of its own. A check that reads `err.code` directly
+ * therefore returns false for every wrapped error, and both predicates below
+ * silently stopped discriminating.
+ *
+ * What that cost: every `ConflictError` in lib/domain/catalog.ts was
+ * unreachable, so "A product named X already exists" and "Barcode Y is
+ * already assigned to Z" fell through to the generic handler and reached the
+ * user as "Something went wrong" — mid-count, on the app's highest-risk
+ * interaction, with the actionable half of the message discarded.
+ *
+ * The chain is walked rather than just `.cause` being unwrapped once, because
+ * nothing guarantees the nesting depth stays at one.
+ */
+function driverErrorInChain(err: unknown): { code?: unknown; errno?: unknown } | null {
+  let current = err;
+  // Bounded so a self-referential cause cannot spin forever.
+  for (let depth = 0; depth < 10; depth++) {
+    if (typeof current !== "object" || current === null) return null;
+    const e = current as { code?: unknown; errno?: unknown; cause?: unknown };
+    if (e.code !== undefined || e.errno !== undefined) return e;
+    if (!("cause" in e)) return null;
+    current = e.cause;
+  }
+  return null;
+}
+
 export function isDuplicateKeyError(err: unknown): boolean {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    "code" in err &&
-    (err as { code?: unknown }).code === "ER_DUP_ENTRY"
-  );
+  const driver = driverErrorInChain(err);
+  // Both forms: mysql2 populates `code` and `errno` together, but only the
+  // number is guaranteed stable across driver versions.
+  return driver?.code === "ER_DUP_ENTRY" || driver?.errno === 1062;
 }
 
 /**
@@ -26,8 +55,8 @@ export function isDuplicateKeyError(err: unknown): boolean {
  * guaranteed stable across driver versions.
  */
 export function isTransientLockError(err: unknown): boolean {
-  if (typeof err !== "object" || err === null) return false;
-  const e = err as { code?: unknown; errno?: unknown };
+  const e = driverErrorInChain(err);
+  if (!e) return false;
   return (
     e.code === "ER_LOCK_DEADLOCK" ||
     e.code === "ER_LOCK_WAIT_TIMEOUT" ||
