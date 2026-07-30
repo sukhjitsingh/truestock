@@ -18,6 +18,7 @@ import {
   markAttempt,
   pendingFor,
   type QueuedWrite,
+  type QueuedWriteKind,
 } from "@/lib/count-queue";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -44,6 +45,15 @@ type Phase =
 
 function lineKey(productId: number, locationId: number) {
   return `${productId}:${locationId}`;
+}
+
+/**
+ * How a write is named back to the person who made it, when the server
+ * refuses one that was queued offline. "Tito's Handmade Vodka · Back Bar" is
+ * something a counter can walk over and re-check; "a queued save" is not.
+ */
+function writeLabel(product: ProductSummary, location: LocationSummary) {
+  return `${product.name} · ${location.name}`;
 }
 
 /**
@@ -111,11 +121,26 @@ export function CountLeg({
         await dequeue(write.id);
         return true;
       }
-      // A rejection from the server is an answer, not a network failure. The
-      // write will never succeed on replay (a closed count, a validation
-      // error), so it stays queued with its reason recorded rather than
-      // being retried forever against a server that has already decided.
-      await markAttempt(write.id, result.error.message);
+      // A rejection from the server is an answer, not a network failure: the
+      // server has decided, and replaying the identical write will get the
+      // identical refusal. So it is DROPPED from the queue, not kept.
+      //
+      // Keeping it was the old behaviour and it broke the one signal this
+      // screen has. `markAttempt` retains the record, so `pendingFor` kept
+      // returning it, every mount and every `online` event resent it, and the
+      // chip read "1 pending" forever — never returning to "Synced". After
+      // that a genuinely lost write in the walk-in is indistinguishable from
+      // the stuck one, which is precisely the failure the badge exists to
+      // make visible (spec §11).
+      //
+      // Dropping it silently would be its own bug, so the write is named:
+      // whoever is counting needs to know WHICH bottle to re-check, not just
+      // that something was refused.
+      await dequeue(write.id);
+      setError(
+        `${write.label ?? "A queued save"} was refused by the server and has been dropped: ` +
+          `${result.error.message} Re-count that one to be sure.`,
+      );
       return true;
     } catch {
       // The fetch itself threw — still offline. Leave the write queued with
@@ -171,7 +196,9 @@ export function CountLeg({
    */
   const runWrite = useCallback(
     async (
-      kind: "scan" | "increment" | "set",
+      kind: QueuedWriteKind,
+      key: string,
+      label: string,
       payload: Record<string, unknown>,
       optimistic: (prev: Map<string, LocalLine>) => Map<string, LocalLine>,
     ) => {
@@ -181,13 +208,31 @@ export function CountLeg({
 
       // Optimistic first — the UI never waits on the network to show the
       // bottle as counted (spec §11: <300ms perceived).
-      setLines(optimistic);
+      //
+      // The pre-write value of THIS line is captured on the way past, so a
+      // write the server refuses can be undone. Capturing inside the updater
+      // is what makes it exact rather than a render behind: React may re-run
+      // an updater (StrictMode does, in development), but it re-runs it
+      // against the same `prev`, so the capture is idempotent.
+      //
+      // One line, not the whole map: a blanket snapshot would also revert any
+      // write that landed in between. Nothing can today — `busy` gates every
+      // entry screen's submit, so writes are serialized — but a rollback that
+      // silently depends on that gate is a trap for whoever removes it.
+      let before: LocalLine | undefined;
+      let existed = false;
+      setLines((prev) => {
+        before = prev.get(key);
+        existed = prev.has(key);
+        return optimistic(prev);
+      });
 
       await enqueue({
         id,
         kind,
         countId,
         payload,
+        label,
         createdAt: Date.now(),
         attempts: 0,
       });
@@ -241,7 +286,28 @@ export function CountLeg({
           return next;
         });
       } else {
-        await markAttempt(id, result.error.message);
+        // The server refused. Undo the optimistic row and drop the write.
+        //
+        // Leaving it on screen was the worst bug this component had: the line
+        // still read as counted, its units still counted toward the leg, and
+        // `applyIncrement` used it as the base for the NEXT scan of the same
+        // product — so a refused write silently became a phantom that later
+        // writes compounded onto. Screen says counted, database disagrees,
+        // nothing looks broken. That is the exact failure mode CLAUDE.md's
+        // invariants exist to prevent.
+        //
+        // Dropped rather than queued for the same reason as in `sendQueued`:
+        // the server has already decided, so a retry gets the same answer.
+        setLines((prev) => {
+          const next = new Map(prev);
+          if (existed && before) {
+            next.set(key, before);
+          } else {
+            next.delete(key);
+          }
+          return next;
+        });
+        await dequeue(id);
         setError(result.error.message);
       }
 
@@ -367,6 +433,8 @@ export function CountLeg({
               onSubmit={async (newFills) => {
                 const ok = await runWrite(
                   "increment",
+                  lineKey(product.id, locationId),
+                  writeLabel(product, location),
                   {
                     countId,
                     productId: product.id,
@@ -400,6 +468,8 @@ export function CountLeg({
                   submission.mode === "set" && existing?.lineId != null
                     ? await runWrite(
                         "set",
+                        lineKey(product.id, locationId),
+                        writeLabel(product, location),
                         {
                           countLineId: existing.lineId,
                           sealedCaseQty: submission.cases,
@@ -409,6 +479,8 @@ export function CountLeg({
                       )
                     : await runWrite(
                         "increment",
+                        lineKey(product.id, locationId),
+                        writeLabel(product, location),
                         {
                           countId,
                           productId: product.id,

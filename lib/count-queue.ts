@@ -47,6 +47,18 @@ export interface QueuedWrite {
   createdAt: number;
   attempts: number;
   lastError?: string;
+  /**
+   * Human-readable description of what this write was ("Tito's Handmade
+   * Vodka · Back Bar"), captured at enqueue time.
+   *
+   * Only ever used to NAME a write in an error message, never to drive
+   * behaviour. It exists because a write that the server permanently refuses
+   * gets dropped from the queue (see `sendQueued` in count-leg.tsx), and
+   * "one of your saves was refused" is not something anyone can act on
+   * mid-count. Optional so records written before this field existed still
+   * load.
+   */
+  label?: string;
 }
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
