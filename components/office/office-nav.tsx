@@ -19,7 +19,8 @@ export function OfficeNav({ role }: { role: Role }) {
   const pathname = usePathname();
 
   const links = [
-    { href: "/office", label: "Counts", exact: true },
+    { href: "/office", label: "Dashboard", exact: true },
+    { href: "/office/counts", label: "Counts" },
     { href: "/office/catalog", label: "Catalog" },
     { href: "/office/reorder", label: "Reorder" },
   ];

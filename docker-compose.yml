@@ -1,0 +1,199 @@
+# Local development and test environment for Truestock.
+#
+# This file IS the local environment definition — there is no "and then run
+# this one command I typed once." Everything a fresh clone needs is here:
+#
+#   bun run docker:up      # database + app, waits until actually ready
+#   bun run docker:migrate # apply migrations
+#   bun run docker:seed    # seed the catalog
+#   bun run test:docker    # run the suite against a real MySQL
+#
+# Nothing here touches Hostinger. Production is deployed by
+# .github/workflows/deploy.yml from the `output: 'standalone'` build, which
+# does not use this file or docker/app/Dockerfile.
+
+services:
+  db:
+    # MariaDB, not MySQL, and this is not a preference — Hostinger serves
+    # MariaDB 11.8.8. Verified 2026-07-28 by `SELECT VERSION()` against a
+    # throwaway database on the real host. A local MySQL would mean the gate
+    # passes against an engine that is not the one production runs.
+    #
+    # The schema itself turned out to be portable: the migration chain applies
+    # clean from empty, the product_par generated column still rejects a second
+    # overall par (1062), the composite tenant foreign keys still reject a
+    # cross-tenant location (1452), DECIMAL(10,4) round-trips exactly, and
+    # partial_fills still comes back as a parsed array even though MariaDB
+    # stores JSON as a longtext alias. All re-verified on 11.8 before this pin
+    # changed.
+    image: mariadb:11.8
+    container_name: truestock-mariadb
+    restart: unless-stopped
+    command:
+      # Pinned rather than inherited. Nothing in db/schema.ts or drizzle/*.sql
+      # declares a charset, so every table takes the database default —
+      # db/README.md documents that requirement but cannot enforce it. Setting
+      # it at the server makes CREATE DATABASE correct by construction.
+      # (Schema audit 2026-07-27, finding F3.)
+      #
+      # utf8mb4_0900_ai_ci is a MySQL collation name, and it works here:
+      # MariaDB 11.x accepts it as an alias for utf8mb4_uca1400_ai_ci for
+      # MySQL compatibility. Verified on 11.8.8. Spelling it the MySQL way
+      # keeps one collation name across the schema audit, db/README.md and
+      # this file rather than introducing a second name for the same thing.
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      # Every `timestamp` column in db/schema.ts uses defaultNow(). A container
+      # on SYSTEM time zone and a shared host on something else produce quietly
+      # different started_at values — the kind of difference that only surfaces
+      # in a variance report weeks later. Pin it here; compare to production
+      # once the version probe has run.
+      - --default-time-zone=+00:00
+      # Mirrors Hostinger Cloud Startup's cap, shared with the restaurant
+      # website (CLAUDE.md). If a pool or query pattern is going to exhaust
+      # connections in production, it should exhaust them here first.
+      - --max-connections=100
+      - --innodb-buffer-pool-size=256M
+      - --local-infile=0
+    environment:
+      # Local-only credentials, deliberately boring. Keep them alphanumeric:
+      # they end up inside a DATABASE_URL, and anything needing
+      # percent-encoding there is a trap you will hit at the worst moment.
+      #
+      # MARIADB_* rather than the legacy MYSQL_* aliases the image also
+      # accepts — same behaviour, but the names match the engine actually
+      # running, so nobody has to wonder whether this file was ported properly.
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: truestock
+      MARIADB_USER: truestock
+      MARIADB_PASSWORD: truestock
+    ports:
+      # 3307 on the host, not 3306: a Homebrew MySQL 8.0.12 is installed on
+      # this machine with a registered LaunchAgent. It is stopped today, but
+      # `brew services start mysql` would silently take 3306 and you would
+      # spend an afternoon debugging against a 2018 server of the wrong engine
+      # entirely.
+      #
+      # Bound to 127.0.0.1 rather than published on 0.0.0.0 — Docker's default
+      # would put a root-password-`root` database on your LAN.
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - truestock-mariadb-data:/var/lib/mysql
+      # Runs ONCE, on a fresh volume, after the entrypoint creates the database
+      # and grants the app user. This is why `down -v` is the real reset.
+      - ./docker/mariadb/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # Pings over TCP (-h 127.0.0.1), not the unix socket. The entrypoint runs
+      # a TEMPORARY server with --skip-networking while it initialises the data
+      # directory; a socket ping passes against that temp server, so
+      # `depends_on: service_healthy` would fire before the real database
+      # exists. TCP cannot reach the temp server, so it only goes green for the
+      # one you actually want.
+      #
+      # `mariadb-admin`, not `mysqladmin`: MariaDB 11.x still ships the old
+      # name as a deprecated symlink, and depending on it is borrowed time.
+      test:
+        - CMD-SHELL
+        - 'mariadb-admin ping -h 127.0.0.1 -u root -p"$$MARIADB_ROOT_PASSWORD" --silent'
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      # First boot initialises the data directory. Without this grace period
+      # the retries burn out before the server is ever up.
+      start_period: 40s
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/app/Dockerfile
+    container_name: truestock-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Container-internal address: the `db` service on its standard port, not
+      # the host's 3307. `environment` wins over anything in .env.local, and
+      # dotenv (loaded by drizzle.config.ts) does not override an already-set
+      # process.env value — so this is authoritative inside the container while
+      # .env.local stays authoritative for commands you run on the host.
+      DATABASE_URL: mysql://truestock:truestock@db:3306/truestock
+      TEST_DATABASE_URL: mysql://truestock:truestock@db:3306/truestock_test
+      BETTER_AUTH_URL: http://localhost:3000
+      # Dev-only, and fine to have in a committed file precisely because it is
+      # worthless: it signs sessions for a throwaway local database. Production
+      # reads its secret from hPanel (docs/deploy.md §2.4) and must never see
+      # this value.
+      BETTER_AUTH_SECRET: dev-only-local-secret-not-used-anywhere-real
+      NEXT_TELEMETRY_DISABLED: "1"
+      # Set only by scripts/dev-lan.sh, for taking a real count on a real
+      # phone. Empty in the normal case. When set it is a full origin
+      # (http://192.168.x.x:3000) and it widens exactly two allowlists:
+      # Better Auth's trustedOrigins and Next's allowedDevOrigins. Both are
+      # dev-only by construction — see lib/auth.ts and next.config.ts.
+      DEV_LAN_ORIGIN: "${DEV_LAN_ORIGIN:-}"
+      # macOS bind mounts do not deliver inotify events reliably, so the dev
+      # server's file watcher misses edits without polling. Costs some idle
+      # CPU; buys hot reload that actually works.
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      # Loopback by default, deliberately: the dev server runs with no TLS,
+      # the seeded accounts have known passwords, and `docker compose up` on a
+      # cafe network should not put any of that on the LAN.
+      #
+      # `scripts/dev-lan.sh` overrides APP_BIND to 0.0.0.0 for phone testing,
+      # which is the one case that needs it. It is an env var rather than a
+      # docker-compose.override.yml because Compose CONCATENATES `ports` when
+      # merging an override file — you would end up with both 127.0.0.1:3000
+      # and 0.0.0.0:3000 published and the container would fail to bind. (The
+      # `!override` tag that fixes that needs Compose 2.24+; this machine has
+      # 2.23.0.)
+      - "${APP_BIND:-127.0.0.1}:3000:3000"
+    volumes:
+      # Source is bind-mounted so edits on the host are live in the container.
+      - .:/app
+      # ...but node_modules and .next are NAMED volumes deliberately, so the
+      # bind mount does not shadow them. Your host node_modules was built for
+      # darwin/x86_64; the container needs linux/x86_64. Sharing one directory
+      # between them breaks any package with a native binding. Named volumes
+      # are seeded from the image on first creation, so these arrive already
+      # populated by the Dockerfile's `bun install`.
+      - truestock-node-modules:/app/node_modules
+      - truestock-next-cache:/app/.next
+
+  # TLS termination for phone testing, started only by scripts/dev-lan.sh via
+  # `--profile tls`. Never part of a plain `docker compose up`.
+  #
+  # It exists because the camera is gated on a secure context, and the
+  # chrome://flags override that fakes one is Chromium-only and per-device —
+  # it does nothing on Firefox or Samsung Internet, where it fails by simply
+  # not being there. HTTPS is the answer that works on any handset.
+  tls:
+    image: nginx:1.27-alpine
+    container_name: truestock-tls
+    profiles: ["tls"]
+    restart: unless-stopped
+    depends_on:
+      # service_started, not service_healthy: the app service defines no
+      # healthcheck, and requiring one here fails the whole `up` with
+      # "container truestock-app has no healthcheck configured". nginx does
+      # not need the app to be ready anyway — it re-resolves the upstream per
+      # request and returns 502 until the dev server answers.
+      app:
+        condition: service_started
+    ports:
+      # Same opt-in bind as the app. 3443 rather than 443 so nothing needs
+      # elevated privileges and so a stray `https://<ip>` cannot reach a dev
+      # server by accident.
+      - "${APP_BIND:-127.0.0.1}:3443:443"
+    volumes:
+      - ./docker/tls/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # Generated by scripts/dev-lan.sh, gitignored (*.pem). Regenerated
+      # whenever the LAN IP changes, because the certificate names the IP.
+      - ./docker/tls/certs:/etc/nginx/certs:ro
+
+volumes:
+  truestock-mariadb-data:
+  truestock-node-modules:
+  truestock-next-cache:

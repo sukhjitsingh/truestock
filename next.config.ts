@@ -4,40 +4,15 @@ import type { NextConfig } from "next";
 // platform-side mitigation exists, so these are the whole defense, not a
 // supplement to one.
 //
-// CSP notes, all deliberate, none of them a default we forgot to tighten:
-// - `script-src 'self' 'wasm-unsafe-eval'`: the barcode scanner
-//   (`barcode-detector`'s ZXing-WASM polyfill, used wherever the native
-//   `BarcodeDetector` API isn't available) calls `WebAssembly.instantiate` /
-//   `instantiateStreaming` on a same-origin-fetched .wasm module. Neither
-//   works without `wasm-unsafe-eval`. This does NOT enable arbitrary
-//   `eval()`/`new Function()` — that would need the much broader
-//   `unsafe-eval`, which is deliberately absent.
-// - `style-src 'self' 'unsafe-inline'`: Radix/shadcn primitives (the slider
-//   and dialog used for fill-level entry) set inline `style` attributes for
-//   transforms and positioning. Inline *styles* can't run script, so this is
-//   a much smaller concession than `unsafe-inline` on `script-src`, which
-//   stays out entirely.
-// - `connect-src 'self'`: every fetch in the MVP is same-origin (server
-//   actions, route handlers). No AI vision API, no object storage — neither
-//   is in scope (CLAUDE.md), so nothing external needs an allowance here.
-//   Revisit this the day either is added.
-// - `frame-ancestors 'none'`: this app is never meant to be framed by
-//   anything, including itself.
-// - No `upgrade-insecure-requests` needed — Hostinger's SSL is
-//   auto-provisioned and there is no mixed-content path to begin with.
-const CONTENT_SECURITY_POLICY = [
-  "default-src 'self'",
-  "script-src 'self' 'wasm-unsafe-eval'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
-  "font-src 'self'",
-  "connect-src 'self'",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-].join("; ");
-
+// The Content-Security-Policy is deliberately NOT here. It lives in
+// middleware.ts because it has to carry a per-request nonce, and a static
+// header cannot. Setting it in both places is actively harmful: two CSP
+// headers are intersected by the browser, so the stricter nonce-less one
+// would go on silently blocking Next's inline scripts. See middleware.ts for
+// the full reasoning and the failure it caused.
+//
+// No `upgrade-insecure-requests` is needed — Hostinger's SSL is
+// auto-provisioned and there is no mixed-content path to begin with.
 const SECURITY_HEADERS = [
   {
     // HTTPS is mandatory here anyway (camera/barcode APIs refuse to run over
@@ -60,10 +35,45 @@ const SECURITY_HEADERS = [
     value:
       "camera=(self), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()",
   },
-  { key: "Content-Security-Policy", value: CONTENT_SECURITY_POLICY },
 ];
 
+// Hosts allowed to request Next's own dev resources (/_next/*, /__nextjs*).
+// Next 16 blocks cross-origin access to them by default and only ever trusts
+// `localhost` plus the dev server's own -H value — which docker/app/Dockerfile
+// sets to 0.0.0.0, so a LAN IP is NOT covered by it.
+//
+// Entries are bare HOSTNAMES, not origins: no scheme, no port. Passing
+// "http://192.168.1.10:3000" here silently matches nothing. Verified against
+// node_modules/next/dist/server/lib/router-utils/block-cross-site-dev.js,
+// which compares `parseUrl(origin).hostname` against this list.
+//
+// Only the HMR websocket actually trips this — same-origin document and asset
+// GETs send no Origin header and are never blocked — so getting it wrong costs
+// you hot reload, not the app. Set by scripts/dev-lan.sh; empty otherwise, and
+// `next dev` is the only thing that reads it.
+// `127.0.0.1` is listed because Next's built-in allowance covers `localhost`
+// and `*.localhost` ONLY — the IP literal is a different host to that check,
+// so `/_next/*` returns 403 and the client bundle never runs. The page still
+// renders and returns 200; it simply never hydrates, which is the same silent
+// failure shape as the CSP incident. Confirmed by request, not by reading:
+// the same chunk returns 403 for an `Origin` of 127.0.0.1:3000 and 200 for
+// localhost:3000.
+//
+// It is listed here rather than left alone because lib/auth.ts deliberately
+// trusts `http://127.0.0.1:3000` as a dev origin, and docker-compose.yml
+// publishes on 127.0.0.1 by default. Those said 127.0.0.1 was supported while
+// this said otherwise, and the disagreement was invisible.
+// DEV_LAN_ORIGIN is comma-separated (http on :3000 and https on :3443 are two
+// origins), but this list wants HOSTNAMES — so both collapse to the same entry
+// and the Set removes the duplicate.
+const devLanHosts = (process.env.DEV_LAN_ORIGIN ?? "")
+  .split(",")
+  .map((origin) => URL.parse(origin.trim())?.hostname)
+  .filter((host): host is string => Boolean(host));
+const devOrigins = [...new Set(["127.0.0.1", ...devLanHosts])];
+
 const nextConfig: NextConfig = {
+  allowedDevOrigins: devOrigins,
   // Hostinger managed Node hosting: emit a minimal self-contained server.
   // Do not remove — the deployed footprint depends on it (CLAUDE.md, spec §11).
   output: "standalone",

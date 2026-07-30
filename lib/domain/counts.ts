@@ -84,7 +84,7 @@ import {
   InvalidCountTransitionError,
   NotFoundError,
 } from "@/lib/domain/errors";
-import { isDuplicateKeyError } from "@/lib/domain/db-errors";
+import { isDuplicateKeyError, withLockRetry } from "@/lib/domain/db-errors";
 import { resolveBarcodeForCount } from "@/lib/domain/catalog";
 import {
   computeLineValuation,
@@ -457,37 +457,44 @@ async function applyIncrement(actor: Actor, delta: IncrementDelta): Promise<Coun
   let replayLine: CountLineRecord | null = null;
 
   try {
-    appliedLine = await db.transaction(async (tx) => {
-      await assertCountWritable(tx, actor.organizationId, delta.countId);
+    // withLockRetry: this transaction's `SELECT ... FOR UPDATE` inside
+    // upsertCountLineRow takes a gap lock when the line doesn't exist yet, so
+    // two staff scanning two different first-time bottles into the same count
+    // can deadlock. See db-errors.ts for why retrying is safe here and why it
+    // doesn't weaken the client_line_id idempotency guarantee.
+    appliedLine = await withLockRetry(() =>
+      db.transaction(async (tx) => {
+        await assertCountWritable(tx, actor.organizationId, delta.countId);
 
-      const line = await upsertCountLineRow(tx, {
-        organizationId: actor.organizationId,
-        countId: delta.countId,
-        productId: delta.productId,
-        locationId: delta.locationId,
-        sealedCaseQtyDelta: delta.sealedCaseQtyDelta,
-        sealedEachQtyDelta: delta.sealedEachQtyDelta,
-        newPartialFills: delta.newPartialFills,
-        openedAt: delta.openedAt,
-        actorId: actor.userId,
-      });
+        const line = await upsertCountLineRow(tx, {
+          organizationId: actor.organizationId,
+          countId: delta.countId,
+          productId: delta.productId,
+          locationId: delta.locationId,
+          sealedCaseQtyDelta: delta.sealedCaseQtyDelta,
+          sealedEachQtyDelta: delta.sealedEachQtyDelta,
+          newPartialFills: delta.newPartialFills,
+          openedAt: delta.openedAt,
+          actorId: actor.userId,
+        });
 
-      // Ledger insert SECOND, deliberately not caught here. A duplicate-key
-      // violation on client_line_id must roll back everything
-      // upsertCountLineRow just did — see the file header.
-      await tx.insert(countLineWrite).values({
-        organizationId: actor.organizationId,
-        countLineId: line.id,
-        countId: delta.countId,
-        writtenBy: actor.userId,
-        sealedCaseDelta: delta.sealedCaseQtyDelta,
-        sealedEachDelta: delta.sealedEachQtyDelta,
-        partialFillsDelta: delta.newPartialFills,
-        clientLineId: delta.clientLineId,
-      });
+        // Ledger insert SECOND, deliberately not caught here. A duplicate-key
+        // violation on client_line_id must roll back everything
+        // upsertCountLineRow just did — see the file header.
+        await tx.insert(countLineWrite).values({
+          organizationId: actor.organizationId,
+          countLineId: line.id,
+          countId: delta.countId,
+          writtenBy: actor.userId,
+          sealedCaseDelta: delta.sealedCaseQtyDelta,
+          sealedEachDelta: delta.sealedEachQtyDelta,
+          partialFillsDelta: delta.newPartialFills,
+          clientLineId: delta.clientLineId,
+        });
 
-      return line;
-    });
+        return line;
+      }),
+    );
   } catch (err) {
     if (!isDuplicateKeyError(err)) {
       throw err;
@@ -616,7 +623,11 @@ export async function setCountLineQuantities(
   let replayLine: CountLineRecord | null = null;
 
   try {
-    appliedLine = await db.transaction(async (tx) => {
+    // withLockRetry — same reasoning as applyIncrement; a correct lock order
+    // narrows the deadlock window but does not close it, because the row lock
+    // below still contends with a concurrent scan of the same line.
+    appliedLine = await withLockRetry(() =>
+      db.transaction(async (tx) => {
       // Same count-then-count_line lock order as applyIncrement/
       // editCountLineFills — see the deadlock-avoidance comment in
       // editCountLineFills below for why this matters.
@@ -690,7 +701,8 @@ export async function setCountLineQuantities(
         .limit(1);
       if (!updated) throw new NotFoundError("Count line");
       return updated;
-    });
+      }),
+    );
   } catch (err) {
     if (!isDuplicateKeyError(err)) {
       throw err;
@@ -719,7 +731,11 @@ export async function editCountLineFills(
   actor: Actor,
   input: EditCountLineFillsInput,
 ): Promise<CountLineRow> {
-  const updated = await db.transaction(async (tx) => {
+  // withLockRetry — see db-errors.ts. The lock ordering described below is
+  // what keeps this path from *causing* deadlocks; the retry is what keeps it
+  // surviving one caused elsewhere on the same rows.
+  const updated = await withLockRetry(() =>
+    db.transaction(async (tx) => {
     // Lock ordering matters here: applyIncrement/setCountLineQuantities
     // always lock `count` before `count_line`. If this function locked
     // `count_line` first (by going straight to `SELECT ... FOR UPDATE` on
@@ -783,7 +799,8 @@ export async function editCountLineFills(
       .limit(1);
     if (!row) throw new NotFoundError("Count line");
     return row;
-  });
+    }),
+  );
   return toCountLineRow(actor.role, updated);
 }
 

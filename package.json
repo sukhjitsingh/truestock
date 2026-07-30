@@ -14,7 +14,19 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx db/seed.ts",
-    "create-user": "tsx scripts/create-user.ts"
+    "create-user": "tsx scripts/create-user.ts",
+    "docker:up": "docker compose up -d --wait",
+    "docker:up:lan": "bash scripts/dev-lan.sh",
+    "docker:down": "docker compose down",
+    "docker:build": "docker compose build",
+    "docker:logs": "docker compose logs -f",
+    "docker:shell": "docker compose exec app bash",
+    "docker:migrate": "docker compose exec -T app bun run db:migrate",
+    "docker:seed": "docker compose exec -T app bun run db:seed",
+    "docker:reset": "docker compose down -v && docker compose up -d --wait && docker compose exec -T app bun run db:migrate && docker compose exec -T app bun run db:seed",
+    "db:shell": "docker compose exec db mariadb -utruestock -ptruestock truestock",
+    "db:logs": "docker compose logs -f db",
+    "test:docker": "docker compose exec -T -e DATABASE_URL=mysql://truestock:truestock@db:3306/truestock_test app bun test"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.2",
@@ -37,6 +49,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/bun": "^1.3.14",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

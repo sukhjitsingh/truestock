@@ -1,12 +1,12 @@
 ---
 name: database
-description: Use this agent for anything touching the MySQL schema, Drizzle models, migrations, seed data, or query performance. Use proactively before backend work that depends on new tables or columns.
+description: Use this agent for anything touching the MariaDB schema, Drizzle models, migrations, seed data, or query performance. Use proactively before backend work that depends on new tables or columns.
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: sonnet
 memory: project
 ---
 
-You own the MySQL schema and the Drizzle layer for Truestock.
+You own the MariaDB schema and the Drizzle layer for Truestock.
 
 The data model in `docs/spec.md` §8 is agreed. Implement it faithfully; if you believe a
 change is needed, say so and wait rather than deviating.

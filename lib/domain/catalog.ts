@@ -340,6 +340,50 @@ export async function resolveBarcodeForCount(
 }
 
 // ---------------------------------------------------------------------------
+// Ownership checks for client-supplied foreign ids
+// ---------------------------------------------------------------------------
+
+/** `db` or a transaction handle — both expose the query builder used below. */
+type Runner = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Invariant 9, the ownership-not-existence half: `vendor_id` arrives from the
+ * client, and its foreign key only proves the vendor row EXISTS — not whose it
+ * is. Without this check an owner or manager in Tenant A can point their own
+ * product at Tenant B's vendor; ids are sequential autoincrement ints, so
+ * guessing a live one is trivial.
+ *
+ * Why this was invisible, and why it still mattered: no current read path
+ * renders a foreign vendor (`reorderList` in lib/domain/reports.ts builds its
+ * vendor map from the caller's own organization-scoped list, so a foreign
+ * vendor_id resolves to `vendorName: null`). So there was no live leak — but
+ * the row permanently held a cross-tenant reference, and the first feature to
+ * fetch a vendor by id directly (a vendor detail screen, or the invoice→vendor
+ * join in docs/invoice-automation-research.md) would have leaked that vendor's
+ * contact and lead time across tenants. Same bug class as the
+ * `count_line.location_id` finding fixed in lib/domain/counts.ts on
+ * 2026-07-27, which was never generalized. Schema audit 2026-07-27, B1.
+ *
+ * Raises NotFound, never Forbidden: invariant 9 requires that a cross-tenant
+ * id be indistinguishable from one that doesn't exist, so the answer can't
+ * confirm the row is real.
+ */
+async function assertVendorOwned(
+  runner: Runner,
+  organizationId: number,
+  vendorId: number,
+): Promise<void> {
+  const [owned] = await runner
+    .select({ id: vendor.id })
+    .from(vendor)
+    .where(and(eq(vendor.id, vendorId), eq(vendor.organizationId, organizationId)))
+    .limit(1);
+  if (!owned) {
+    throw new NotFoundError("Vendor");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Scan-to-enroll create
 // ---------------------------------------------------------------------------
 
@@ -374,6 +418,12 @@ export async function createProduct(
   // what collided, not left to fall through to the generic error handler in
   // lib/action-result.ts.
   const created = await db.transaction(async (tx) => {
+    // Inside the transaction so the vendor can't be reassigned between the
+    // check and the insert.
+    if (input.vendorId != null) {
+      await assertVendorOwned(tx, actor.organizationId, input.vendorId);
+    }
+
     let inserted: { id: number };
     try {
       [inserted] = await tx
@@ -473,6 +523,12 @@ export async function updateProduct(
   // Non-owner callers who included currentUnitCost in the request simply
   // have it ignored (same reasoning as createProduct above) rather than the
   // whole update rejected.
+
+  // `null` is a legitimate value here — it clears the vendor — so only a
+  // non-null id needs proving. See assertVendorOwned.
+  if (patch.vendorId != null) {
+    await assertVendorOwned(db, actor.organizationId, patch.vendorId);
+  }
 
   if (Object.keys(patch).length === 0) {
     const rows = await selectProducts(actor, eq(product.id, productId), 1);

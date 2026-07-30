@@ -9,6 +9,11 @@ data model, and rationale. This file is the short version.
 importantly, the trigger that says when each item becomes due. Most are correct to
 ignore until then.
 
+**`STATE.md` says where the project actually is** — specifically what is *proven*
+versus what is merely built, which is the distinction that matters most here.
+`ROADMAP.md` is what comes next. `docs/go-live.md` is the gate before the first
+deploy and the list to verify after it.
+
 ---
 
 ## What we are building
@@ -32,7 +37,7 @@ Open bottles are the ones needing a fill level. They are handled differently on 
 | Hosting | Hostinger Cloud Startup, managed Node.js web app |
 | Runtime | Node (not Bun, not Deno — the host decides this) |
 | Framework | Next.js 16, App Router, TypeScript |
-| Database | MySQL (included with the plan) |
+| Database | MariaDB 11.8 (what Hostinger's "MySQL" actually is — see below) |
 | ORM | Drizzle + drizzle-kit |
 | Auth | Better Auth (NOT NextAuth — it is in maintenance mode) |
 | UI | Tailwind + shadcn/ui |
@@ -43,7 +48,42 @@ Open bottles are the ones needing a fill level. They are handled differently on 
 **Config that must not drift:**
 - `output: 'standalone'` in `next.config.ts`
 - `images: { unoptimized: true }`
-- MySQL connection pool of 5–10 (the plan allows 100 connections, shared with the website)
+- Database connection pool of 5–10 (the plan allows 100 connections, shared with the website)
+- **The CSP is served from `middleware.ts` with a per-request nonce, and must
+  never move back into `next.config.ts`'s `headers()`.** Next's App Router
+  delivers the request id (`self.__next_r`) and the streamed RSC payload
+  (`self.__next_f.push`) as *inline* `<script>` tags. A static header cannot
+  carry a nonce, so `script-src 'self'` blocks both and **nothing on any page
+  hydrates**. Setting it in both places is worse than either alone: browsers
+  intersect multiple CSP headers, so the nonce-less one keeps blocking.
+  This is not hypothetical — it shipped in and was caught only by opening a
+  browser (2026-07-28). The failure is silent by construction: the server
+  renders correctly and returns 200, so `curl`, `next build`, the `/ship` gate
+  and every status-code check pass against a completely inert app. **A 200 is
+  not evidence that a page works.** Note also that Chrome reports CSP
+  violations through a channel the devtools console API does not carry, so the
+  absence of a "Refused to execute inline script" message proves nothing.
+
+**The database is MariaDB, not MySQL — corrected 2026-07-28.** hPanel's menu says
+"MySQL Databases" and every document in this repo took that at face value.
+`SELECT VERSION()` against the real host returns `11.8.8-MariaDB-log`. Local
+development runs `mariadb:11.8` in Docker (`docker-compose.yml`) so the gate
+tests the engine production actually runs.
+
+What does **not** change, and should not be "fixed": the driver stays `mysql2`,
+drizzle's dialect stays `"mysql"`, and `DATABASE_URL` keeps the `mysql://`
+scheme. All three are correct for MariaDB — it speaks the MySQL wire protocol.
+
+The schema was re-verified on MariaDB 11.8 and is portable: migrations apply
+clean from empty, the `product_par` generated column still rejects a second
+overall par (1062), composite tenant foreign keys still reject a cross-tenant
+id (1452), and `DECIMAL(10,4)` round-trips exactly.
+
+One real difference to keep in mind: **MariaDB has no native JSON type** —
+`JSON` is an alias for `longtext`. `partial_fills` still comes back as a parsed
+array because mysql2 parses it, and drizzle has no `mapFromDriverValue` of its
+own for MySQL JSON. That makes the guarantee a *driver* one, not a schema one,
+so it must be covered by a test rather than assumed after a driver bump.
 
 ---
 
@@ -216,6 +256,19 @@ Draft is simpler than it looks and should not be special-cased:
   double-count this ledger replaced.
 - **Dim-bar UI.** High contrast, large tap targets, dark mode, one-handed operation.
   The other hand is holding a bottle.
+- **Any form whose submit is handled in JavaScript carries `method="post"`.**
+  `preventDefault()` only runs once React has attached; before that — or if
+  hydration fails outright — the browser submits natively, and a form with no
+  method defaults to **GET**, serializing every field into the query string.
+  On the login form that put a plaintext password into the server access log,
+  the user's history, and the `Referer` of any later outbound link. POST
+  degrades to a bare 405 instead, which leaks nothing. Gating the submit
+  button on a hydrated flag is the complement, not the substitute: the flag
+  handles the ordinary race, the method handles hydration never happening.
+- **Verify UI work in a browser, not with `curl`.** Server-rendered HTML and a
+  200 prove the server ran, nothing more. Every client-side failure this
+  project has hit — the CSP hydration break, the credential leak — was
+  invisible to status codes and obvious on first page load.
 - Migrations go through drizzle-kit. No hand-edited schema drift.
 - Conventional commits. Small, reviewable changes.
 

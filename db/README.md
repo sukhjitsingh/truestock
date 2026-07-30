@@ -1,12 +1,49 @@
 # Database
 
-MySQL + Drizzle. Schema lives in `db/schema.ts`, migrations in `drizzle/`,
+MariaDB + Drizzle. Schema lives in `db/schema.ts`, migrations in `drizzle/`,
 pooled client in `db/index.ts`. Full data model rationale: `docs/spec.md` §8.
+
+**MariaDB, not MySQL — established 2026-07-28.** Hostinger's hPanel labels the
+feature "MySQL Databases" and this file, the spec and CLAUDE.md all took that
+literally until `SELECT VERSION()` against the real host returned
+`11.8.8-MariaDB-log`. The driver (`mysql2`), the drizzle dialect (`"mysql"`)
+and the `mysql://` URL scheme are all still correct — MariaDB speaks the MySQL
+wire protocol — so nothing in the code changed. What changed is that local
+development runs `mariadb:11.8` (`docker-compose.yml`), because a gate that
+tests a different engine than production isn't a gate.
+
+The one behavioural difference that matters: **MariaDB has no native JSON
+type.** `JSON` is an alias for `longtext` with a validity check.
+`partial_fills` still reads back as a parsed array because `mysql2` parses it —
+verified on 11.8.8 — but that is a driver guarantee, not a schema one, since
+drizzle supplies no `mapFromDriverValue` for MySQL JSON. It needs a test, not
+a memory.
 
 ## Set up a database
 
-1. Create a MySQL database (locally, or from Hostinger hPanel in production —
-   database name `truestock` per spec).
+The quickest path is `bun run docker:up`, which starts MariaDB 11.8 configured
+correctly by construction. Do it by hand only for production:
+
+1. Create a database (Hostinger hPanel → *Databases → MySQL Databases*, or
+   locally — database name `truestock` per spec). **It must be `utf8mb4`:**
+
+   ```sql
+   CREATE DATABASE truestock CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+   ```
+
+   Nothing in `db/schema.ts` or the migrations declares a charset, so every
+   table inherits whatever the database was created with. This is a liquor
+   catalog — Cointreau, Château, Jägermeister, Añejo are ordinary entries —
+   and on a non-`utf8mb4` database those names mojibake or fail to insert.
+   The pool pins `charset: "utf8mb4"` on the client side (`db/index.ts`), but
+   that cannot fix a database created as `latin1`. In hPanel, confirm the
+   charset dropdown rather than accepting its default. Schema audit
+   2026-07-27, finding F3.
+
+   `utf8mb4_0900_ai_ci` is a MySQL collation name and works on MariaDB 11.x,
+   which accepts it as an alias for `utf8mb4_uca1400_ai_ci` — verified on
+   11.8.8. It is spelled the MySQL way deliberately, so one name covers this
+   file, the schema audit and `docker-compose.yml`.
 2. Copy `.env.example` to `.env.local` and fill in `DATABASE_URL`.
 3. Generate/apply migrations and seed:
 
@@ -23,20 +60,22 @@ need a real connection.
 ## Connection pool — do not change without re-reading spec §11
 
 `db/index.ts` sets `connectionLimit: 10` explicitly (upper bound of the 5–10
-range spec §11 calls for). Hostinger's Cloud Startup plan caps MySQL at 100
-user connections **shared with the restaurant's other website** on the same
+range spec §11 calls for). Hostinger's Cloud Startup plan caps the database at
+100 user connections **shared with the restaurant's other website** on the same
 plan — a bigger pool here starves that site, not just this one. If a future
 change seems to need a bigger pool, that's a signal to question the query
 pattern (e.g. N+1s), not to raise the ceiling.
 
 The pool is cached on `globalThis` so Next.js dev's hot-module-reload doesn't
-open a fresh pool (and fresh MySQL connections) on every file save.
+open a fresh pool (and fresh database connections) on every file save.
 
 ## Migrations
 
 - Generated with `drizzle-kit generate`, never hand-edited once applied.
-- `0000_majestic_whiplash.sql` is the initial migration — creates all 12 MVP
-  tables (the 8 in spec §8, minus `count_line.client_line_id` which moved
+  One documented exception so far: `0002_wet_abomination.sql` (see below).
+- `0000_elite_nightmare.sql` is the initial migration — creates all 13 MVP
+  tables (the 8 in spec §8, plus `organization` (the tenant boundary), minus
+  `count_line.client_line_id` which moved
   into the new `count_line_write` table — see "Idempotency ledger" below —
   plus Better Auth's `session`, `account`, `verification`; see the comment
   above `user` in `db/schema.ts`). drizzle-kit doesn't emit a companion
@@ -44,22 +83,46 @@ open a fresh pool (and fresh MySQL connections) on every file save.
   FK-safe order:
 
   ```sql
-  DROP TABLE count_line_write, count_line, count, session, account, product_par, product_barcode, product, location, vendor, verification, user;
+  DROP TABLE count_line_write, count_line, count, session, account, product_par, product_barcode, product, location, vendor, verification, user, organization;
   ```
 
   (count_line_write references count_line/count/user; count_line references
   count/product/location/user; count references user; session and account
   reference user; product_par and product_barcode reference product;
-  product references vendor. Dropping in that order — or running MySQL with
+  product references vendor; everything tenant-scoped references
+  organization, so it drops last. Dropping in that order — or running with
   foreign_key_checks briefly disabled — avoids FK errors.) Every future
   migration should state its own reversal the same way if drizzle-kit
   doesn't generate one.
-- As of 2026-07-24, nothing has ever been applied to a real database in this
-  project (no MySQL server exists in the dev environment yet), so the
-  initial migration has been regenerated in place more than once as review
-  feedback landed, rather than stacked as 0001/0002/etc. Once a migration
-  has actually been applied anywhere, stop doing that — from that point on,
-  schema changes are new migrations, never edits to `0000_*.sql`.
+- `0001_strong_daimon_hellstrom.sql` and `0002_wet_abomination.sql` close the
+  2026-07-27 schema audit's findings (`docs/reviews/schema-scalability-audit.md`).
+  0001 adds composite tenant foreign keys so a client-supplied `vendor_id` /
+  `product_id` / `location_id` cannot reference another organization's row
+  (finding B1). 0002 widens the count/count_line/count_line_write id chain to
+  `BIGINT` (F1), re-keys three indexes as organization-first composites (F2),
+  and indexes `session.expires_at` (F4).
+- **`0002_wet_abomination.sql` is hand-edited, on purpose.** `drizzle-kit
+  generate` emitted its `MODIFY COLUMN ... bigint` statements without first
+  dropping the foreign keys spanning those columns, which the server rejects
+  (`ERROR 3780 ... are incompatible`). The file now does the
+  drop / modify / re-add dance in the right order. `db/schema.ts` is still
+  the source of truth and `drizzle/meta/0002_snapshot.json` still describes
+  the exact end state — only the statement ordering is ours. If you ever hit
+  3780 on a future width change, this is the pattern.
+- **Migrations are append-only from 2026-07-27.** `0000` landed on `main` in
+  PR #1, so it is now a record of what will run against a database that
+  matters. `scripts/check-migrations-immutable.sh` enforces this in CI.
+  (Before that date, `0000` was regenerated in place several times as review
+  feedback landed — that era is over.)
+- Nothing has yet been applied to a *production* database. The full chain
+  `0000 → 0001 → 0002` was verified end-to-end in Docker — first against
+  MySQL 8.0 on 2026-07-27, then re-verified against **MariaDB 11.8.8** on
+  2026-07-28 once the production engine was established. Both runs included
+  probe queries proving the composite tenant FKs reject cross-tenant ids
+  (1452), the `product_par` generated column rejects a second overall par
+  (1062), `DECIMAL(10,4)` round-trips exactly, and accented product names
+  survive. The schema is portable across both engines; no migration needed
+  changing.
 
 ## Seeding
 
@@ -113,7 +176,7 @@ Every id in these four tables is a plain `int AUTO_INCREMENT` primary key
 meaning `count.opened_by`, `count.closed_by`, and `count_line.counted_by`
 stay ordinary int FKs into `user.id` with no repointing). Better Auth
 defaults to generating its own string ids client-side; `generateId: "serial"`
-is what tells it to let MySQL's `AUTO_INCREMENT` generate the id instead,
+is what tells it to let the database's `AUTO_INCREMENT` generate the id instead,
 and the Drizzle adapter then reads it back via `LAST_INSERT_ID()`. Without
 this setting, inserts through Better Auth will either fail against these int
 columns or fall back to the adapter's unreliable best-effort row matching —

@@ -104,12 +104,21 @@ I have no Hostinger credentials and shouldn't try to get any. Everything in
 this section is a UI click-path, not something the deploy pipeline can do
 for you.
 
-1. **Create the MySQL database.**
+1. **Create the database.**
    hPanel → *Databases → MySQL Databases* → create a database named
    `truestock` and a database user with a generated password. Note the
    database name, username, and password — you'll need all three twice
    (once for the app's own `DATABASE_URL`, once for the migration secrets
    in §3).
+
+   **The menu says MySQL; the server is MariaDB.** Verified 2026-07-28 —
+   `SELECT VERSION()` against a database created this way returns
+   `11.8.8-MariaDB-log`. The hPanel label is the reason every document in
+   this repo said "MySQL" for months. It does not change anything you do
+   here, and it does not change the driver (`mysql2`), the drizzle dialect
+   (`"mysql"`), or the `mysql://` URL scheme — MariaDB speaks the MySQL wire
+   protocol. It does mean local development should run MariaDB rather than
+   MySQL, which `docker-compose.yml` now does.
 
 2. **Create the Node.js Web App entry.**
    hPanel → *Websites* → *Add Website* → *Deploy Web App*. Pick **any**
@@ -167,8 +176,8 @@ for you.
 | `HOSTINGER_SSH_PORT` | port from §2.5 (often a non-default port like `65002`) | migrate |
 | `HOSTINGER_SSH_USER` | SSH username from §2.5 | migrate |
 | `HOSTINGER_SSH_PRIVATE_KEY` | the private key file contents from §2.5 | migrate |
-| `HOSTINGER_DB_USER` | MySQL user from §2.1 | migrate |
-| `HOSTINGER_DB_PASSWORD` | MySQL password from §2.1 | migrate |
+| `HOSTINGER_DB_USER` | database user from §2.1 | migrate |
+| `HOSTINGER_DB_PASSWORD` | database password from §2.1 | migrate |
 | `HOSTINGER_DB_NAME` | `truestock` | migrate |
 
 None of these are read by the app itself — the app's own env vars live in
@@ -197,7 +206,7 @@ undercut the exact safety property that script is built around.
 
 Do this once, from your own machine, after §2 and §3 are done:
 
-1. **Open a tunnel to production MySQL** (same pattern as
+1. **Open a tunnel to the production database** (same pattern as
    `scripts/hostinger-migrate.sh`, run by hand instead of by CI):
    ```bash
    ssh -i truestock-deploy-key -p <HOSTINGER_SSH_PORT> \
@@ -247,9 +256,9 @@ Push to `main` → GitHub Actions:
 - **`verify` fails:** nothing happens. The site keeps serving whatever was
   last deployed successfully. Safest failure mode.
 - **`migrate` fails partway through a single migration file:** this is the
-  one genuinely dangerous case. MySQL auto-commits DDL per statement — it
-  does not support the same transactional-DDL rollback you'd get with some
-  other databases — so a migration file with multiple statements that fails
+  one genuinely dangerous case. MariaDB, like MySQL, auto-commits DDL per
+  statement — neither supports the transactional-DDL rollback you'd get with
+  some other databases — so a migration file with multiple statements that fails
   on, say, its third `ALTER TABLE` leaves the schema in a state that
   matches **none** of your migration files. The **app is not yet
   redeployed** at this point (that's the next job), so the previously
