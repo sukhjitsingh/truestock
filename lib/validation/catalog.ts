@@ -91,6 +91,23 @@ export const productUpdateSchema = z.object({
   // future edit doesn't widen it without re-checking the column.
   wasteFactor: z.number().min(0).max(9.999).optional(),
   shelfLifeDays: z.number().int().positive().nullable().optional(),
+  /**
+   * Par level and reorder point. These do NOT live on `product` — they are a
+   * `product_par` row — but they are edited from the product form, so they
+   * ride along on this schema and `updateProduct` fans them out.
+   *
+   * DECIMAL(10,2) on both columns: 8 integer digits, 2 after the point.
+   * Fractional pars are meaningful rather than sloppy — half a keg is a
+   * legitimate par for a slow tap line.
+   *
+   * `parLevel: null` CLEARS the par (deletes the row), which is why it is
+   * nullable rather than merely optional: omitted means "don't touch it",
+   * null means "this product has no par". `reorderPoint` is only meaningful
+   * alongside a par level, since `par_level` is NOT NULL in the table and a
+   * reorder point with nothing to reorder up to has nothing to say.
+   */
+  parLevel: z.number().min(0).max(99_999_999.99).nullable().optional(),
+  reorderPoint: z.number().min(0).max(99_999_999.99).nullable().optional(),
 });
 export type ProductUpdateInput = z.infer<typeof productUpdateSchema>;
 

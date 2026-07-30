@@ -33,6 +33,12 @@ export function ProductEditForm({
   const [caseSize, setCaseSize] = useState(product.caseSize == null ? "" : String(product.caseSize));
   const [vendorId, setVendorId] = useState(product.vendorId == null ? "" : String(product.vendorId));
   const [cost, setCost] = useState(product.currentUnitCost ?? "");
+  const [parLevel, setParLevel] = useState(
+    product.stock?.parLevel == null ? "" : String(product.stock.parLevel),
+  );
+  const [reorderPoint, setReorderPoint] = useState(
+    product.stock?.reorderPoint == null ? "" : String(product.stock.reorderPoint),
+  );
 
   const [pending, setPending] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -54,6 +60,12 @@ export function ProductEditForm({
       sizeMl: Number(sizeMl),
       caseSize: caseSize.trim() === "" ? null : Number(caseSize),
       vendorId: vendorId === "" ? null : Number(vendorId),
+      // Blank clears the par rather than meaning "leave it alone" — the field
+      // is always rendered with its current value, so a blank box is a
+      // deliberate erasure, not an omission. The server distinguishes the two
+      // (null clears, undefined ignores); this form only ever means the former.
+      parLevel: parLevel.trim() === "" ? null : Number(parLevel),
+      reorderPoint: reorderPoint.trim() === "" ? null : Number(reorderPoint),
       ...(canEditCost ? { currentUnitCost: cost.trim() === "" ? null : cost } : {}),
     });
 
@@ -79,7 +91,10 @@ export function ProductEditForm({
   }
 
   return (
-    <form onSubmit={save} className="mt-6 flex flex-col gap-section-gap" noValidate>
+    // method="post" per CLAUDE.md's working agreement — see enroll-form.tsx
+    // for the failure it prevents. A pre-hydration submit degrades to a bare
+    // 405 instead of serializing fields into the query string.
+    <form method="post" onSubmit={save} className="mt-6 flex flex-col gap-section-gap" noValidate>
       <section className="flex flex-col gap-4">
         <h2 className="text-label uppercase text-muted-foreground">Details</h2>
 
@@ -158,6 +173,53 @@ export function ProductEditForm({
             ))}
           </Select>
         </Field>
+      </section>
+
+      {/*
+        Par is not a product column — it is a `product_par` row with
+        `location_id IS NULL`, the "one par overall" convention the MVP
+        writes (spec §8). Per-location pars are still an open question
+        (CLAUDE.md open question 2) and the nullable column is what keeps it
+        open; nothing here answers it.
+
+        This section is visible to managers as well as owners. Par levels are
+        quantities, not cost data, and running the reorder is a manager's job
+        (spec §4) — invariant 8 gates money, not stock.
+      */}
+      <section className="flex flex-col gap-4">
+        <h2 className="text-label uppercase text-muted-foreground">Reordering</h2>
+        <div className="grid grid-cols-2 gap-3">
+          <Field
+            label="Par level"
+            htmlFor="parLevel"
+            error={fieldErrors.parLevel}
+            hint="Target stock to hold. Blank means this product never appears on the reorder list."
+          >
+            <Input
+              id="parLevel"
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              value={parLevel}
+              onChange={(e) => setParLevel(e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Reorder point"
+            htmlFor="reorderPoint"
+            error={fieldErrors.reorderPoint}
+            hint="Order when on-hand drops to this. Blank uses the par level itself."
+          >
+            <Input
+              id="reorderPoint"
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              value={reorderPoint}
+              onChange={(e) => setReorderPoint(e.target.value)}
+            />
+          </Field>
+        </div>
       </section>
 
       {canEditCost ? (

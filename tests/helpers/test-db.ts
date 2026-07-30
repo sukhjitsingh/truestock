@@ -123,6 +123,8 @@ export interface Fixtures {
   unpricedProductId: number;
   /** A second priced product, for multi-line and concurrency cases. */
   secondProductId: number;
+  /** A product belonging to the OTHER tenant — invariant 9's negative case. */
+  otherProductId: number;
 }
 
 /**
@@ -226,6 +228,20 @@ export async function createFixtures(): Promise<Fixtures> {
     })
     .$returningId();
 
+  // Deliberately shares a name and size with `priced` above. Two tenants
+  // stocking the same bottle is the normal case, not an edge one, and
+  // `product_name_size_ml_unique` must be per-tenant for that to work.
+  const [otherProduct] = await db
+    .insert(productTable)
+    .values({
+      organizationId: otherOrg.id,
+      name: "Tito's Handmade Vodka",
+      category: "Spirits",
+      unitType: "bottle",
+      sizeMl: 750,
+    })
+    .$returningId();
+
   return {
     owner: { userId: owner.id, role: "owner", organizationId: org.id },
     manager: { userId: manager.id, role: "manager", organizationId: org.id },
@@ -237,6 +253,7 @@ export async function createFixtures(): Promise<Fixtures> {
     pricedProductId: priced.id,
     unpricedProductId: unpriced.id,
     secondProductId: second.id,
+    otherProductId: otherProduct.id,
   };
 }
 

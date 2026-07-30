@@ -78,8 +78,20 @@ export interface ProductSummary {
  *   counted by the case; a NULL case size on a spirit, wine or keg is correct
  *   rather than missing (CLAUDE.md, "The catalog"), so this deliberately does
  *   not fire on them.
+ * - `needs_par` — no `product_par` row, so this product can never appear on
+ *   the reorder list no matter how far it runs down. Unlike the others this
+ *   is not derivable from the product row, so it is attached in
+ *   `attachStock` and therefore only appears when a caller asked for stock
+ *   figures (`includeOnHand`). That is the right split rather than a
+ *   limitation: the back-office catalog is the screen whose job is flagging
+ *   catalog decay, and the count-time picker would pay for a join to render
+ *   a pill nobody mid-count can act on.
  */
-export type ProductIncompleteReason = "needs_producer" | "needs_cost" | "needs_case_size";
+export type ProductIncompleteReason =
+  | "needs_producer"
+  | "needs_cost"
+  | "needs_case_size"
+  | "needs_par";
 
 interface IncompletenessInput {
   brand: string | null;
@@ -259,6 +271,10 @@ async function attachStock(actor: Actor, rows: ProductSummary[]): Promise<Produc
     const par = parByProduct.get(row.id);
     return {
       ...row,
+      // A product with no par is invisible to the reorder list forever, and
+      // that failure is silent at every layer above: the list simply renders
+      // as though nothing is short. Saying so here is what makes it visible.
+      incomplete: par == null ? [...row.incomplete, "needs_par" as const] : row.incomplete,
       stock: {
         // null rather than 0 when there is no closed count to derive from:
         // "we have never counted this" and "we counted it and there are none"
@@ -383,6 +399,29 @@ async function assertVendorOwned(
   }
 }
 
+/**
+ * Invariant 9, same reasoning as `assertVendorOwned`: `product_id` arrives
+ * from the client on the barcode-link path, and the composite tenant foreign
+ * key would reject a cross-tenant id at the database — but as a 1452, which
+ * surfaces as an opaque server error rather than the NotFound invariant 9
+ * requires. Checking here means a foreign id is answered the same way a
+ * nonexistent one is, and never confirms the row is real.
+ */
+async function assertProductOwned(
+  runner: Runner,
+  organizationId: number,
+  productId: number,
+): Promise<void> {
+  const [owned] = await runner
+    .select({ id: product.id })
+    .from(product)
+    .where(and(eq(product.id, productId), eq(product.organizationId, organizationId)))
+    .limit(1);
+  if (!owned) {
+    throw new NotFoundError("Product");
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Scan-to-enroll create
 // ---------------------------------------------------------------------------
@@ -503,12 +542,65 @@ export async function createProduct(
 // Update
 // ---------------------------------------------------------------------------
 
+/**
+ * Write (or clear) a product's OVERALL par — the `location_id IS NULL` row.
+ *
+ * Overall-only is the MVP convention (spec §8, and CLAUDE.md open question 2,
+ * which is still open on purpose). `ProductPar.location_id` is nullable
+ * precisely so per-location pars can be added later without a migration, and
+ * writing NULL rows now is what keeps that question deferred rather than
+ * answered by accident. The `location_scope` generated column enforces at
+ * most one overall par per product at the database level, so a concurrent
+ * double-write fails on the unique index rather than producing two.
+ *
+ * Passing `parLevel: null` deletes the row. "This product has no par" is a
+ * real state — it is the state all 97 seeded products are in — and it has to
+ * be reachable, or a par typed by mistake could never be taken back.
+ */
+async function upsertProductPar(
+  runner: Runner,
+  organizationId: number,
+  productId: number,
+  parLevel: number | null,
+  reorderPoint: number | null | undefined,
+): Promise<void> {
+  const scope = and(
+    eq(productPar.organizationId, organizationId),
+    eq(productPar.productId, productId),
+    isNull(productPar.locationId),
+  );
+
+  if (parLevel == null) {
+    await runner.delete(productPar).where(scope);
+    return;
+  }
+
+  // DECIMAL columns — drizzle's decimal mode is string in/out, so the
+  // validated numbers are formatted here rather than passed through. Same
+  // reasoning as `wasteFactor` below.
+  const values = {
+    parLevel: parLevel.toFixed(2),
+    reorderPoint: reorderPoint == null ? null : reorderPoint.toFixed(2),
+  };
+
+  const updated = await runner.update(productPar).set(values).where(scope);
+  if (updated[0].affectedRows > 0) {
+    return;
+  }
+  await runner.insert(productPar).values({
+    organizationId,
+    productId,
+    locationId: null,
+    ...values,
+  });
+}
+
 export async function updateProduct(
   actor: Actor,
   input: ProductUpdateInput,
 ): Promise<ProductSummary> {
   const allowCost = canManageCost(actor.role);
-  const { productId, currentUnitCost, wasteFactor, ...rest } = input;
+  const { productId, currentUnitCost, wasteFactor, parLevel, reorderPoint, ...rest } = input;
 
   const patch: Partial<typeof product.$inferInsert> = { ...rest };
   if (wasteFactor !== undefined) {
@@ -524,43 +616,60 @@ export async function updateProduct(
   // have it ignored (same reasoning as createProduct above) rather than the
   // whole update rejected.
 
-  // `null` is a legitimate value here — it clears the vendor — so only a
-  // non-null id needs proving. See assertVendorOwned.
-  if (patch.vendorId != null) {
-    await assertVendorOwned(db, actor.organizationId, patch.vendorId);
-  }
+  // One transaction, because a product edit can now write two tables: the
+  // product row and its `product_par` row. Saving the name and silently
+  // dropping the par (or the reverse) would be a half-applied edit that the
+  // form reports as success.
+  await db.transaction(async (tx) => {
+    // Existence and ownership, proven once and up front, before anything is
+    // written (invariant 9 — a cross-tenant id is answered as NotFound).
+    //
+    // This ALSO replaces the previous `affectedRows === 0 -> NotFoundError`
+    // check, which was subtly wrong and is now reachable in normal use.
+    // mysql2 does not set CLIENT_FOUND_ROWS, so `affectedRows` counts rows
+    // actually CHANGED, not rows matched — a save that submits identical
+    // values matches the row, changes nothing, and reported "Product not
+    // found". That was latent while every edit changed something; par levels
+    // make "save the form having only touched the par" an ordinary action,
+    // and it would have failed with an error naming the wrong thing.
+    await assertProductOwned(tx, actor.organizationId, productId);
 
-  if (Object.keys(patch).length === 0) {
-    const rows = await selectProducts(actor, eq(product.id, productId), 1);
-    const existing = rows[0];
-    if (!existing) throw new NotFoundError("Product");
-    return existing;
-  }
-
-  let result;
-  try {
-    // The organization predicate is what turns a cross-tenant update into a
-    // no-op (affectedRows 0 -> NotFoundError) instead of a successful write to
-    // someone else's catalog.
-    result = await db
-      .update(product)
-      .set(patch)
-      .where(
-        and(eq(product.id, productId), eq(product.organizationId, actor.organizationId)),
-      );
-  } catch (err) {
-    if (isDuplicateKeyError(err)) {
-      // product_name_size_ml_unique — only reachable if this update changes
-      // name and/or size_ml to a combination another product already has.
-      throw new ConflictError(
-        "Another product already has this name and size. Choose a different name or size.",
-      );
+    // `null` is a legitimate value here — it clears the vendor — so only a
+    // non-null id needs proving. See assertVendorOwned.
+    if (patch.vendorId != null) {
+      await assertVendorOwned(tx, actor.organizationId, patch.vendorId);
     }
-    throw err;
-  }
-  if (result[0].affectedRows === 0) {
-    throw new NotFoundError("Product");
-  }
+
+    if (Object.keys(patch).length > 0) {
+      try {
+        // The organization predicate stays on the write as well: the check
+        // above is the answer to the caller, this is the guarantee that a
+        // cross-tenant row cannot be touched even if that check were skipped.
+        await tx
+          .update(product)
+          .set(patch)
+          .where(
+            and(eq(product.id, productId), eq(product.organizationId, actor.organizationId)),
+          );
+      } catch (err) {
+        if (isDuplicateKeyError(err)) {
+          // product_name_size_ml_unique — only reachable if this update
+          // changes name and/or size_ml to a combination another product has.
+          throw new ConflictError(
+            "Another product already has this name and size. Choose a different name or size.",
+          );
+        }
+        throw err;
+      }
+    }
+
+    // `undefined` means the caller did not mention par at all, so leave it
+    // alone. `null` means "clear it". The distinction is why the schema makes
+    // this nullable-and-optional rather than just optional.
+    if (parLevel !== undefined) {
+      await upsertProductPar(tx, actor.organizationId, productId, parLevel, reorderPoint);
+    }
+  });
 
   const rows = await selectProducts(actor, eq(product.id, productId), 1);
   const updated = rows[0];

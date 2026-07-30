@@ -171,6 +171,13 @@ export default async function OfficeDashboardPage() {
             <p className="mt-2 text-row-subtitle text-muted-foreground">
               No closed count yet — nothing to compare against par.
             </p>
+          ) : reorder.productsWithPar === 0 ? (
+            // "0 products at or below par" is a reassuring sentence, and with
+            // no par levels set it is not an answer at all — the figure is
+            // structurally zero. Say which one this is.
+            <p className="mt-2 text-row-subtitle text-muted-foreground">
+              No par levels set yet, so there is nothing to compare on-hand against.
+            </p>
           ) : (
             <>
               <p className="mt-2 text-numeral-md text-card-foreground">

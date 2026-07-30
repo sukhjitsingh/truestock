@@ -12,6 +12,10 @@ const REASON_LABEL: Record<ProductIncompleteReason, string> = {
   needs_producer: "Needs producer",
   needs_case_size: "Needs case size",
   needs_cost: "Needs cost",
+  // Attached by `attachStock`, so it only appears where stock was asked for —
+  // which is this table. A product with no par can never reach the reorder
+  // list, and nothing else anywhere says so.
+  needs_par: "Needs par",
 };
 
 /**
