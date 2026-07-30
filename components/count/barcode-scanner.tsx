@@ -54,10 +54,19 @@ export function BarcodeScanner({
         // testing on a phone over the LAN (scripts/dev-lan.sh), which is the
         // only way the counting screens can be exercised at all.
         if (!window.isSecureContext || !navigator.mediaDevices) {
+          // Name the URL that actually works. This message used to send people
+          // to chrome://flags#unsafely-treat-insecure-origin-as-secure, which
+          // silently did nothing twice (STATE.md, 2026-07-29) — the handset's
+          // preflight showed no native BarcodeDetector, meaning the browser
+          // was not Chromium and the flag did not exist to be set. The answer
+          // is the nginx TLS proxy on :3443 (docker-compose profile `tls`,
+          // scripts/dev-lan.sh), which works on any browser.
           setError(
             `The camera needs a secure origin, and ${window.location.origin} is not one. ` +
-              "Use https or localhost — or, for LAN testing, allow this origin in " +
-              "chrome://flags/#unsafely-treat-insecure-origin-as-secure. Search still works.",
+              `Reload on https://${window.location.hostname}:3443${window.location.pathname} ` +
+              "and accept the certificate warning once — it is self-signed, so the warning " +
+              "is about identity, not encryption. Open /count/preflight there to confirm " +
+              "the handset before counting. Search-only counting works fine here without it.",
           );
           return;
         }
