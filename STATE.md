@@ -1,6 +1,6 @@
 # Truestock — current state
 
-Where the project actually is. Updated 2026-07-28.
+Where the project actually is. Updated 2026-07-30.
 
 This file answers one question: **what is proven, what is merely built, and what
 is next.** The distinction matters more here than the feature list, because this
@@ -20,6 +20,12 @@ project has twice shipped something that looked finished and was not.
 against a real MariaDB; the back office has been driven in a browser; **the
 counting app — the actual product — has never been used by a human.**
 
+As of 2026-07-30 the Phase 1 *code* gaps are closed (`docs/mvp-gaps.md`): the
+reorder list can produce a row, a scanned barcode can attach to an existing
+product, a fill reading can be corrected, a refused write no longer leaves a
+phantom line, and a submitted count no longer accepts writes. That changes what
+is **built**. It does not change the line above, which is the one that matters.
+
 ---
 
 ## What is verified
@@ -30,17 +36,25 @@ Verified means *observed running*, not reviewed or typechecked.
 |---|---|
 | **Schema + migrations** | Chain `0000 → 0001 → 0002` applied to MariaDB 11.8 in Docker. Composite tenant FKs reject cross-tenant ids (1452), `product_par` blocks a second overall par (1062), `DECIMAL(10,4)` exact, accented names round-trip |
 | **Auth path** | Better Auth under `generateId: "serial"` returns integer ids; sign-in returns a session; the inactive-user re-read gate refuses a *still-valid* session — **with a negative control** |
-| **Count write path** | `tests/count-write-path.test.ts` — 17 tests against real MariaDB, wired into CI as a service container |
+| **Count write path** | `tests/count-write-path.test.ts` against real MariaDB, wired into CI as a service container |
 | **Invariants 1, 2, 3, 8, 9** | Covered by that suite: closed counts refuse writes, cost snapshots survive a price change, three scans make one row, a manager never receives cost fields, cross-tenant ids are refused |
 | **Idempotency** | Same `clientLineId` twice increments once; a differing replay leaves the line untouched |
+| **Par writes + reorder list** | `tests/catalog-write-path.test.ts` — an overall par is written, updated in place, cleared by null, scoped to the tenant, and produces a reorder row with the right suggested quantity |
+| **Barcode linking** | Same file: a linked code resolves to the right product, no duplicate product is created, first-barcode-is-primary is derived, a cross-tenant product id is refused as NotFound, and two tenants can enrol the same UPC |
+| **Count freeze + reopen** | A submitted or reviewed count refuses writes with a distinct error; reopen returns it to `in_progress` and writes land again; a **closed** count can never be reopened |
+| **Error discrimination** | `tests/db-errors.test.ts` — asserts against the real `DrizzleQueryError` class, not a stand-in, because the shape that broke it came from the library |
 | **Back office UI** | Signed in through the real form in Chrome, dashboard and all office routes render, console clean, unauthenticated requests redirect |
 | **Role gating is structural** | A manager's HTML contains no unpriced tile at all, and zero dollar-shaped strings anywhere in the response |
 
-**The test suite was checked for teeth.** Deleting the ledger insert from
+**57 tests across 4 files**, all green, as of 2026-07-30.
+
+**The suite is checked for teeth, repeatedly.** Deleting the ledger insert from
 `applyIncrement` — the whole idempotency mechanism — fails exactly the four
-dependent tests and leaves the rest green. A suite that passes against a broken
-implementation is worse than none, so re-do that check after any significant
-change to the write path.
+dependent tests. Stubbing out `upsertProductPar` fails exactly the 13
+par/reorder tests. Widening `isCountWritable` to accept `submitted` fails
+exactly the 3 write-refusal tests. In each case everything unrelated stays
+green. A suite that passes against a broken implementation is worse than none,
+so re-do this after any significant change to the write path.
 
 ## What is built but unproven
 
@@ -57,8 +71,16 @@ Written, reviewed, typechecked — never observed working.
   and refused from a foreign one. **What is unverified is the last inch:**
   accepting the certificate warning on the handset and `getUserMedia` actually
   opening a lens. No camera has been opened by this project yet, on any device.
+- **Everything added to the counting leg on 2026-07-30.** Four changes, all UI,
+  none of them covered by a test and none of them driven on a device: the
+  search-first barcode-link screen (which added a step to a path held to a
+  20-second budget, so it wants timing specifically), the fill-correction mode,
+  the optimistic rollback on a refused write, and the message naming a dropped
+  queued write. Listed with how to exercise each as open-item #20.
 - **The offline write queue** (`lib/count-queue.ts`). Reasoned about only. It was
-  already wrong once — the original had no drain path at all.
+  already wrong once — the original had no drain path at all — and 2026-07-30
+  changed its rejection behaviour, so a permanently-refused write now leaves the
+  queue instead of jamming it. That makes exercising it more worthwhile, not less.
 - **The production CSP.** Dev proves the nonce mechanism; production is a
   different, stricter policy that has never run.
 - **Concurrency.** The gap-lock deadlock and `withLockRetry` were reproduced by
@@ -68,6 +90,21 @@ Written, reviewed, typechecked — never observed working.
 
 ## Recent history
 
+- **2026-07-30** — **The Phase 1 code gaps are closed** (`docs/mvp-gaps.md`,
+  branch `fix/mvp-gaps-blockers`, nine commits). A, B, C, D1, D2, E, F, G and I
+  fixed; H (vendors) and J (`scanCountLine` dead code) deliberately left. The
+  three that mattered were all silent: the reorder list could never produce a
+  row and said "Nothing is below its reorder point"; scan-to-enroll dead-ended
+  on every product already in the catalog, or duplicated it if you typed a
+  differing name; and a refused write stayed on screen as counted while later
+  scans compounded onto the phantom. Freezing writes on `submitted` needed
+  `reopenCount` added alongside it, or a mis-tapped Submit would strand a
+  half-counted count behind an immutable close.
+  **Also found, and not in the audit:** `isDuplicateKeyError` was blind to
+  errors drizzle had wrapped in `DrizzleQueryError`, which made every
+  `ConflictError` in the catalog unreachable — they were arriving as "Something
+  went wrong" mid-count. That is the third failure here whose defining feature
+  is that every gate stayed green, after the CSP and the dev cross-origin 403.
 - **2026-07-29** — **The phone can now reach a secure origin.** The camera is
   gated on a secure context, and the `chrome://flags` override that fakes one
   is Chromium-only — it had silently done nothing twice, because the handset's
@@ -114,6 +151,15 @@ element anywhere in the app — and it passed CI, `next build`, the `/ship` gate
 and every status-code assertion. **Server-side confidence does not transfer to
 the client.**
 
+**This got sharper on 2026-07-30, not weaker.** The gap audit found nine real
+defects by reading code, and then a tenth surfaced only because a new test
+exercised the real library — `isDuplicateKeyError` had been silently blind to
+wrapped errors, disabling every `ConflictError` in the catalog. Three of this
+project's worst bugs now share one signature: **every gate stayed green.**
+Typecheck, build, lint, status codes, and the tests that existed. When something
+here looks like it cannot fail, that is the claim worth executing against the
+actual library, the actual database, or the actual browser.
+
 ## Picking this up cold — the phone count
 
 Everything needed to run it is built and committed. Nothing has been run.
@@ -135,30 +181,43 @@ hour:
    quantity and search-picker counting but the camera cannot exist there. If
    preflight says *Secure context: No*, you are on the wrong URL.
 2. **A first pass enrols, it does not count.** All 97 seeded products ship with
-   no barcode, so every scan opens the enroll form. That measures the enroll
-   form's **20-second** budget, not the 20-minute one. And per open-item #16 it
-   creates duplicate products rather than filling in `upc` — harmless locally,
-   so `bun run docker:reset` between runs.
+   no barcode, so every scan opens the enroll screen. That measures the enroll
+   flow's **20-second** budget, not the 20-minute one.
+   **Changed 2026-07-30 — the old warning here is no longer true.** That screen
+   used to only *create*, so a first pass produced duplicate products and the
+   advice was to `docker:reset` between runs. It now opens on search and links
+   the barcode to the product the catalog already has, which is the whole point
+   of a first pass. Resetting between runs is now optional, and the thing to
+   watch is the clock, not the duplicates.
 3. **Accounts do not survive `docker:reset`.** Recreate with `bun run
    create-user`. There is no public signup, deliberately.
 
-Local database state as of this commit: draft count #1 open, 5 locations, 97
-products, 0 barcodes. There is also a throwaway `tester@truestock.local` owner
-account created for browser-verifying the preflight screen — delete it or reset
-the volume.
+Local database state as of this commit: draft count #1 open, 5 locations, 98
+products, 0 barcodes, **0 par levels** — so the reorder list is now *able* to
+produce rows but still won't until a par is set on something. Two throwaway
+owner accounts exist for browser checks, `tester@truestock.local` and
+`browsercheck@truestock.local` — delete them or reset the volume.
 
 ## Next three things
 
-Protocol for 1 and 2: **`docs/phone-count-test.md`**. Start at
+Unchanged by the 2026-07-30 work, and that is the point: closing the code gaps
+removed the reasons a phone test would have dead-ended, it did not substitute
+for one. Protocol for 1 and 2: **`docs/phone-count-test.md`**. Start at
 `/count/preflight` on the phone.
 
 1. **Drive a real count on a phone.** Time it against the sub-20-minute target the
-   whole design is justified by. Note that a *first* pass enrols rather than
-   counts — every barcode is unknown — so it measures the enroll form's
-   20-second budget, not the 20-minute one.
+   whole design is justified by. A *first* pass enrols rather than counts — every
+   barcode is unknown — so it measures the enroll flow's 20-second budget, not
+   the 20-minute one. Fold in open-item #20's four checks while you are in there;
+   they exercise the same screens.
 2. **Exercise the offline queue for real** — turn the WiFi off mid-scan, and go
    into the walk-in.
 3. **Verify the production CSP** with `next build && next start` before any deploy.
+
+After those, the shortest path to a genuinely useful reorder list is
+**open-item #19 (vendors have no write path)** plus real costs and pars —
+the list now produces rows, but every one of them lands in a single "No vendor
+set" group.
 
 ## Scope reminders
 

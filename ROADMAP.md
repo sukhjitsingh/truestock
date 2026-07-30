@@ -16,6 +16,14 @@ multi-tenancy.
 
 **Remaining work is verification, not construction.** See `docs/go-live.md`.
 
+That sentence was false when it was written and is true now. A code audit on
+2026-07-29 (`docs/mvp-gaps.md`) found that three items in the list above were
+named in scope but absent or broken in the code — the reorder list could never
+produce a row, scan-to-enroll dead-ended on every product already in the
+catalog, and a fill reading could not be corrected. All closed 2026-07-30. The
+lesson is about this file rather than about those bugs: **"built" was inferred
+from the scope list, not checked against the code.**
+
 **Done when:** a full count runs on a phone in under 20 minutes, weekly counts
 happen without being nagged, and the numbers are trusted enough to act on.
 
@@ -31,6 +39,13 @@ three months. Driven by open-items, each with its own trigger.
   *Trigger: the first time anyone needs deactivating.*
 - **Real costs entered** (#4) — 88 unit costs and 16 case sizes. Valuation is thin
   until this happens. *Trigger: the owner working through supplier invoices.*
+- **Vendor write path** (#19) — nothing writes `vendor`, so every reorder row
+  groups under "No vendor set". Spec §9.3 wants grouping by vendor precisely so
+  one order can be placed per supplier; that is the feature this blocks. Was
+  invisible while the reorder list was empty; now it produces rows.
+  *Trigger: before the reorder list is handed to anyone to order from.*
+- **Par levels entered** — the mechanism exists as of 2026-07-30, but no product
+  has one, so the list is still empty in practice. Pairs with real costs.
 - **Uncapped dashboard reads** (#14) — replace capped list reads with a dedicated
   aggregate. *Trigger: catalog passes ~100 products.*
 - **Session sweep** (#1b) — a batched nightly delete on Hostinger cron.
