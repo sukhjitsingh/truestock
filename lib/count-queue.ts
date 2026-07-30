@@ -35,7 +35,13 @@ const DB_NAME = "truestock";
 const DB_VERSION = 1;
 const STORE = "pending_writes";
 
-export type QueuedWriteKind = "scan" | "increment" | "set";
+/**
+ * `fills` is the open-bottle correction (a replace of `partial_fills`), as
+ * distinct from `increment`'s append. It queues like every other write: a
+ * correction made in the walk-in with the WiFi down must survive, and its
+ * resend is safe because a replace applied twice lands on the same array.
+ */
+export type QueuedWriteKind = "scan" | "increment" | "set" | "fills";
 
 export interface QueuedWrite {
   /** IS the `clientLineId` sent to the server. Minted once, reused on retry. */

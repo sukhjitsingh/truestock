@@ -105,6 +105,26 @@ export type ScanCountLineInput = z.infer<typeof scanCountLineSchema>;
  * go. This is a SET of `partial_fills`, not an increment.
  */
 export const editCountLineFillsSchema = z.object({
+  /**
+   * Required for the same reason as every other write here, and consumed
+   * differently — worth being explicit about, because "the server validates
+   * this and then does nothing with it" is otherwise a trap.
+   *
+   * The client contract is uniform: every count-line write carries a fresh id
+   * per attempt, and the offline queue stores it on the write record so a
+   * resend after a dropped connection replays as the same write rather than a
+   * new one. A fill correction goes through that queue like anything else, so
+   * it needs an id to be queued under.
+   *
+   * What it does NOT yet do is key a `count_line_write` ledger row, because a
+   * full-array replace has no delta representation in that table's shape
+   * (docs/open-items.md item 2). That is an AUDIT-TRAIL gap, not a
+   * correctness one: a replace is naturally idempotent, so replaying this
+   * write produces the identical row state either way. Requiring the id now
+   * means closing item 2 is a change to the domain function alone, not to
+   * this boundary and every caller of it.
+   */
+  clientLineId: z.uuid(),
   countLineId: z.number().int().positive(),
   partialFills: z.array(fillFractionSchema).max(50),
 });

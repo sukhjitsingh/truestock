@@ -7,6 +7,7 @@ import {
   scanCountLineAction,
   incrementCountLineAction,
   setCountLineQuantitiesAction,
+  editCountLineFillsAction,
 } from "@/app/actions/counts";
 import { resolveBarcodeAction, searchProductsAction } from "@/app/actions/catalog";
 import type { LocationSummary, ProductSummary } from "@/lib/domain/catalog";
@@ -115,7 +116,9 @@ export function CountLeg({
           ? await scanCountLineAction(body)
           : write.kind === "increment"
             ? await incrementCountLineAction(body)
-            : await setCountLineQuantitiesAction(body);
+            : write.kind === "fills"
+              ? await editCountLineFillsAction(body)
+              : await setCountLineQuantitiesAction(body);
 
       if (result.ok) {
         await dequeue(write.id);
@@ -246,7 +249,9 @@ export function CountLeg({
             ? await scanCountLineAction(body)
             : kind === "increment"
               ? await incrementCountLineAction(body)
-              : await setCountLineQuantitiesAction(body);
+              : kind === "fills"
+                ? await editCountLineFillsAction(body)
+                : await setCountLineQuantitiesAction(body);
       } catch {
         // The fetch threw — offline, which is the case this queue exists for.
         // The write is already durably enqueued under `id`, the optimistic row
@@ -429,7 +434,23 @@ export function CountLeg({
             <FillEntry
               productName={product.name}
               existingFills={existing?.partialFills ?? []}
+              // A correction edits a row that exists server-side. Before the
+              // first write lands there is nothing to correct — and the local
+              // array is still empty anyway, so the affordance would do
+              // nothing if it were offered.
+              canCorrect={existing?.lineId != null}
               pending={busy}
+              onCorrect={async (allFills) => {
+                if (existing?.lineId == null) return;
+                const ok = await runWrite(
+                  "fills",
+                  lineKey(product.id, locationId),
+                  writeLabel(product, location),
+                  { countLineId: existing.lineId, partialFills: allFills },
+                  (prev) => applyFillCorrection(prev, product, location, allFills),
+                );
+                if (ok) done();
+              }}
               onSubmit={async (newFills) => {
                 const ok = await runWrite(
                   "increment",
@@ -700,6 +721,34 @@ function applyIncrement(
     // Invariant 3 made visible: a second scan increments the existing line
     // rather than creating a second one, and the UI says so.
     note: existing.lineId != null ? "Already on this count — updated, not duplicated" : undefined,
+  });
+  return next;
+}
+
+/**
+ * A fill correction REPLACES `partial_fills`, mirroring the server's
+ * `editCountLineFills`. Sealed quantities are untouched — the two halves of a
+ * line are counted separately and corrected separately (invariant 4).
+ */
+function applyFillCorrection(
+  prev: Map<string, LocalLine>,
+  product: ProductSummary,
+  location: LocationSummary,
+  allFills: number[],
+): Map<string, LocalLine> {
+  const next = new Map(prev);
+  const key = lineKey(product.id, location.id);
+  const existing = next.get(key) ?? baseLine(product, location);
+  next.set(key, {
+    ...existing,
+    partialFills: allFills,
+    units: computeUnits(
+      existing.sealedCaseQty,
+      existing.sealedEachQty,
+      allFills,
+      existing.caseSizeAtCount,
+    ),
+    note: undefined,
   });
   return next;
 }
