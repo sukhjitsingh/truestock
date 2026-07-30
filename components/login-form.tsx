@@ -17,6 +17,14 @@ export function LoginForm({ className }: { className?: string }) {
   // submit stay inert until it can do the right thing — see the `method`
   // comment on the <form> for the failure this prevents.
   const [hydrated, setHydrated] = useState(false);
+  // The has-hydrated idiom, and the one thing the rule cannot see: whether
+  // React has attached is not derivable during render — on the server and on
+  // the first client pass it is false by definition, and the *only* signal
+  // that it became true is the effect running. Rewriting this to satisfy the
+  // rule would mean inventing a different hydration signal, and the failure
+  // it guards is the credential leak recorded in CLAUDE.md. Same carve-out,
+  // and same reason, as count-leg.tsx's flush-on-mount.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setHydrated(true), []);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
