@@ -8,6 +8,10 @@
  *  - Finding A: nothing could write `product_par`, so the reorder list
  *    returned an empty array forever and rendered "Nothing is below its
  *    reorder point". True-looking, and structurally incapable of being false.
+ *  - Finding B: a scanned barcode could only ever CREATE a product. Typing
+ *    the catalog's own name hit a unique-key error with no way forward;
+ *    typing a slightly different one succeeded and duplicated the product.
+ *
  * So the assertions here are mostly about what is in the database afterwards,
  * not about what the function returned. A function that returns a plausible
  * object while writing nothing is exactly the failure being tested for.
@@ -15,11 +19,16 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test";
 import { and, eq, isNull } from "drizzle-orm";
 import { db, closePool } from "@/db";
-import { productPar } from "@/db/schema";
-import { updateProduct, searchProducts } from "@/lib/domain/catalog";
+import { productBarcode, productPar } from "@/db/schema";
+import {
+  linkBarcodeToProduct,
+  resolveBarcode,
+  updateProduct,
+  searchProducts,
+} from "@/lib/domain/catalog";
 import { openCount, incrementCountLine, submitCount, reviewCount, closeCount } from "@/lib/domain/counts";
 import { reorderList } from "@/lib/domain/reports";
-import { NotFoundError } from "@/lib/domain/errors";
+import { ConflictError, NotFoundError } from "@/lib/domain/errors";
 import {
   migrateTestDatabase,
   resetDatabase,
@@ -41,6 +50,142 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await closePool();
+});
+
+// ---------------------------------------------------------------------------
+// Finding B — a scanned barcode can be attached to a product that exists
+// ---------------------------------------------------------------------------
+
+describe("linking a barcode to an existing product", () => {
+  test("the barcode resolves to that product afterwards", async () => {
+    await linkBarcodeToProduct(fx.owner, {
+      productId: fx.pricedProductId,
+      barcode: "082000774006",
+      packLevel: "each",
+    });
+
+    // resolveBarcode is the read the counting screen actually makes, so
+    // asserting through it proves the whole loop rather than just the insert.
+    const resolved = await resolveBarcode(fx.owner, "082000774006");
+    expect(resolved).not.toBeNull();
+    expect(resolved!.product.id).toBe(fx.pricedProductId);
+    expect(resolved!.packLevel).toBe("each");
+  });
+
+  test("no second product is created — this was the whole bug", async () => {
+    const before = await searchProducts(fx.owner, {
+      activeOnly: false,
+      limit: 100,
+      includeOnHand: false,
+    });
+
+    await linkBarcodeToProduct(fx.owner, {
+      productId: fx.pricedProductId,
+      barcode: "082000774006",
+      packLevel: "each",
+    });
+
+    const after = await searchProducts(fx.owner, {
+      activeOnly: false,
+      limit: 100,
+      includeOnHand: false,
+    });
+    expect(after).toHaveLength(before.length);
+  });
+
+  test("the first barcode is primary and later ones are not", async () => {
+    await linkBarcodeToProduct(fx.owner, {
+      productId: fx.pricedProductId,
+      barcode: "082000774006",
+      packLevel: "each",
+    });
+    await linkBarcodeToProduct(fx.owner, {
+      productId: fx.pricedProductId,
+      barcode: "10082000774003",
+      packLevel: "case",
+    });
+
+    const rows = await db
+      .select()
+      .from(productBarcode)
+      .where(eq(productBarcode.productId, fx.pricedProductId));
+
+    expect(rows).toHaveLength(2);
+    // Derived server-side, never taken from the client — two primaries on one
+    // product is a state no constraint forbids and nothing would notice.
+    expect(rows.filter((r) => r.isPrimary)).toHaveLength(1);
+    expect(rows.find((r) => r.barcode === "082000774006")!.isPrimary).toBe(true);
+  });
+
+  test("pack_level is stored as given — a case carton is not an each", async () => {
+    await linkBarcodeToProduct(fx.owner, {
+      productId: fx.pricedProductId,
+      barcode: "10082000774003",
+      packLevel: "case",
+    });
+
+    const resolved = await resolveBarcode(fx.owner, "10082000774003");
+    // Getting this wrong miscounts beer silently, by exactly the case size.
+    expect(resolved!.packLevel).toBe("case");
+  });
+
+  test("a barcode already assigned is refused, and the error names the owner", async () => {
+    await linkBarcodeToProduct(fx.owner, {
+      productId: fx.pricedProductId,
+      barcode: "082000774006",
+      packLevel: "each",
+    });
+
+    const attempt = linkBarcodeToProduct(fx.owner, {
+      productId: fx.secondProductId,
+      barcode: "082000774006",
+      packLevel: "each",
+    });
+
+    await expect(attempt).rejects.toBeInstanceOf(ConflictError);
+    // Mid-count, "already assigned" without a name is a dead end.
+    await expect(attempt).rejects.toThrow(/Tito's Handmade Vodka/);
+  });
+
+  test("a cross-tenant productId is refused as NotFound, not as a foreign-key error", async () => {
+    // Invariant 9: the answer must not confirm the row is real. The composite
+    // tenant FK would also reject this, but as an opaque 1452 — which is a
+    // different (and worse) answer than "no such product".
+    const attempt = linkBarcodeToProduct(fx.owner, {
+      productId: fx.otherProductId,
+      barcode: "082000774006",
+      packLevel: "each",
+    });
+
+    await expect(attempt).rejects.toBeInstanceOf(NotFoundError);
+
+    const rows = await db
+      .select()
+      .from(productBarcode)
+      .where(eq(productBarcode.barcode, "082000774006"));
+    expect(rows).toHaveLength(0);
+  });
+
+  test("two tenants can enrol the same UPC against their own products", async () => {
+    await linkBarcodeToProduct(fx.owner, {
+      productId: fx.pricedProductId,
+      barcode: "082000774006",
+      packLevel: "each",
+    });
+    await linkBarcodeToProduct(fx.otherOwner, {
+      productId: fx.otherProductId,
+      barcode: "082000774006",
+      packLevel: "each",
+    });
+
+    // Each tenant resolves the same code to their OWN product. A globally
+    // unique barcode would make the first bar to scan a Tito's own that code
+    // for every customer.
+    const mine = await resolveBarcode(fx.owner, "082000774006");
+    const theirs = await resolveBarcode(fx.otherOwner, "082000774006");
+    expect(mine!.product.id).toBe(fx.pricedProductId);
+    expect(theirs!.product.id).toBe(fx.otherProductId);
+  });
 });
 
 // ---------------------------------------------------------------------------

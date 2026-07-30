@@ -17,10 +17,12 @@ import { canSeeCost, canManageCost } from "@/lib/authz";
 import { ConflictError, NotFoundError } from "@/lib/domain/errors";
 import { isDuplicateKeyError } from "@/lib/domain/db-errors";
 import { getOnHandSnapshot } from "@/lib/domain/on-hand";
+import { isCountedByCase } from "@/lib/pack-level";
 import type {
   ProductCreateInput,
   ProductUpdateInput,
   ProductSearchInput,
+  LinkBarcodeInput,
 } from "@/lib/validation/catalog";
 
 // ---------------------------------------------------------------------------
@@ -109,10 +111,10 @@ function incompleteReasons(row: IncompletenessInput, showCost: boolean): Product
     reasons.push("needs_producer");
   }
   // Bottled beer is the only thing counted both as eaches and as cases, so
-  // it is the only thing a missing case size is a gap for. `unit_type` is
-  // what separates bottled/canned beer from draft here — a keg is one unit
-  // measured in tenths and never has a case size.
-  if (category === "beer" && row.unitType !== "keg" && row.caseSize == null) {
+  // it is the only thing a missing case size is a gap for. That rule now
+  // lives in lib/pack-level.ts because the barcode-link screen asks the same
+  // question — see there for why it is shared rather than repeated.
+  if (isCountedByCase(row) && row.caseSize == null) {
     reasons.push("needs_case_size");
   }
   if (showCost && !row.currentUnitCost) {
@@ -420,6 +422,92 @@ async function assertProductOwned(
   if (!owned) {
     throw new NotFoundError("Product");
   }
+}
+
+// ---------------------------------------------------------------------------
+// Scan-to-enroll: link a scanned barcode to a product already in the catalog
+// ---------------------------------------------------------------------------
+
+/**
+ * The "this bottle is already in the catalog, it just has no barcode yet"
+ * path — which during the first count is the overwhelmingly common one, since
+ * `upc` is deliberately blank on all 97 seeded products (CLAUDE.md) and fills
+ * in through scanning.
+ *
+ * Without this, `createProduct` was the only enroll path, and typing the
+ * catalog's own name for the bottle collided with
+ * `product_name_size_ml_unique` and left the counter with an error and no way
+ * forward, mid-count, on the app's highest-risk interaction. Typing a
+ * *differing* name was worse rather than better: it succeeded, and produced a
+ * second copy of a product the catalog already had, with the count split
+ * silently across the two.
+ *
+ * `isPrimary` is derived, not accepted: the first barcode a product gets is
+ * its primary one, and any later one is not. Letting the client decide would
+ * allow two primaries on one product, which no constraint forbids and nothing
+ * would notice.
+ */
+export async function linkBarcodeToProduct(
+  actor: Actor,
+  input: LinkBarcodeInput,
+): Promise<ProductSummary> {
+  await db.transaction(async (tx) => {
+    // Inside the transaction so the product cannot be reassigned or
+    // deactivated between the check and the insert.
+    await assertProductOwned(tx, actor.organizationId, input.productId);
+
+    const [existing] = await tx
+      .select({ id: productBarcode.id })
+      .from(productBarcode)
+      .where(
+        and(
+          eq(productBarcode.organizationId, actor.organizationId),
+          eq(productBarcode.productId, input.productId),
+        ),
+      )
+      .limit(1);
+
+    try {
+      await tx.insert(productBarcode).values({
+        organizationId: actor.organizationId,
+        productId: input.productId,
+        barcode: input.barcode,
+        format: input.format,
+        packLevel: input.packLevel,
+        isPrimary: existing == null,
+      });
+    } catch (err) {
+      if (isDuplicateKeyError(err)) {
+        // product_barcode_organization_barcode_unique. Name who already holds
+        // it — mid-count, "already assigned" without a name is a dead end,
+        // and the answer is usually "you already scanned this one".
+        const [owner] = await tx
+          .select({ name: product.name })
+          .from(productBarcode)
+          .innerJoin(product, eq(product.id, productBarcode.productId))
+          .where(
+            and(
+              eq(productBarcode.organizationId, actor.organizationId),
+              eq(productBarcode.barcode, input.barcode),
+            ),
+          )
+          .limit(1);
+        throw new ConflictError(
+          owner
+            ? `Barcode ${input.barcode} is already assigned to "${owner.name}".`
+            : `Barcode ${input.barcode} is already assigned to another product.`,
+        );
+      }
+      throw err;
+    }
+  });
+
+  const rows = await selectProducts(actor, eq(product.id, input.productId), 1);
+  const result = rows[0];
+  if (!result) {
+    throw new NotFoundError("Product");
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------

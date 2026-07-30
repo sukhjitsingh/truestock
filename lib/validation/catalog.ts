@@ -74,6 +74,31 @@ export const productCreateSchema = z.object({
 });
 export type ProductCreateInput = z.infer<typeof productCreateSchema>;
 
+/**
+ * Attach a scanned barcode to a product that is ALREADY in the catalog.
+ *
+ * This is the other half of scan-to-enroll, and without it the first count at
+ * a real bar dead-ends: all 97 seeded products ship with no barcode, so every
+ * scan is unresolved, and the create-only path collides with
+ * `product_name_size_ml_unique` the moment someone types the catalog's own
+ * name for the bottle in their hand.
+ *
+ * `packLevel` is the load-bearing field, not the plumbing. The same beer's
+ * bottle and its case carton carry different codes, and binding a case
+ * carton's code as `each` silently miscounts every future scan of it by the
+ * case size. `isPrimary` is deliberately NOT accepted from the client — the
+ * server sets it from whether the product already has a barcode, because it
+ * is a fact about the product's existing rows rather than a choice the
+ * scanner gets to make.
+ */
+export const linkBarcodeSchema = z.object({
+  productId: z.number().int().positive(),
+  barcode: barcodeStringSchema,
+  format: z.string().trim().max(20).optional(),
+  packLevel: barcodePackLevelSchema,
+});
+export type LinkBarcodeInput = z.infer<typeof linkBarcodeSchema>;
+
 export const productUpdateSchema = z.object({
   productId: z.number().int().positive(),
   name: z.string().trim().min(1).max(255).optional(),

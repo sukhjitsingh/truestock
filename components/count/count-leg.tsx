@@ -311,7 +311,10 @@ export function CountLeg({
       <EnrollForm
         barcode={phase.barcode}
         onCancel={() => setPhase({ kind: "counting" })}
-        onCreated={(product) => {
+        // Both enroll paths land here — whether the barcode was attached to a
+        // product the catalog already had or to one just created, the next
+        // step is identical: count the thing that is now in your hand.
+        onResolved={(product) => {
           if (activeLocationId == null) return;
           setPhase({ kind: "entry", product, locationId: activeLocationId, isStray: false });
         }}

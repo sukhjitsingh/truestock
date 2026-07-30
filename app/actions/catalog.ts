@@ -16,6 +16,7 @@ import {
   productDeactivateSchema,
   productSearchSchema,
   resolveBarcodeSchema,
+  linkBarcodeSchema,
 } from "@/lib/validation/catalog";
 
 /**
@@ -68,6 +69,26 @@ export async function createProductAction(
     const actor = await requireRole("owner", "manager", "staff");
     const parsed = productCreateSchema.parse(input);
     return catalog.createProduct(actor, parsed);
+  });
+}
+
+/**
+ * Attach a scanned barcode to a product already in the catalog. Same three
+ * roles as `createProductAction`, and for the same reason: this is the other
+ * half of the unknown-barcode loop, and during the first count it is the
+ * common half — whoever is holding the phone must be able to finish it
+ * without a role change.
+ *
+ * Ownership of `productId` is checked in the domain layer (invariant 9 — a
+ * foreign key proves the row exists, not whose it is), not here.
+ */
+export async function linkBarcodeToProductAction(
+  input: unknown,
+): Promise<ActionResult<catalog.ProductSummary>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager", "staff");
+    const parsed = linkBarcodeSchema.parse(input);
+    return catalog.linkBarcodeToProduct(actor, parsed);
   });
 }
 
