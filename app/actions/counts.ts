@@ -31,6 +31,7 @@ import {
   setCountLineQuantitiesSchema,
   submitCountSchema,
   reviewCountSchema,
+  reopenCountSchema,
   closeCountSchema,
   getCountSchema,
   getCountTotalsSchema,
@@ -134,6 +135,25 @@ export async function reviewCountAction(
     const actor = await requireRole("owner", "manager");
     const parsed = reviewCountSchema.parse(input);
     return counts.reviewCount(actor, parsed.countId);
+  });
+}
+
+/**
+ * Send a submitted/reviewed count back to `in_progress` — owner/manager only,
+ * matching the other supervisory steps. Staff can submit but cannot un-submit,
+ * which is the same shape as "staff can count but cannot close".
+ *
+ * Never reaches a closed count: `reopenCount`'s allowed `from` list excludes
+ * it, so invariant 1 is enforced by the transition itself rather than by this
+ * layer remembering to check.
+ */
+export async function reopenCountAction(
+  input: unknown,
+): Promise<ActionResult<counts.CountSummaryRow>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = reopenCountSchema.parse(input);
+    return counts.reopenCount(actor, parsed.countId);
   });
 }
 

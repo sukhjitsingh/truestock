@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { StatusPill, countStatusTone, countStatusLabel } from "@/components/ui/status-pill";
 import { StartCountButton } from "@/components/count/start-count-button";
 import { formatDate, formatUnits } from "@/lib/utils";
+import { isCountWritable } from "@/lib/count-status";
 
 export const metadata = { title: "Count · Truestock" };
 
@@ -66,13 +67,29 @@ export default async function CountHomePage() {
       </section>
 
       <section className="mt-section-gap">
+        {/*
+          A submitted or reviewed count takes no more scans, so the primary
+          action stops being "keep counting". Offering it anyway would send
+          someone to /scan, which now redirects straight back here — a button
+          that visibly does nothing, which is worse than a button that is not
+          there.
+        */}
         {activeCount ? (
-          <Link
-            href={`/count/${activeCount.id}/scan`}
-            className="flex min-h-tap-primary w-full items-center justify-center rounded-md bg-primary text-label uppercase text-primary-foreground"
-          >
-            Continue counting
-          </Link>
+          isCountWritable(activeCount.status) ? (
+            <Link
+              href={`/count/${activeCount.id}/scan`}
+              className="flex min-h-tap-primary w-full items-center justify-center rounded-md bg-primary text-label uppercase text-primary-foreground"
+            >
+              Continue counting
+            </Link>
+          ) : (
+            <Link
+              href={`/count/${activeCount.id}`}
+              className="flex min-h-tap-primary w-full items-center justify-center rounded-md border border-input text-label uppercase text-foreground"
+            >
+              Review this count
+            </Link>
+          )
         ) : (
           <StartCountButton />
         )}

@@ -156,6 +156,7 @@ export const countIdSchema = z.object({
 
 export const submitCountSchema = countIdSchema;
 export const reviewCountSchema = countIdSchema;
+export const reopenCountSchema = countIdSchema;
 export const closeCountSchema = countIdSchema;
 export const getCountSchema = countIdSchema;
 export const getCountTotalsSchema = countIdSchema;

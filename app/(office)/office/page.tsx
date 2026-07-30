@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Money } from "@/components/ui/money";
 import { StatusPill, countStatusTone, countStatusLabel } from "@/components/ui/status-pill";
 import { formatDate, formatUnits } from "@/lib/utils";
+import { isCountWritable } from "@/lib/count-status";
 
 export const metadata = { title: "Dashboard · Truestock" };
 
@@ -89,8 +90,11 @@ export default async function OfficeDashboardPage() {
                 <StatusPill tone={countStatusTone(active.status)}>
                   {countStatusLabel(active.status)}
                 </StatusPill>
+                {/* "Resume" on a submitted count is a promise the write path
+                    no longer keeps — it is waiting to be reviewed and closed,
+                    not to be counted into. */}
                 <span className="flex min-h-tap-min items-center rounded-md bg-primary px-4 text-label uppercase text-primary-foreground">
-                  Resume
+                  {isCountWritable(active.status) ? "Resume" : "Review"}
                 </span>
               </div>
             </Card>
