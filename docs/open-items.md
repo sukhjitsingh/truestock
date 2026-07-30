@@ -162,15 +162,27 @@ that was deliberately deferred.
 
 **Trigger: when the compliance packet (spec §10, Phase 3) is built. Not before.**
 
-Every other write path to `count_line` records a `count_line_write` row. Fill
-corrections do not, because `count_line_write.partial_fills_delta` is modelled
-for additive appends from the scan path, and a full-array replace has no
-delta representation in that shape.
+**Updated 2026-07-30 — the function is now actually reachable.** It had zero
+callers when this item was written, which made the gap theoretical. `FillEntry`
+now has a correction mode (docs/mvp-gaps.md finding C), so fill corrections are
+a real thing that happens during a real count, and "who changed this bottle's
+fill level, and when" is a real question with no answer.
 
-Not a correctness bug: a replace is naturally idempotent, so a replayed fill
-correction produces the identical row state. It is an **audit trail** gap — the
-count is right, but "who changed this bottle's fill level, and when" is not
-recoverable. That only matters for the audit packet, which is deferred.
+That raises the priority but does not change the trigger, and it is still not a
+correctness bug. Every other write path to `count_line` records a
+`count_line_write` row. Fill corrections do not, because
+`count_line_write.partial_fills_delta` is modelled for additive appends from
+the scan path, and a full-array replace has no delta representation in that
+shape.
+
+A replace is naturally idempotent, so a replayed fill correction produces the
+identical row state — the count is right either way. It is an **audit trail**
+gap.
+
+**Half of the work is already done.** `editCountLineFillsSchema` now requires a
+`clientLineId` (the offline queue needs an id to store the write under), so
+closing this is a change to the domain function alone rather than to the
+boundary and every caller of it.
 
 **How to close it:** decide a ledger convention for replaces (a discriminator
 column, or storing before/after arrays) and write the entry inside the existing
@@ -453,34 +465,36 @@ real data (a draft count, with its Resume action).
 
 Cheap to close: close one count and look at the tile.
 
-## 16. A scanned barcode cannot be attached to an existing product
+## 16. ~~A scanned barcode cannot be attached to an existing product~~ — CLOSED 2026-07-30
 
-**Trigger: before the first count at a real bar. Harmless locally, wrong in
-production.**
+Kept rather than deleted because the *shape* is the lesson: the failure had two
+modes and the milder-looking one was the dangerous one.
 
-`product_barcode` ships empty — CLAUDE.md says `upc` is deliberately blank and
-"fills through scan-to-enroll during the first count". But the enroll path only
-*creates*: `count-leg.tsx` sends an unresolved barcode to `EnrollForm`, which
-calls `createProductAction`, and no action attaches a barcode to a product that
-already exists. `searchProductsAction` finds the existing row but offers no way
-to bind the code that was just scanned to it.
+`linkBarcodeToProduct` now inserts a `product_barcode` row against an existing
+product, after an ownership check on the client-supplied product id (invariant
+9 — a foreign key proves the row exists, not whose it is). `EnrollForm` opens
+on **search** rather than on the new-product form, because during the first
+count "already in the catalog, just never scanned" is the common case and a
+genuinely new product is the rare one.
 
-So the intended first count — walk the bar, scan each bottle, watch the seeded
-catalog fill in its barcodes — instead produces a **second copy of all 97
-products**, with the count split across the duplicates and the seeded rows left
-at zero. Nothing errors; the totals just describe a catalog that does not exist.
+`pack_level` was the real design question, as this item said. Answered as:
+`each` by default with no extra tap, and an each/case choice shown only for
+products counted both ways — `isCountedByCase` in `lib/pack-level.ts`, shared
+with `incompleteReasons` so there is one definition of what a case is. That is
+zero extra taps for 81 of the 97 seeded products and an explicit choice for the
+16 where guessing wrong silently miscounts by the case size.
 
-This was found while setting up the phone test (2026-07-28) and is not urgent
-for a throwaway local database, where it is merely a reason to
-`bun run docker:reset` between runs (see `docs/phone-count-test.md`).
+**The two failure modes, for the record.** This item and `STATE.md` both said
+the symptom was "a second copy of all 97 products". That was the *second*-worst
+case, and it needed the counter to type a name differing from the catalog's.
+Typing the catalog's own name — the natural thing to do — hit
+`product_name_size_ml_unique` and was a hard stop with no way forward,
+mid-count, on the interaction CLAUDE.md holds to a 20-second budget. The
+create-only path made the honest action fail and the careless one corrupt the
+catalog.
 
-What it needs, roughly: when a barcode does not resolve, offer *"link to an
-existing product"* beside *"new product"*, backed by an action that inserts a
-`product_barcode` row after an ownership check on the product id (invariant 9 —
-a foreign key proves the row exists, not whose it is). The `pack_level` on the
-new barcode is the real design question, not the plumbing: the same bottle and
-its case carry different codes, and guessing wrong there silently miscounts
-beer.
+Covered by 7 tests in `tests/catalog-write-path.test.ts`, including that two
+tenants can enrol the same UPC against their own products.
 
 ## 17. `127.0.0.1` was blocked by Next's dev cross-origin guard — CLOSED 2026-07-28
 
@@ -502,3 +516,78 @@ for both.
 causes** — a CSP without a nonce (#13) and this. The cheap check for both is
 the same, and it is in `docs/phone-count-test.md`: load `/login` and look at
 whether the submit button is still disabled a second later.
+
+## 18. `isDuplicateKeyError` was blind to wrapped errors — CLOSED 2026-07-30
+
+Recorded rather than deleted, because this is the third instance of one pattern
+and the pattern is the point.
+
+`lib/domain/db-errors.ts` read `err.code` directly. Drizzle wraps query
+failures in `DrizzleQueryError`, which carries `query`, `params` and `cause`
+and **no `code` of its own** — so the check returned false for every wrapped
+error, and both predicates in that file silently stopped discriminating.
+
+Every `ConflictError` in `lib/domain/catalog.ts` was therefore unreachable.
+"A product named X already exists" and "Barcode Y is already assigned to Z"
+arrived as *"Something went wrong"* — mid-count, on the highest-risk
+interaction, with the actionable half of the message thrown away.
+
+**Why it looked fine.** The paths that had coverage happened to receive
+unwrapped errors, so the replay-rollback tests passed and the idempotency
+mechanism looked proven. A mocked error object would have passed forever: the
+shape that broke it came from the library, not from us.
+
+**Fixed** by walking the `cause` chain (bounded against a self-referential
+cause) and matching `errno` as well as `code`. `tests/db-errors.test.ts`
+asserts both predicates against the real `DrizzleQueryError` class.
+
+**The pattern, now three deep:** #13 (static CSP), #17 (dev cross-origin 403),
+and this. In all three every gate stayed green — typecheck, build, lint, status
+codes, and the existing tests — and the bug was found only by exercising the
+real thing. When something here "cannot fail", that is the claim worth testing
+against the actual library or the actual browser.
+
+## 19. Vendors still have no write path anywhere
+
+**Trigger: before the reorder list is handed to anyone to actually order from.
+That is now closer than it was.**
+
+Split out of docs/mvp-gaps.md finding H, because finding A being fixed changed
+its status from hypothetical to visible.
+
+Nothing writes `vendor` — not a server action, not the seed. So
+`listVendorsAction` always returns `[]`, the vendor `<select>` on the product
+form is permanently empty, every product's `vendor_id` stays NULL, and
+`/office/reorder` groups every row under **"No vendor set"**.
+
+Until par levels were writable the reorder list was empty anyway, so this was
+invisible. Now the list produces rows, and it produces them in a single
+meaningless group. Spec §9.3 calls for grouping by vendor specifically so
+someone can place one order per supplier; that is the feature this blocks.
+
+The other two halves of finding H stay as they were: users are CLI-only (item
+3), and locations are seed-only but recoverable by editing
+`docs/catalog/locations.csv` and re-seeding.
+
+## 20. The count-leg UI changes have not been driven on a phone
+
+**Trigger: the first phone test — fold into `docs/phone-count-test.md` rather
+than doing separately.**
+
+Four of the 2026-07-30 fixes are UI on the counting leg, and all four are
+verified by domain tests plus a browser hydration check, not by anyone actually
+scanning a bottle:
+
+- **The barcode-link screen** (finding B). Search-first, and the each/case
+  choice for beer. Worth timing against the 20-second budget specifically —
+  it added a search step to a path that previously went straight to a form.
+- **Fill correction** (finding C). The "Correct these" affordance and its
+  live `was … · −0.8 units` line.
+- **Optimistic rollback** (D1). Needs a deliberately-refused write to see —
+  the easiest is to submit a count in one tab and keep scanning in another,
+  which is now refused (finding E).
+- **The dropped-write message** (D2). Same trick: force a rejection while
+  offline and confirm the chip returns to "Synced" and names the write.
+
+Item 9's offline-queue pass covers the same screens and should be done in the
+same sitting.
