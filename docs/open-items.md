@@ -776,3 +776,70 @@ worse than a seed race: it opens an interactive password prompt.
 **How to close it:** guard `main()` the same way `db/seed.ts` now is —
 `import.meta.url === pathToFileURL(process.argv[1]).href` — before anything
 ever has a reason to import this file.
+
+## 24. A plain `docker:up` silently reverts a live LAN session
+
+**Trigger: before this project is handed to anyone who doesn't already know
+this by heart, or the next time an agent is told to "just try `docker:up`" as
+a generic troubleshooting step while a phone is mid-session on the LAN URL.**
+
+Confirmed 2026-07-31. The owner could not sign in on his phone over the LAN
+https URL — the login page just refreshed on submit. Root cause:
+`DEV_LAN_ORIGIN` was empty in the app container, so `next.config.ts`'s
+`devOrigins` resolved to `["127.0.0.1"]` only. Next 16 blocks `/_next/*` for
+any host outside `localhost`/`*.localhost` plus `allowedDevOrigins` — item
+#17's mechanism, tripped on a new host — so every client chunk 403'd for the
+phone's origin while the document itself returned a clean 200. No chunks
+means no hydration, no hydration means the login form's `onSubmit` never
+attached, and the browser fell back to a native form POST — which presents as
+"the page refreshes," not as "JavaScript is broken."
+
+How it got that way: the app had been brought up with plain `bun run
+docker:up` instead of `bun run docker:up:lan`. `docker:down && docker:up` is
+documented as the deliberate way to restore the loopback-only bind — that part
+is fine. What is not written down anywhere is that an *incidental*
+`docker:up` — from `docker:reset`, from a script, from an agent told to "try
+`docker:up` once if the database looks down" — silently reverts a live LAN
+session with no warning and no error. The container comes back up healthy.
+`curl` against the LAN URL still returns 200. Nothing announces that the phone
+just lost its allowlisted origin.
+
+**This is not "we forgot to run the right command."** The fragility is that
+two commands with adjacent names (`docker:up`, `docker:up:lan`) leave the
+stack in observably identical states — healthy container, 200 on every
+route — while one of them silently strips the one thing the phone depends on.
+Anything that ever runs `docker:up` for an unrelated reason (chasing a
+database connection, a reset script, a future CI step) is a footgun aimed at
+whoever is mid-count on a phone at the time.
+
+**What was actually built, 2026-07-31: detection, not prevention.**
+`components/count/preflight-origin-check.tsx` reads the `Host` header
+server-side and fails loudly — naming the fix — if it is not in the
+allowlist; it is placed first in `/count/preflight`, ahead of the camera and
+decoder checks, so it is checked before anything else is trusted. A hydration
+beacon was added alongside it (`components/count/preflight.tsx`) so a
+blocked-chunks failure shows red instead of silently rendering. Both catch
+the symptom fast, on the device, before anyone starts counting — but **neither
+stops the revert from happening.** `docs/phone-count-test.md`'s triage table
+now also carries the symptom → cause → fix entry for this specific failure,
+plus a note that the phone can have cached the broken, non-hydrating page and
+a plain reload won't show the fix.
+
+**What would actually fix it, not just catch it faster:**
+- Make the LAN state sticky — persist `DEV_LAN_ORIGIN` (and the TLS profile
+  choice) somewhere `docker:up` reads and preserves by default, so leaving LAN
+  mode requires saying so, rather than being the silent side effect of any
+  bare `up`.
+- Or have `docker:up` itself detect that a LAN session is live (the cert
+  exists, the `tls` compose profile is running, `DEV_LAN_ORIGIN` was
+  previously set) and refuse or warn before tearing it down — the way a
+  destructive migration would ask first.
+
+Neither is built. The preflight row is the cheap fix that ships today; the
+sticky-state fix is the one that would have prevented the incident rather
+than shortened it.
+
+This is also the fifth instance of the pattern item #18 named: the server was
+fine and returned 200 (`curl https://192.168.12.33:3443/login`, the whole
+time it was broken) while the app was completely unusable on the device it
+was built for. See `STATE.md`'s "every gate stayed green" paragraph.

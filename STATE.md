@@ -16,15 +16,37 @@ project has twice shipped something that looked finished and was not.
 
 ## One-line status
 
-**MVP is built and not deployed.** The database and domain layers are verified
-against a real MariaDB; the back office has been driven in a browser; **the
-counting app — the actual product — has never been used by a human.**
+**MVP is built and not deployed — and as of 2026-07-31 a human has counted
+with it.** The sentence that stood here since this file was written — *"the
+counting app, the actual product, has never been used by a human"* — is finally
+false.
 
-As of 2026-07-30 the Phase 1 *code* gaps are closed (`docs/mvp-gaps.md`): the
-reorder list can produce a row, a scanned barcode can attach to an existing
-product, a fill reading can be corrected, a refused write no longer leaves a
-phantom line, and a submitted count no longer accepts writes. That changes what
-is **built**. It does not change the line above, which is the one that matters.
+On 2026-07-31 the owner signed in on a phone over the LAN https origin, scanned
+a barcode the catalog did not have, created the product through scan-to-enroll,
+recorded a quantity, and closed the count. Confirmed in the database rather than
+reported: product 99 (`Smirnoff`, 200 ml, Spirits) created 19:01:30, barcode
+`08200802` enrolled `each`/primary, count line written 19:01:54 as **18 eaches,
+0 cases**, count `closed` 19:04:29. The `count_line_write` ledger holds 4 rows
+with 4 distinct `client_line_id`s — no duplicate write, idempotency intact.
+
+**Three things proved themselves on real hardware in that one pass**, none of
+which any test in this repo can exercise: the camera and decoder opened and read
+a real barcode (the "last inch" that had never happened on any device); 200 ml
+came from the size preset list rather than a typed number; and a spirit was
+recorded with no Cases stepper, which is the 2026-07-31 beer-only-cases rule
+behaving correctly outside a browser harness.
+
+**What this does NOT prove, and the distinction is the whole point of this
+file.** One product is not a count. Untested still: the sub-20-minute target
+(nothing was timed), the offline queue (WiFi never dropped, never went into the
+walk-in), open-bottle tenths (only sealed quantities were entered), the locked
+location leg across all five sections, and valuation — every line is unpriced,
+so the count closed at a `total_value` of 0.00. This is the first successful
+transaction, not a first real count.
+
+Phase 1's *code* gaps closed 2026-07-30 (`docs/mvp-gaps.md`) and the vendor
+write path closed 2026-07-31; what remains in Phase 1 is entering real costs and
+vendors, and a full timed count.
 
 ---
 
@@ -141,6 +163,34 @@ Written, reviewed, typechecked — never observed working.
 
 ## Recent history
 
+- **2026-07-31** — **The owner could not sign in on his phone over the LAN
+  https URL — the login page just refreshed on submit.** `DEV_LAN_ORIGIN` was
+  empty in the app container, so `next.config.ts`'s `devOrigins` resolved to
+  `["127.0.0.1"]` only; Next 16 blocks `/_next/*` for any host outside that
+  allowlist, so every client chunk 403'd for the phone's origin while the
+  document itself returned a clean 200. No chunks, no hydration, no
+  `onSubmit` attached — the browser fell back to a native form POST, which
+  presents as "the page refreshes." Caused by bringing the app up with plain
+  `bun run docker:up` instead of `bun run docker:up:lan`: the former is the
+  documented way back to loopback-only, but an *incidental* `docker:up` —
+  from `docker:reset`, a script, an agent told to "try `docker:up` once if
+  the database is down" — silently reverts a live LAN session, and the
+  container comes back up looking perfectly healthy. Fixed by re-running
+  `bun run docker:up:lan`. Verified with negative controls, not just a retry:
+  the same client chunk returns 200 for `Origin: https://192.168.12.33:3443`
+  and 403 for a foreign origin, and `POST /api/auth/sign-in/email` returns
+  200 with a session token from the LAN origin and 403 from a foreign one.
+  **This is the fifth failure in this project that hid behind a 200** — after
+  the static CSP (#13), the dev cross-origin 403 on `127.0.0.1` (#17), the
+  wrapped driver error (#18), and the seed that had been dead on every run
+  (closing #19, 2026-07-31). `curl https://192.168.12.33:3443/login` returned
+  200 the entire time it was broken. Detected, not prevented: a new preflight
+  row (`components/count/preflight-origin-check.tsx`) reads the `Host`
+  header and fails loudly, naming the fix, ahead of every other check; a
+  hydration beacon was added alongside it
+  (`components/count/preflight.tsx`). Neither stops the revert from
+  happening — see open item #24 for what would. No schema change, no
+  migration, no git commit.
 - **2026-07-31** — **Vendors have a write path, closing open item #19 /
   mvp-gaps finding H (the vendor half).** `createVendor`, `updateVendor` and
   `assignVendorToProducts` (three owner/manager server actions), zod schemas,
@@ -269,14 +319,19 @@ the client.**
 **This got sharper on 2026-07-30, not weaker.** The gap audit found nine real
 defects by reading code, and then a tenth surfaced only because a new test
 exercised the real library — `isDuplicateKeyError` had been silently blind to
-wrapped errors, disabling every `ConflictError` in the catalog. **Four of this
+wrapped errors, disabling every `ConflictError` in the catalog. **Five of this
 project's worst bugs now share one signature: every gate stayed green.**
 Typecheck, build, lint, status codes, and the tests that existed — the static
-CSP (#13), the dev cross-origin 403 (#17), the wrapped driver error (#18), and
-now `db/seed.ts` running `main()` at module scope, which let importing it for
-a unit test fire the real seed and left `bun test` printing all-pass while
-`test:docker` exited 1 (2026-07-31, closing open item #19). When something
-here looks like it cannot fail, that is the claim worth executing against the
+CSP (#13), the dev cross-origin 403 on `127.0.0.1` (#17), the wrapped driver
+error (#18), `db/seed.ts` running `main()` at module scope, which let
+importing it for a unit test fire the real seed and left `bun test` printing
+all-pass while `test:docker` exited 1 (2026-07-31, closing open item #19),
+and now the cleanest example yet: `DEV_LAN_ORIGIN` silently reverting to
+loopback-only whenever the app was brought up with plain `docker:up` instead
+of `docker:up:lan` (2026-07-31, open item #24). `curl
+https://192.168.12.33:3443/login` returned 200 for the entire time the app
+was completely unusable on the device it was built for. When something here
+looks like it cannot fail, that is the claim worth executing against the
 actual library, the actual database, or the actual browser.
 
 ## Picking this up cold — the phone count
@@ -293,13 +348,22 @@ Then on the phone, open **`https://<lan-ip>:3443/count/preflight`**, accept the
 certificate warning once (*Advanced → Proceed*), and confirm **Secure context:
 Yes** before anything else. Full protocol: `docs/phone-count-test.md`.
 
-Three things to know before starting, each of which will otherwise waste an
+Four things to know before starting, each of which will otherwise waste an
 hour:
 
-1. **The https URL is the one that matters.** Plain http on :3000 works for
+1. **A later plain `docker:up` will silently undo this.** `docker:down &&
+   docker:up` is the deliberate way back to loopback-only; the danger is an
+   *incidental* `docker:up` — `docker:reset`, a script, an agent told to "try
+   `docker:up` once if the database looks down" — reverting a live LAN
+   session with zero warning. The container comes back up looking healthy and
+   `curl` against the LAN URL still returns 200; the phone just silently
+   loses its allowlisted origin. If sign-in that worked an hour ago stops
+   working, check `docker compose exec -T app env | grep DEV_LAN_ORIGIN`
+   before suspecting anything else — empty is the tell. See open item #24.
+2. **The https URL is the one that matters.** Plain http on :3000 works for
    quantity and search-picker counting but the camera cannot exist there. If
    preflight says *Secure context: No*, you are on the wrong URL.
-2. **A first pass enrols, it does not count.** All 97 seeded products ship with
+3. **A first pass enrols, it does not count.** All 97 seeded products ship with
    no barcode, so every scan opens the enroll screen. That measures the enroll
    flow's **20-second** budget, not the 20-minute one.
    **Changed 2026-07-30 — the old warning here is no longer true.** That screen
@@ -308,7 +372,7 @@ hour:
    the barcode to the product the catalog already has, which is the whole point
    of a first pass. Resetting between runs is now optional, and the thing to
    watch is the clock, not the duplicates.
-3. **Accounts do not survive `docker:reset`.** Recreate with `bun run
+4. **Accounts do not survive `docker:reset`.** Recreate with `bun run
    create-user`. There is no public signup, deliberately.
 
 Local database state, queried 2026-07-31 rather than remembered: draft count #1

@@ -47,6 +47,20 @@ bun run docker:seed       # loads the 97-product catalog
 phone, and prints the LAN URL. Both devices must be on the same Wi-Fi. If the
 page will not load at all, it is almost always the macOS firewall.
 
+> **A later plain `docker:up` silently undoes this.** `docker:down &&
+> docker:up` is the documented way back to loopback-only, and that part is
+> fine — the trap is an *incidental* `docker:up`, run for an unrelated reason
+> (`docker:reset`, a script, an agent told to "try `docker:up` once if the
+> database looks down"). It reverts the LAN bind with no warning: the
+> container comes back up healthy, `curl` against the LAN URL still returns a
+> clean 200, and the phone silently loses its allowlisted origin — see
+> open-items.md #24. If sign-in that worked an hour ago stops working with no
+> config change you made on purpose, check this before anything else:
+> ```bash
+> docker compose exec -T app env | grep DEV_LAN_ORIGIN
+> ```
+> Empty is the tell. Re-run `bun run docker:up:lan` — not `docker:up`.
+
 Create an account if there isn't one — there is no public signup, deliberately:
 
 ```bash
@@ -86,10 +100,13 @@ hands out a new lease — it regenerates the cert and reprints both URLs.
 ## 1. Preflight — on the phone, before walking anywhere
 
 Open **`/count/preflight`** and read it. This is the step that turns "walk to
-the bar, start counting, discover it is broken" into five seconds.
+the bar, start counting, discover it is broken" into five seconds. The
+**Origin** row runs server-side and is checked first — if it fails, nothing
+below it can be trusted yet.
 
 | Row | Expected | If not |
 |---|---|---|
+| Origin | **Allowed** | The `Host` header isn't in the allowlist — almost always because the app was brought up with plain `docker:up` instead of `docker:up:lan`, which silently reverts a live LAN session (open-items.md #24). The page still renders 200; every `/_next/*` chunk 403s and nothing on the page responds. Confirm with `docker compose exec -T app env \| grep DEV_LAN_ORIGIN` — empty is the tell — then `bun run docker:up:lan`. |
 | Secure context | **Yes** | You are on the http URL. Reload on `https://…:3443`. Camera is impossible until then; search-only counting still works. |
 | Camera API | **Present** | Downstream of secure context — fix that first. |
 | Barcode decoder | Native *or* WASM polyfill | Polyfill is fine; the **first** scan is slow. Do not read that as a stall. |
@@ -234,6 +251,7 @@ theorising.
 |---|---|---|
 | "Sign-in failed. Check your email and password." on a **correct** password | Origin not in Better Auth's `trustedOrigins` — returns 403, reported generically on purpose | `docker:up:lan` sets it. Confirm the origin matches including port. |
 | Nothing on the page responds; server returns 200 | Not hydrated. Historically a CSP without a nonce, or Next dev blocking `/_next/*` for an unlisted host | Check the submit button on `/login`: still disabled after load = not hydrated. Add the host to `allowedDevOrigins`. |
+| **"The login page just refreshes when I submit"** / nothing on the whole page responds, on the phone specifically | `DEV_LAN_ORIGIN` is empty — the app was brought up with plain `docker:up`, which silently reverts a live LAN session back to loopback-only. Every `/_next/*` chunk 403s for the phone's origin; with no hydration the login form's `onSubmit` never attaches, so the browser falls back to a native GET — which presents as a refresh, not as "JavaScript is broken." | Confirm with `docker compose exec -T app env \| grep DEV_LAN_ORIGIN` — empty is the tell. Re-run `bun run docker:up:lan`, not `docker:up`. Then **clear the phone's cached copy of the page** before retrying (see note below) — a plain reload can still show the cached, 403'd chunks and look like the fix did nothing. Check the preflight **Origin** row first next time. |
 | Scan screen: "camera needs a secure origin" | Working as intended — the origin is plain http | Reload on `https://…:3443` and accept the certificate. |
 | Certificate warning on the https URL | Expected — self-signed, names the LAN IP | Advanced → Proceed. Once per phone. |
 | https 502s while http works | nginx cached a stale container IP after the app was recreated | Should not happen — nginx re-resolves per request. If it does, `docker compose restart tls`. |
@@ -245,6 +263,13 @@ theorising.
 **A note on the console.** Chrome reports CSP violations through a channel the
 devtools console API does not carry, so a clean console proves nothing about
 CSP. Trust the hydration check, not the absence of red text.
+
+**A note on the phone's cache.** Once a chunk has 403'd, the phone can keep
+serving that cached failure even after `docker:up:lan` fixes the origin — a
+plain reload does not guarantee a re-fetch. Clear site data for the LAN IP
+(Chrome: the ⓘ icon in the address bar → *Site settings* → *Clear data*) or
+open the URL in a private tab before deciding the fix did not work. Without
+this step the re-fetch looks identical to the fix having failed.
 
 ---
 
