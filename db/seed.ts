@@ -4,6 +4,7 @@
  * Reads the deterministic CSV extracts in docs/catalog/ (never the .xlsx —
  * see CLAUDE.md) and upserts, by natural key, into:
  *   - location  (natural key: name)
+ *   - vendor    (natural key: organizationId + name)
  *   - product   (natural key: name + size_ml — a 750ml and a 1.75L "handle"
  *     of the same brand are different SKUs, per CLAUDE.md's own handle
  *     example; name alone collides across sizes. Enforced in the schema by
@@ -11,104 +12,28 @@
  *
  * Safe to re-run. On every run each row is looked up by its natural key
  * first; if found, only the descriptive fields sourced from the CSV are
- * refreshed — cost, case_size, vendor, and par data are NEVER written by an
- * update (only ever set once, at insert time, and only where the source
- * actually has a value). That is deliberate: by the time this seed is
- * re-run against a live database, a manager may have entered real costs
- * through the app, and a "seed" step must not silently wipe production data
- * back to NULL. "Idempotent" here means "safe to run again", not "resets
- * everything to the spreadsheet every time."
+ * refreshed — cost and par data are NEVER written by an update (only ever
+ * set once, at insert time, and only where the source actually has a value).
+ * That is deliberate: by the time this seed is re-run against a live
+ * database, a manager may have entered real costs through the app, and a
+ * "seed" step must not silently wipe production data back to NULL.
+ * "Idempotent" here means "safe to run again", not "resets everything to the
+ * spreadsheet every time."
  *
- * Does NOT seed: User (auth is the backend agent's job), Vendor, ProductPar,
- * ProductBarcode. products.csv's vendor/cost/par/upc columns are blank in
- * the source for all 97 rows, so those stay NULL — there is nothing to
- * invent. Valuation (Count.total_value, reorder math) cannot be
- * meaningfully tested until real costs and pars are entered through the
- * app; the 9 draft kegs are the one exception, seeded with their real
- * wholesale cost from draft-economics.csv.
+ * Does NOT seed: User (auth is the backend agent's job), ProductPar,
+ * ProductBarcode. products.csv's cost/par/upc columns are blank in the
+ * source for all 97 rows, so those stay NULL — there is nothing to invent.
+ * Valuation (Count.total_value, reorder math) cannot be meaningfully tested
+ * until real costs and pars are entered through the app; the 9 draft kegs are
+ * the one exception, seeded with their real wholesale cost from
+ * draft-economics.csv.
  */
 
-import { readFileSync } from "node:fs";
-import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { and, eq } from "drizzle-orm";
 import { closePool, db } from "./index";
-import { location, organization, product, productUnitTypeEnum } from "./schema";
-
-// ---------------------------------------------------------------------------
-// Minimal CSV reader. Three small, well-formed files don't justify a
-// dependency (PapaParse is reserved for the Toast PMIX import, per
-// docs/spec.md §11) — but this still parses RFC4180 quoting (commas and ""
-// escaped quotes inside quoted fields) since locations.csv uses it, and it
-// fails loudly — throws — on any row whose column count doesn't match the
-// header, rather than silently importing a shifted row.
-// ---------------------------------------------------------------------------
-
-function parseCsv(raw: string): Record<string, string>[] {
-  const text = raw.replace(/\r\n/g, "\n");
-  const rows: string[][] = [];
-  let field = "";
-  let row: string[] = [];
-  let inQuotes = false;
-
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inQuotes) {
-      if (c === '"') {
-        if (text[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        field += c;
-      }
-      continue;
-    }
-    if (c === '"') {
-      inQuotes = true;
-    } else if (c === ",") {
-      row.push(field);
-      field = "";
-    } else if (c === "\n") {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = "";
-    } else {
-      field += c;
-    }
-  }
-  if (field.length > 0 || row.length > 0) {
-    row.push(field);
-    rows.push(row);
-  }
-
-  const nonEmpty = rows.filter((r) => !(r.length === 1 && r[0] === ""));
-  if (nonEmpty.length === 0) {
-    throw new Error("CSV file has no rows");
-  }
-  const header = nonEmpty[0];
-  return nonEmpty.slice(1).map((cols, idx) => {
-    if (cols.length !== header.length) {
-      throw new Error(
-        `CSV row ${idx + 2} has ${cols.length} columns, expected ${header.length} ` +
-          `(header: ${JSON.stringify(header)}, row: ${JSON.stringify(cols)})`,
-      );
-    }
-    const record: Record<string, string> = {};
-    header.forEach((key, i) => {
-      record[key] = cols[i];
-    });
-    return record;
-  });
-}
-
-function readCsv(relativePath: string): Record<string, string>[] {
-  const fullPath = path.join(process.cwd(), relativePath);
-  const raw = readFileSync(fullPath, "utf-8");
-  return parseCsv(raw);
-}
+import { location, organization, product, productUnitTypeEnum, vendor } from "./schema";
+import { readCsv } from "./csv";
 
 function trimmedOrNull(value: string | undefined): string | null {
   const trimmed = value?.trim() ?? "";
@@ -199,6 +124,57 @@ async function seedLocations(organizationId: number) {
   }
 
   console.log(`  locations: ${inserted} inserted, ${updated} updated (${rows.length} rows in source)`);
+}
+
+// ---------------------------------------------------------------------------
+// Vendors — docs/catalog/vendors.csv
+// ---------------------------------------------------------------------------
+
+async function seedVendors(organizationId: number) {
+  const rows = readCsv("docs/catalog/vendors.csv");
+  let inserted = 0;
+  let updated = 0;
+
+  for (const row of rows) {
+    const name = row.name?.trim();
+    if (!name) {
+      throw new Error(`vendors.csv: row missing name: ${JSON.stringify(row)}`);
+    }
+    const contact = trimmedOrNull(row.contact);
+    const orderMethod = trimmedOrNull(row.order_method);
+    const leadTimeDaysRaw = row.lead_time_days?.trim();
+    let leadTimeDays: number | null = null;
+    if (leadTimeDaysRaw) {
+      leadTimeDays = Number.parseInt(leadTimeDaysRaw, 10);
+      if (Number.isNaN(leadTimeDays)) {
+        throw new Error(
+          `vendors.csv: "${name}" has invalid lead_time_days "${row.lead_time_days}"`,
+        );
+      }
+      if (leadTimeDays < 0) {
+        throw new Error(`vendors.csv: "${name}" has negative lead_time_days: ${leadTimeDays}`);
+      }
+    }
+
+    const existing = await db
+      .select({ id: vendor.id })
+      .from(vendor)
+      .where(and(eq(vendor.organizationId, organizationId), eq(vendor.name, name)))
+      .limit(1);
+
+    if (existing.length === 0) {
+      await db.insert(vendor).values({ organizationId, name, contact, orderMethod, leadTimeDays });
+      inserted++;
+    } else {
+      await db
+        .update(vendor)
+        .set({ contact, orderMethod, leadTimeDays })
+        .where(eq(vendor.id, existing[0].id));
+      updated++;
+    }
+  }
+
+  console.log(`  vendors: ${inserted} inserted, ${updated} updated (${rows.length} rows in source)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -370,16 +346,27 @@ async function main() {
   console.log("Seeding Truestock catalog from docs/catalog/ ...");
   const organizationId = await resolveOrganization();
   await seedLocations(organizationId);
+  await seedVendors(organizationId);
   await seedProducts(organizationId);
   await seedKegCosts(organizationId);
   console.log("Done.");
 }
 
-main()
-  .catch((err) => {
-    console.error("Seed failed:", err);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await closePool();
-  });
+// Guard: only run main() if this module IS the entry point, not when imported
+// from another file (e.g., a test importing parseCsv from db/csv.ts).
+// Comparing import.meta.url against pathToFileURL(process.argv[1]).href is
+// portable across Node and Bun (import.meta.main is Bun-only and not yet in all
+// Node LTS versions). This prevents a side effect landmine: importing this
+// module from a test or REPL would unconditionally trigger a live write against
+// the active DATABASE_URL, losing the race with concurrent truncations and
+// causing silent data corruption. This incident is why db/csv.ts was extracted.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main()
+    .catch((err) => {
+      console.error("Seed failed:", err);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await closePool();
+    });
+}

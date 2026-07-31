@@ -23,6 +23,9 @@ import type {
   ProductUpdateInput,
   ProductSearchInput,
   LinkBarcodeInput,
+  VendorCreateInput,
+  VendorUpdateInput,
+  AssignVendorToProductsInput,
 } from "@/lib/validation/catalog";
 
 // ---------------------------------------------------------------------------
@@ -836,4 +839,161 @@ export async function listVendors(actor: Actor): Promise<VendorSummary[]> {
     .from(vendor)
     .where(eq(vendor.organizationId, actor.organizationId))
     .orderBy(vendor.name);
+}
+
+/**
+ * Create a new vendor. Simple insert; no ownership check needed since the id
+ * is server-generated.
+ */
+export async function createVendor(actor: Actor, input: VendorCreateInput): Promise<VendorSummary> {
+  const [inserted] = await db
+    .insert(vendor)
+    .values({
+      organizationId: actor.organizationId,
+      name: input.name,
+      contact: input.contact ?? null,
+      orderMethod: input.orderMethod ?? null,
+      leadTimeDays: input.leadTimeDays ?? null,
+    })
+    .$returningId();
+
+  const rows = await db
+    .select({
+      id: vendor.id,
+      name: vendor.name,
+      contact: vendor.contact,
+      orderMethod: vendor.orderMethod,
+      leadTimeDays: vendor.leadTimeDays,
+    })
+    .from(vendor)
+    .where(eq(vendor.id, inserted.id))
+    .limit(1);
+
+  const result = rows[0];
+  if (!result) {
+    throw new NotFoundError("Vendor");
+  }
+  return result;
+}
+
+/**
+ * Update an existing vendor. Invariant 9: ownership is checked before any
+ * write — a cross-tenant id returns NotFound, never an answer that confirms
+ * the row is real.
+ */
+export async function updateVendor(actor: Actor, input: VendorUpdateInput): Promise<VendorSummary> {
+  await db.transaction(async (tx) => {
+    // Existence and ownership check, proven once and up front.
+    await assertVendorOwned(tx, actor.organizationId, input.id);
+
+    // Build the patch from optional fields. `undefined` means "don't touch it".
+    const patch: Partial<typeof vendor.$inferInsert> = {};
+    if (input.name !== undefined) patch.name = input.name;
+    if (input.contact !== undefined) patch.contact = input.contact;
+    if (input.orderMethod !== undefined) patch.orderMethod = input.orderMethod;
+    if (input.leadTimeDays !== undefined) patch.leadTimeDays = input.leadTimeDays;
+
+    // Only write if there is something to update.
+    if (Object.keys(patch).length > 0) {
+      await tx
+        .update(vendor)
+        .set(patch)
+        .where(
+          and(eq(vendor.id, input.id), eq(vendor.organizationId, actor.organizationId)),
+        );
+    }
+  });
+
+  // Re-fetch and return the updated row.
+  const rows = await db
+    .select({
+      id: vendor.id,
+      name: vendor.name,
+      contact: vendor.contact,
+      orderMethod: vendor.orderMethod,
+      leadTimeDays: vendor.leadTimeDays,
+    })
+    .from(vendor)
+    .where(
+      and(
+        eq(vendor.id, input.id),
+        eq(vendor.organizationId, actor.organizationId),
+      ),
+    )
+    .limit(1);
+
+  const result = rows[0];
+  if (!result) {
+    throw new NotFoundError("Vendor");
+  }
+  return result;
+}
+
+/**
+ * Assign a vendor to multiple products atomically.
+ *
+ * ATOMIC: all products receive the assignment, or none do. A partial write
+ * leaves the catalog in a state nobody asked for and would fail silently —
+ * the UI shows "assigned" while the database only partially applied it.
+ *
+ * INVARIANT 9: every product id is ownership-checked against the actor's org
+ * in a single scoped query (not N queries). If any product is cross-tenant or
+ * nonexistent, the whole call fails as NotFound rather than silently assigning
+ * the subset that is valid — a partial success would let a probe discover
+ * which product ids are real across tenants.
+ *
+ * Duplicate ids in the input are deduplicated before the count check. This
+ * ensures that a caller sending a duplicate id (a checkbox list built without
+ * a Set, or a retried partial selection) succeeds if every unique id is valid.
+ * The deduplication also preserves the all-or-nothing behavior: a duplicate
+ * id mixed with a genuinely foreign id still refuses the whole call, and never
+ * distinguishes "exists but is not yours" from "does not exist".
+ *
+ * Null vendorId is a legitimate value — it clears the vendor on all products.
+ */
+export async function assignVendorToProducts(
+  actor: Actor,
+  input: AssignVendorToProductsInput,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    // Deduplicate the product ids once, up front. This set is used for both
+    // the query and the count comparison, so the two can never disagree.
+    const uniqueProductIds = Array.from(new Set(input.productIds));
+
+    // Ownership-check ALL unique product ids in a single org-scoped query.
+    // If the count doesn't match the unique id count, at least one id is
+    // invalid (cross-tenant or nonexistent).
+    const owned = await tx
+      .select({ id: product.id })
+      .from(product)
+      .where(
+        and(
+          eq(product.organizationId, actor.organizationId),
+          inArray(product.id, uniqueProductIds),
+        ),
+      );
+
+    if (owned.length !== uniqueProductIds.length) {
+      // At least one product id is not the actor's org, or doesn't exist.
+      // Return NotFound, not a partial count, so the answer doesn't confirm
+      // which ids are real.
+      throw new NotFoundError("Product");
+    }
+
+    // Vendor ownership check (only if not null — a null vendor needs no check).
+    if (input.vendorId != null) {
+      await assertVendorOwned(tx, actor.organizationId, input.vendorId);
+    }
+
+    // All checks passed — apply the vendor to all products.
+    await tx
+      .update(product)
+      .set({ vendorId: input.vendorId })
+      .where(
+        and(
+          eq(product.organizationId, actor.organizationId),
+          inArray(product.id, uniqueProductIds),
+        ),
+      );
+  });
 }

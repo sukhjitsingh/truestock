@@ -61,6 +61,21 @@ export const productCreateSchema = z.object({
   category: z.string().trim().min(1, "Category is required.").max(100),
   subcategory: z.string().trim().max(100).optional(),
   unitType: productUnitTypeSchema,
+  /**
+   * Deliberately NOT an allowlist of lib/bottle-sizes.ts's presets, even
+   * though both product forms now pick from those lists.
+   *
+   * The preset lists are a UI guard against a mistyped size, not a statement
+   * about what sizes exist. The back office keeps an "Other…" box on purpose,
+   * so a strict allowlist here would reject a save the app's own form just
+   * offered — and worse, it would fail *later*: shortening a preset list, or
+   * re-filing a product's category, would start bouncing edits to rows this
+   * app itself wrote, on a field the person editing never touched. Legacy and
+   * imported rows have the same problem.
+   *
+   * What the boundary owes the database is that the value fits `int("size_ml")`
+   * and is not zero or negative. That is what this is.
+   */
   sizeMl: z.number().int().positive("Size must be a positive number of ml."),
   caseSize: z.number().int().positive().optional(),
   vendorId: z.number().int().positive().optional(),
@@ -106,6 +121,9 @@ export const productUpdateSchema = z.object({
   category: z.string().trim().min(1).max(100).optional(),
   subcategory: z.string().trim().max(100).nullable().optional(),
   unitType: productUnitTypeSchema.optional(),
+  // No preset allowlist — see `productCreateSchema.sizeMl`. This is the schema
+  // the "Other…" box submits through, so tightening it here is what would
+  // break first.
   sizeMl: z.number().int().positive().optional(),
   caseSize: z.number().int().positive().nullable().optional(),
   vendorId: z.number().int().positive().nullable().optional(),
@@ -158,3 +176,62 @@ export type ProductSearchInput = z.infer<typeof productSearchSchema>;
 export const resolveBarcodeSchema = z.object({
   barcode: barcodeStringSchema,
 });
+
+/**
+ * Vendor creation. All fields are optional at input time; only `name` is
+ * required. A vendor with no contact/orderMethod/leadTimeDays is still
+ * usable — it is the minimum skeleton the reorder list needs.
+ */
+export const vendorCreateSchema = z.object({
+  name: z.string().trim().min(1, "Name is required.").max(255),
+  contact: z.string().trim().max(255).nullable().optional(),
+  orderMethod: z.string().trim().max(255).nullable().optional(),
+  /**
+   * Lead time in days — non-negative integer. NULL means unknown/unspecified.
+   * Validated as an integer to reject "3.5 days" before it reaches the
+   * database; the column itself is INT NOT NULL-less, so a float would need
+   * conversion or truncation anyway. Checking here keeps that tight.
+   */
+  leadTimeDays: z.number().int().nonnegative().nullable().optional(),
+});
+export type VendorCreateInput = z.infer<typeof vendorCreateSchema>;
+
+/**
+ * Vendor update. `id` identifies which vendor; all other fields are optional
+ * and only updated if present.
+ */
+export const vendorUpdateSchema = z.object({
+  id: z.number().int().positive(),
+  name: z.string().trim().min(1).max(255).optional(),
+  contact: z.string().trim().max(255).nullable().optional(),
+  orderMethod: z.string().trim().max(255).nullable().optional(),
+  leadTimeDays: z.number().int().nonnegative().nullable().optional(),
+});
+export type VendorUpdateInput = z.infer<typeof vendorUpdateSchema>;
+
+/**
+ * Bulk vendor assignment to products. Takes a list of product ids and a
+ * vendor id (or null to clear the vendor).
+ *
+ * This is an atomic operation: either all products get the vendor assigned, or
+ * none do. If any product id is cross-tenant or nonexistent, the whole call
+ * fails as NotFound; returning partial success on a tenancy failure would let
+ * an attacker probe which product ids are real across tenants (invariant 9).
+ *
+ * `productIds` is bounded to prevent resource exhaustion — assigning 100,000
+ * products in one request would lock the product table for the duration of
+ * the transaction. 500 is comfortably above any real bar's catalog size
+ * (Truestock's own seed has 97 products; most bars are 50–150) while still
+ * being quick to execute. A larger bulk operation splits into multiple calls.
+ */
+export const assignVendorToProductsSchema = z.object({
+  productIds: z
+    .number()
+    .int()
+    .positive()
+    .array()
+    .min(1, "At least one product is required.")
+    .max(500, "Cannot assign more than 500 products at once."),
+  vendorId: z.number().int().positive().nullable(),
+});
+export type AssignVendorToProductsInput = z.infer<typeof assignVendorToProductsSchema>;

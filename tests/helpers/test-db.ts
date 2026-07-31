@@ -111,6 +111,8 @@ export async function resetDatabase(): Promise<void> {
 export interface Fixtures {
   owner: Actor;
   manager: Actor;
+  /** Count-only — used to prove an action's role gate refuses a role it doesn't cover. */
+  staff: Actor;
   /** A second tenant, for proving cross-tenant reads and writes are refused. */
   otherOwner: Actor;
   organizationId: number;
@@ -161,6 +163,18 @@ export async function createFixtures(): Promise<Fixtures> {
       email: "manager@test.local",
       emailVerified: true,
       role: "manager",
+      active: true,
+      organizationId: org.id,
+    })
+    .$returningId();
+
+  const [staff] = await db
+    .insert(userTable)
+    .values({
+      name: "Test Staff",
+      email: "staff@test.local",
+      emailVerified: true,
+      role: "staff",
       active: true,
       organizationId: org.id,
     })
@@ -245,6 +259,7 @@ export async function createFixtures(): Promise<Fixtures> {
   return {
     owner: { userId: owner.id, role: "owner", organizationId: org.id },
     manager: { userId: manager.id, role: "manager", organizationId: org.id },
+    staff: { userId: staff.id, role: "staff", organizationId: org.id },
     otherOwner: { userId: otherOwner.id, role: "owner", organizationId: otherOrg.id },
     organizationId: org.id,
     otherOrganizationId: otherOrg.id,
