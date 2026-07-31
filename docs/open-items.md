@@ -581,12 +581,21 @@ it — the build agent reported the capability and only a DOM read caught it);
 the bulk bar rendering below 98 rows, off-screen; and the clear-vendor label
 reading "Set vendor" when "No vendor" was chosen explicitly.
 
-**One exception, not glossed over: the final `router.refresh()` fix in
-`components/office/vendors-list.tsx` is not browser-verified.** The session
-ended before that check ran. It is typechecked and built, nothing more.
-**Trigger to confirm it: the next time anyone opens a browser against this
-app** — edit a vendor's name, close the form, and check the list shows the new
-name without a manual reload.
+**The final `router.refresh()` fix in `components/office/vendors-list.tsx` was
+the one line here never opened in a browser — CONFIRMED 2026-07-31.** Creating
+a vendor from the empty state and editing its name both showed on the list with
+no manual reload; the database held exactly one row after the edit (so it
+updated rather than inserted); and a real navigation reloaded to the same state,
+ruling out a screen that self-updates but disagrees with a reload — which would
+have been worse than the staleness it replaced. The dev-only Fast Refresh
+empty-state flash seen in an earlier session did not reproduce.
+
+Worth keeping for the shape: the regression existed because `VendorEditForm`
+calls `router.refresh()` only on the branch where no `onSuccess` prop is passed,
+and `VendorsList` always passes one — so the refresh lived in dead code while
+the write succeeded and the screen showed the old name. A save that looks like
+it silently failed invites retyping it. **Two overlapping mechanisms are what
+produce a dead one;** the refresh now lives with whoever owns the stale data.
 
 Two defects were also found while verifying this, by running things rather
 than reading them, and both are recorded as new items below: `vendors.csv`'s

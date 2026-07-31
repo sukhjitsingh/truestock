@@ -118,14 +118,16 @@ Written, reviewed, typechecked — never observed working.
   — the keg default moved from a half barrel to a sixtel in
   `lib/bottle-sizes.ts` — is backed by an executed test, because it is a
   pure-function default, not a component.
-- **The vendors screen's `router.refresh()` fix** (2026-07-31,
-  `components/office/vendors-list.tsx`). Everything else about the vendor
-  work — create, edit, bulk assign, bulk clear, the stale-selection blocker,
-  the sticky bar, the consequence strings — *was* driven in Chrome with
-  database verification. This one fix was not: it closes a regression where
-  an edited vendor's name kept showing stale on the list, and it is
-  typechecked and built, nothing more. The session that wrote it ended before
-  anyone reloaded the page to confirm.
+- ~~**The vendors screen's `router.refresh()` fix**~~ — **verified 2026-07-31**,
+  and moved out of this list. It was the one line in the vendor work never
+  opened in a browser. Driven in Chrome: creating a vendor from the empty
+  state and editing its name both showed on the list with no manual reload,
+  the database held exactly one row afterwards, and a real navigation
+  reloaded to the same state — so there is no self-updates-but-disagrees-with-
+  reload divergence, which would have been worse than the original staleness.
+  The dev-only Fast Refresh flash seen in an earlier session did not
+  reproduce. **Every line of the vendor work has now been executed against a
+  browser and a database.**
 - **The offline write queue** (`lib/count-queue.ts`). Reasoned about only. It was
   already wrong once — the original had no drain path at all — and 2026-07-30
   changed its rejection behaviour, so a permanently-refused write now leaves the
@@ -154,10 +156,11 @@ Written, reviewed, typechecked — never observed working.
   fixed the same week: a stale selection surviving a search (a blocker — it
   wrote to off-screen products), vendors creatable but not editable, the bulk
   bar rendering off-screen below 98 rows, and a clear-vendor label that read
-  "Set vendor". **One exception, recorded rather than glossed:** the final
-  `router.refresh()` fix in `components/office/vendors-list.tsx` is not
-  browser-verified — the session ended before that check ran. Typechecked and
-  built, nothing more.
+  "Set vendor". The final `router.refresh()` fix in
+  `components/office/vendors-list.tsx` was left unverified when that session
+  ended, and **was confirmed in a browser later the same day** — create and
+  edit both reflect without a reload, and the post-reload state agrees with
+  the database.
   **Two defects found by running things rather than reading them**, and both
   matter beyond this feature. `vendors.csv`'s own documentation comment broke
   the *entire* seed: `parseCsv` had no comment support and threw, and
@@ -308,11 +311,32 @@ hour:
 3. **Accounts do not survive `docker:reset`.** Recreate with `bun run
    create-user`. There is no public signup, deliberately.
 
-Local database state as of this commit: draft count #1 open, 5 locations, 98
-products, 0 barcodes, **0 par levels** — so the reorder list is now *able* to
-produce rows but still won't until a par is set on something. Two throwaway
-owner accounts exist for browser checks, `tester@truestock.local` and
-`browsercheck@truestock.local` — delete them or reset the volume.
+Local database state, queried 2026-07-31 rather than remembered: draft count #1
+open, 5 locations, 98 products, **1 barcode**, **0 par levels**, **0 vendors**,
+0 products carrying a vendor.
+
+Three of those numbers are the ones that bite:
+
+- **0 pars** — the reorder list is *able* to produce rows as of 2026-07-30 and
+  still won't until a par is set on something. Nothing is broken; nothing is
+  configured.
+- **0 vendors** — the write path and the `/office/vendors` screen both exist as
+  of 2026-07-31, and `docs/catalog/vendors.csv` ships header-only on purpose
+  (inventing supplier names would put fabricated business relationships in a
+  catalog that drives real orders). Until the owner fills it in or adds one
+  through the screen, every reorder row still groups under "No vendor set" — the
+  same symptom as before #19 was closed, now with a cause that is one form away.
+- **1 barcode** — a single enrolment survives from a browser session. A first
+  phone pass is still essentially all-enroll.
+
+Throwaway owner accounts left from browser checks: `tester@truestock.local` and
+`browsercheck@truestock.local`. Delete them or reset the volume. The real seeded
+accounts are `owner@truestock.local` and `manager@truestock.local`.
+
+Note there is no `delete-user` script — removing an account means SQL against
+`session` then `account` then `user`, which is also why these accumulate. Same
+for vendors, which have no delete path by design (invariant 6's spirit: history
+references them).
 
 ## Next three things
 
