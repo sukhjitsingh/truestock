@@ -39,11 +39,12 @@ three months. Driven by open-items, each with its own trigger.
   *Trigger: the first time anyone needs deactivating.*
 - **Real costs entered** (#4) — 88 unit costs and 16 case sizes. Valuation is thin
   until this happens. *Trigger: the owner working through supplier invoices.*
-- **Vendor write path** (#19) — nothing writes `vendor`, so every reorder row
-  groups under "No vendor set". Spec §9.3 wants grouping by vendor precisely so
-  one order can be placed per supplier; that is the feature this blocks. Was
-  invisible while the reorder list was empty; now it produces rows.
-  *Trigger: before the reorder list is handed to anyone to order from.*
+- ~~**Vendor write path** (#19)~~ — **DONE 2026-07-31.** `createVendor`,
+  `updateVendor` and `assignVendorToProducts`, plus the `/office/vendors`
+  screen and bulk catalog assignment. The reorder list can now group by
+  vendor per spec §9.3 instead of dumping every row under "No vendor set".
+  One thing left unconfirmed: the `router.refresh()` fix on the vendors list
+  is typechecked and built but not yet browser-verified.
 - **Par levels entered** — the mechanism exists as of 2026-07-30, but no product
   has one, so the list is still empty in practice. Pairs with real costs.
 - **Uncapped dashboard reads** (#14) — replace capped list reads with a dedicated

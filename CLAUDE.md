@@ -335,6 +335,14 @@ Draft is simpler than it looks and should not be special-cased:
   project has hit — the CSP hydration break, the credential leak — was
   invisible to status codes and obvious on first page load.
 - Migrations go through drizzle-kit. No hand-edited schema drift.
+- **`db/seed.ts` and any script with a `main()` must guard it** so importing the
+  file does not execute it — `db/seed.ts` ran `main()` at module scope until
+  2026-07-31, and importing it to unit-test the CSV parser fired the real seed
+  against the active `DATABASE_URL`. Guard on
+  `import.meta.url === pathToFileURL(process.argv[1]).href`, portable across
+  tsx and bun. The pure CSV parser now lives in `db/csv.ts` for the same
+  reason: a test should never have to reach into an entry-point module to get
+  at the logic it wants.
 - Conventional commits. Small, reviewable changes.
 
 ---

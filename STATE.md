@@ -1,6 +1,6 @@
 # Truestock — current state
 
-Where the project actually is. Updated 2026-07-30.
+Where the project actually is. Updated 2026-07-31.
 
 This file answers one question: **what is proven, what is merely built, and what
 is next.** The distinction matters more here than the feature list, because this
@@ -46,13 +46,17 @@ Verified means *observed running*, not reviewed or typechecked.
 | **Back office UI** | Signed in through the real form in Chrome, dashboard and all office routes render, console clean, unauthenticated requests redirect |
 | **Role gating is structural** | A manager's HTML contains no unpriced tile at all, and zero dollar-shaped strings anywhere in the response |
 | **Size preset lists** | `tests/bottle-sizes.test.ts` — which list each category resolves to, the keg short-circuit ahead of category, the NA-on-the-beer-list decision, **every size in the seed catalog asserted against the list its own product resolves to**, and (added by the review fix below) the keg default computed as the catalog's modal keg size rather than a pinned literal. Pure module only: no component is executed by it |
+| **Vendor write path** | `tests/vendor-write-path.test.ts` — 12 DB-backed tests: `createVendor`/`updateVendor`, cross-tenant refusal, bulk-assign atomicity confirmed by a re-read that finds no partial apply, and reorder-list vendor grouping end to end. Mutation-checked: disabling the ownership guard fails exactly one test |
+| **Seed CSV parser** | `tests/seed-csv-parser.test.ts` — the pure parser, moved to `db/csv.ts` so this test never has to import the seed's own entry-point module (see Recent history, 2026-07-31) |
 
-**73 tests across 5 files**, all green, as of 2026-07-30 — `bun run test:docker`
-against MariaDB 11.8 in Docker, 316 assertions, 0 failures. The 16 in
-`tests/bottle-sizes.test.ts` are all 2026-07-30: 15 for the preset lists
+**94 tests across 7 files**, all green, as of 2026-07-31 — `bun run
+test:docker` against MariaDB 11.8 in Docker, 381 assertions, 0 failures. The 16
+in `tests/bottle-sizes.test.ts` are all 2026-07-30: 15 for the preset lists
 themselves, plus 1 more from the review fix below that replaced a pinned
-`58674` assertion with one computed from the catalog. The 57 that existed
-before are unchanged, so nothing was modified or disabled to get there.
+`58674` assertion with one computed from the catalog. `tests/vendor-write-path.test.ts`
+and `tests/seed-csv-parser.test.ts` landed 2026-07-31 with the vendor work,
+bringing the file count from 5 to 7. The 73 that existed before those two files
+are unchanged, so nothing was modified or disabled to get there.
 
 **The suite is checked for teeth, repeatedly.** Deleting the ledger insert from
 `applyIncrement` — the whole idempotency mechanism — fails exactly the four
@@ -114,6 +118,14 @@ Written, reviewed, typechecked — never observed working.
   — the keg default moved from a half barrel to a sixtel in
   `lib/bottle-sizes.ts` — is backed by an executed test, because it is a
   pure-function default, not a component.
+- **The vendors screen's `router.refresh()` fix** (2026-07-31,
+  `components/office/vendors-list.tsx`). Everything else about the vendor
+  work — create, edit, bulk assign, bulk clear, the stale-selection blocker,
+  the sticky bar, the consequence strings — *was* driven in Chrome with
+  database verification. This one fix was not: it closes a regression where
+  an edited vendor's name kept showing stale on the list, and it is
+  typechecked and built, nothing more. The session that wrote it ended before
+  anyone reloaded the page to confirm.
 - **The offline write queue** (`lib/count-queue.ts`). Reasoned about only. It was
   already wrong once — the original had no drain path at all — and 2026-07-30
   changed its rejection behaviour, so a permanently-refused write now leaves the
@@ -127,6 +139,44 @@ Written, reviewed, typechecked — never observed working.
 
 ## Recent history
 
+- **2026-07-31** — **Vendors have a write path, closing open item #19 /
+  mvp-gaps finding H (the vendor half).** `createVendor`, `updateVendor` and
+  `assignVendorToProducts` (three owner/manager server actions), zod schemas,
+  an idempotent `seedVendors` keyed on `(organization_id, name)`, and an
+  `/office/vendors` screen — list, create, edit, no delete — plus bulk
+  set/clear vendor in the catalog table. `listVendorsAction` had always
+  returned `[]`; every product's `vendor_id` stayed NULL; `/office/reorder`
+  grouped every row under "No vendor set" — invisible while the reorder list
+  itself was empty, and visible the moment finding A gave it rows. The
+  domain layer is genuinely verified (12 DB-backed tests, mutation-checked:
+  disabling the ownership guard fails exactly one test). The screens were
+  driven in real Chrome with database verification — four defects found and
+  fixed the same week: a stale selection surviving a search (a blocker — it
+  wrote to off-screen products), vendors creatable but not editable, the bulk
+  bar rendering off-screen below 98 rows, and a clear-vendor label that read
+  "Set vendor". **One exception, recorded rather than glossed:** the final
+  `router.refresh()` fix in `components/office/vendors-list.tsx` is not
+  browser-verified — the session ended before that check ran. Typechecked and
+  built, nothing more.
+  **Two defects found by running things rather than reading them**, and both
+  matter beyond this feature. `vendors.csv`'s own documentation comment broke
+  the *entire* seed: `parseCsv` had no comment support and threw, and
+  `main()` awaits `seedVendors` before `seedProducts` — so only locations
+  seeded, every run, while 85 tests stayed green throughout. And `db/seed.ts`
+  ran `main()` at module scope, so importing it to unit-test the pure parser
+  executed the real seed against the live `DATABASE_URL`, racing the test
+  suite's truncation and setting `process.exitCode = 1` — `bun test` printed
+  all-pass while `test:docker` still exited 1. Fixed both ways: the parser
+  moved to `db/csv.ts`, and `main()` is now guarded on
+  `import.meta.url === pathToFileURL(process.argv[1]).href`. Noted, not
+  fixed: `scripts/create-user.ts` has the identical unguarded-`main()` shape
+  (open item #23) — its side effect is worse, an interactive password prompt.
+  **This is the fourth failure in this project whose defining feature is that
+  every gate stayed green** — after the static CSP (#13), the dev
+  cross-origin 403 (#17), and the wrapped driver error (#18). See "The
+  current risk, stated plainly" below.
+  typecheck, lint, `bun run build` clean; 94 tests / 381 assertions across 7
+  files, exit 0.
 - **2026-07-30** — **A size can no longer be mistyped, and only bottled beer is
   offered a case.** Both were free-typed number boxes that accepted a plausible
   wrong answer and reported nothing. `75` entered for `750` is a legal integer:
@@ -216,9 +266,13 @@ the client.**
 **This got sharper on 2026-07-30, not weaker.** The gap audit found nine real
 defects by reading code, and then a tenth surfaced only because a new test
 exercised the real library — `isDuplicateKeyError` had been silently blind to
-wrapped errors, disabling every `ConflictError` in the catalog. Three of this
-project's worst bugs now share one signature: **every gate stayed green.**
-Typecheck, build, lint, status codes, and the tests that existed. When something
+wrapped errors, disabling every `ConflictError` in the catalog. **Four of this
+project's worst bugs now share one signature: every gate stayed green.**
+Typecheck, build, lint, status codes, and the tests that existed — the static
+CSP (#13), the dev cross-origin 403 (#17), the wrapped driver error (#18), and
+now `db/seed.ts` running `main()` at module scope, which let importing it for
+a unit test fire the real seed and left `bun test` printing all-pass while
+`test:docker` exited 1 (2026-07-31, closing open item #19). When something
 here looks like it cannot fail, that is the claim worth executing against the
 actual library, the actual database, or the actual browser.
 
@@ -277,10 +331,11 @@ for one. Protocol for 1 and 2: **`docs/phone-count-test.md`**. Start at
    into the walk-in.
 3. **Verify the production CSP** with `next build && next start` before any deploy.
 
-After those, the shortest path to a genuinely useful reorder list is
-**open-item #19 (vendors have no write path)** plus real costs and pars —
-the list now produces rows, but every one of them lands in a single "No vendor
-set" group.
+After those, the shortest path to a genuinely useful reorder list is real
+costs and pars (open item #4) — **#19 (vendors have no write path) is done**
+as of 2026-07-31, so the list can now group by vendor instead of dumping
+everything under "No vendor set". What is still missing is the par levels and
+costs to make the rows worth ordering from.
 
 ## Scope reminders
 

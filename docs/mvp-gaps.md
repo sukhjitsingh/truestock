@@ -5,8 +5,8 @@ commit `68d0f15`. Read alongside `STATE.md`, which covers what is *unproven*;
 this file covers what is **absent or wrong in the code as written**, which is a
 different list.
 
-**Status 2026-07-30: A, B, C, D1, D2, E, F, G and I are fixed.** H and J are
-still open and keep their sections below. Each fixed section keeps its original
+**Status 2026-07-31: A, B, C, D1, D2, E, F, G, H and I are fixed.** J is still
+open and keeps its section below. Each fixed section keeps its original
 text — the reasoning is why the fix looks as it does — with a **FIXED** note
 saying what changed. Nothing is deleted, because the failure *shapes* here are
 the reusable part.
@@ -18,7 +18,7 @@ Verified after the fixes:
 | `bun run typecheck` | passes |
 | `bun run lint` | passes (was 1 error — finding F) |
 | `bun run build` | passes, 16 routes |
-| `bun run test:docker` | **57 pass, 0 fail** across 4 files, against MariaDB 11.8 |
+| `bun run test:docker` | **94 tests / 381 assertions**, 0 fail, across 7 files, against MariaDB 11.8 |
 
 The suite was checked for teeth rather than assumed to have them: breaking
 `upsertProductPar` fails exactly the 8 par/reorder tests, and widening
@@ -364,6 +364,21 @@ at `/count/preflight`. As written it costs an hour to whoever reads it.
 
 **Medium. Partly deliberate; the vendor half is not.**
 
+**FIXED 2026-07-31 — the vendor half.** `createVendor`, `updateVendor` and
+`assignVendorToProducts` (50e2512), plus the `/office/vendors` screen and bulk
+catalog assignment that make them reachable (87a8d63), give vendors a write
+path end to end. `listVendorsAction` now returns real rows, the product form's
+vendor `<select>` populates, and `/office/reorder` groups by vendor instead of
+dumping every row under "No vendor set". Closed as open item #19 — see that
+entry for the domain-layer test count (12 DB-backed tests, mutation-checked),
+the four screen defects found and fixed the same week, and the one thing left
+unverified: the final `router.refresh()` fix in
+`components/office/vendors-list.tsx`, typechecked and built but not confirmed
+in a browser before the session that wrote it ended.
+
+The users half (open item #3) and the locations half stay exactly as
+described below — neither has moved.
+
 **Vendors — nothing writes them anywhere.** Not a server action, not the seed
 (`db/seed.ts` header: "Does NOT seed: User, **Vendor**…"). `listVendorsAction`
 therefore always returns `[]`. Three consequences, all silent:
@@ -469,17 +484,14 @@ the tests that existed, and each was found only by exercising the real thing.
 
 ## Still open
 
-**H — no write path for vendors, users, or (in-app) locations.** Untouched.
-The vendor half is the one that matters: nothing writes `vendor`, so
-`listVendorsAction` returns `[]`, every product's `vendor_id` stays NULL, and
-`/office/reorder` groups every row under "No vendor set". Now that finding A is
-fixed the reorder list produces rows, so this grouping is dead in a way that is
-finally *visible* rather than hypothetical.
-
 **J — `scanCountLine` is dead code.** Untouched, and still correct to leave
 until someone times a real count (open item 10). Note it now has one more
 unreachable sibling: `QueuedWriteKind` gained `"fills"`, which IS reachable, so
 `"scan"` is the only dead branch left in `runWrite`/`sendQueued`.
+
+**H is closed 2026-07-31** — see finding H above and open item #19. The vendor
+half was the one that mattered; users (item #3) and locations stay as they
+were.
 
 ---
 
@@ -501,8 +513,8 @@ and the distinction is the whole reason these are two files:
 
 ## Suggested order — original, kept for the record
 
-This was the ordering the audit proposed. 1-6 and most of 7 are done; what
-remains is H and J, which is why they sit at the bottom of it.
+This was the ordering the audit proposed. 1-6 and 7 are done; what remains is
+J, which is why it sits at the bottom of it.
 
 Ordered by what blocks the first trustworthy count, not by effort.
 

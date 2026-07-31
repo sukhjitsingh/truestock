@@ -348,23 +348,21 @@ the entry screen is pure overhead. That could be a real speed win on the
 the abstract** — and if the answer is no, delete the action rather than
 leaving a hardened write path that nothing exercises.
 
-## 11. One location count mode was assigned without the owner
+## 11. One location count mode was assigned without the owner — CONFIRMED 2026-07-31
 
-**Trigger: before the first real count — one question, ask it.**
+**Confirmed 2026-07-31.** The owner answered the one question this item asked:
+Walk-In holds sealed packaged beer only, no open kegs. `count_mode` stays
+`quantity`, as seeded. **No code change** — the inferred value was correct,
+and what this item was waiting on was the confirmation, not the value.
 
-`location.count_mode` is new (`tenths` | `quantity`), because CLAUDE.md says
+`location.count_mode` (`tenths` | `quantity`) exists because CLAUDE.md says
 the input mode is "driven entirely by location" and there was nowhere to put
-that. Speed Rail, Back Bar and Storeroom come straight from the owner's own
-notes in `locations.csv`. One is still inferred:
+that. Speed Rail, Back Bar and Storeroom came straight from the owner's own
+notes in `locations.csv`. Walk-In was the one inferred — from its note,
+"Packaged beer." — rather than confirmed, and is now both.
 
-- **Walk-In → `quantity`.** From its note, "Packaged beer." If open kegs
-  live in there, it needs `tenths` instead.
-
-Getting it wrong is not silent — the screen visibly offers the wrong input —
-but it is annoying enough mid-count to be worth one question first.
-
-**Wine Rack is settled: `tenths`, and it does not need confirming.** `tenths`
-is the superset mode — it offers the fill pad *and* sealed quantities, where
+**Wine Rack was already settled without asking: `tenths`.** `tenths` is the
+superset mode — it offers the fill pad *and* sealed quantities, where
 `quantity` offers only quantities. So a tenths location can record anything a
 quantity location can. It is the safe default wherever the answer is
 uncertain or low-stakes, which is exactly the wine situation (item 12).
@@ -547,23 +545,57 @@ codes, and the existing tests — and the bug was found only by exercising the
 real thing. When something here "cannot fail", that is the claim worth testing
 against the actual library or the actual browser.
 
-## 19. Vendors still have no write path anywhere
+## 19. ~~Vendors still have no write path anywhere~~ — CLOSED 2026-07-31
 
-**Trigger: before the reorder list is handed to anyone to actually order from.
-That is now closer than it was.**
+Split out of `docs/mvp-gaps.md` finding H, because finding A being fixed had
+changed its status from hypothetical to visible. Closed by `createVendor`,
+`updateVendor` and `assignVendorToProducts` (50e2512), and the
+`/office/vendors` screen plus bulk catalog assignment that make them reachable
+(87a8d63).
 
-Split out of docs/mvp-gaps.md finding H, because finding A being fixed changed
-its status from hypothetical to visible.
+Three role-gated server actions (owner/manager, matching `updateProduct` —
+vendors and reordering are a manager's job per spec §4), zod schemas, an
+idempotent `seedVendors` keyed on `(organization_id, name)` so a re-seed never
+duplicates a vendor someone edited in the app, and a screen that lists,
+creates and edits — no delete, matching the schema's own deliberate absence of
+one. `assignVendorToProducts` is the widest invariant-9 surface in the
+catalog: ids are deduplicated first, ownership is checked for every id in one
+org-scoped query rather than N, and a list mixing a foreign id with the
+actor's own **refuses the whole call** rather than assigning the valid
+subset — partial success on a tenancy failure is how a prober learns which ids
+are real.
 
-Nothing writes `vendor` — not a server action, not the seed. So
-`listVendorsAction` always returns `[]`, the vendor `<select>` on the product
-form is permanently empty, every product's `vendor_id` stays NULL, and
-`/office/reorder` groups every row under **"No vendor set"**.
+**The domain layer is genuinely verified** — 12 DB-backed tests including
+cross-tenant refusal, bulk-assign atomicity with a re-read proving no partial
+apply, and reorder grouping end to end. Mutation-checked: disabling the
+ownership guard fails exactly one test.
 
-Until par levels were writable the reorder list was empty anyway, so this was
-invisible. Now the list produces rows, and it produces them in a single
-meaningless group. Spec §9.3 calls for grouping by vendor specifically so
-someone can place one order per supplier; that is the feature this blocks.
+**The screens were driven in real Chrome with database verification** —
+create, edit, bulk assign, bulk clear, the stale-selection blocker, the sticky
+bar, the consequence strings. Four defects were found doing that, all fixed
+the same day (87a8d63's message has the full detail): a stale selection
+surviving a search — a blocker, it wrote to off-screen products, and the
+header checkbox rendered checked against a selection matching nothing
+visible; vendors creatable but not editable (the form existed, nothing wired
+it — the build agent reported the capability and only a DOM read caught it);
+the bulk bar rendering below 98 rows, off-screen; and the clear-vendor label
+reading "Set vendor" when "No vendor" was chosen explicitly.
+
+**One exception, not glossed over: the final `router.refresh()` fix in
+`components/office/vendors-list.tsx` is not browser-verified.** The session
+ended before that check ran. It is typechecked and built, nothing more.
+**Trigger to confirm it: the next time anyone opens a browser against this
+app** — edit a vendor's name, close the form, and check the list shows the new
+name without a manual reload.
+
+Two defects were also found while verifying this, by running things rather
+than reading them, and both are recorded as new items below: `vendors.csv`'s
+own documentation comment silently broke the entire seed (fixed in `parseCsv`
+itself), and `db/seed.ts` ran `main()` at module scope, so importing it to
+test the parser fired the real seed against the live database (fixed by
+guarding `main()` and moving the parser to `db/csv.ts` — see item 23 for the
+sibling script with the identical shape, and CLAUDE.md's migrations/seed
+convention).
 
 The other two halves of finding H stay as they were: users are CLI-only (item
 3), and locations are seed-only but recoverable by editing
@@ -713,3 +745,25 @@ folded in there rather than repeated as separate work. Finding 1 is the
 back-office product form, driven at a desk in a browser rather than on the
 phone; it has not had that click-through since the fix, but it is not blocked
 on item 20's trigger.
+
+## 23. `scripts/create-user.ts` has the same unguarded-`main()` shape `db/seed.ts` just had
+
+**Trigger: the first time anything imports this script rather than running it
+as a CLI — a test, a future admin action, a wrapper script.**
+
+Noted while closing item 19 (50e2512), not fixed. `db/seed.ts` ran `main()` at
+module scope until that same commit; importing it to unit-test the pure CSV
+parser executed the real seed against the active `DATABASE_URL`, racing the
+test suite's truncation and leaving `process.exitCode = 1` behind it — `bun
+test` printed all-pass and `test:docker` still exited 1. See item 19's close
+note and CLAUDE.md's migrations/seed convention for how that one was fixed:
+guard `main()`, and move anything worth unit-testing out of the entry-point
+module.
+
+`scripts/create-user.ts` has the identical shape — nothing calls it except the
+CLI today, but nothing stops a later import either — and its side effect is
+worse than a seed race: it opens an interactive password prompt.
+
+**How to close it:** guard `main()` the same way `db/seed.ts` now is —
+`import.meta.url === pathToFileURL(process.argv[1]).href` — before anything
+ever has a reason to import this file.
