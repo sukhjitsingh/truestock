@@ -574,9 +574,10 @@ The other two halves of finding H stay as they were: users are CLI-only (item
 **Trigger: the first phone test — fold into `docs/phone-count-test.md` rather
 than doing separately.**
 
-Four of the 2026-07-30 fixes are UI on the counting leg, and all four are
-verified by domain tests plus a browser hydration check, not by anyone actually
-scanning a bottle:
+Six of the 2026-07-30 changes are UI on the counting leg, and every one of them
+is backed by domain tests plus a browser hydration check, not by anyone actually
+scanning a bottle. Nothing in this repo's test suite imports a React component,
+so all six are client state that has never executed:
 
 - **The barcode-link screen** (finding B). Search-first, and the each/case
   choice for beer. Worth timing against the 20-second budget specifically —
@@ -588,6 +589,127 @@ scanning a bottle:
   which is now refused (finding E).
 - **The dropped-write message** (D2). Same trick: force a rejection while
   offline and confirm the chip returns to "Synced" and names the write.
+- **The size dropdown on the enroll form** (added later the same day). The thing
+  to watch is the *reactivity*, not the list: with 750 ml selected, change
+  Category to Beer and confirm the size select re-points to the beer list and
+  shows 355 rather than rendering **blank** — a `<select>` whose value matches
+  no option shows empty on a required field, and the whole re-default exists to
+  stop that. Do the same with Unit → Keg, which must jump to the keg volumes
+  regardless of category. Then the one that actually costs time: pick a bottle
+  whose real size is *not* on its list and confirm what a counter does next,
+  because there is no "Other…" here on purpose (`lib/bottle-sizes.ts`). If that
+  turns out to be common rather than rare, the asymmetry is the thing to revisit
+  — not by adding free text, but by lengthening a list.
+  While there, confirm the keg default: enrolling any keg should now preselect
+  **19533 ml (sixtel)**, not the half barrel it used to open on — 7 of the 9
+  seeded kegs are sixtels, and the default was moved to match (finding 2 in
+  item 22, fixed 2026-07-30). If a keg enroll opens on anything else, the fix
+  did not make it to the screen the phone is looking at.
+- **The eaches-only quantity screen.** With the Cases stepper gone for spirits,
+  the layout is one column and the ADD/SET tabs sit above a single box.
+  **Confirm a SET still visibly announces a loss** — put a spirit on 12 eaches,
+  switch to SET, type 3, and check the button reads `SET TO 3 EA / was 12 ea ·
+  −9` before it is tapped. That live consequence line is the only guard on this
+  control (CLAUDE.md is explicit that a modal here would be worse than none), and
+  it now has to do its job in a layout nobody has looked at. On a bottled beer,
+  do the mirror: cases 0 / eaches 12, SET 1 case / 0 eaches, and read what the
+  button claims — it should now say `SET TO 1 CASE, 0 EA / was 0 cases, 12 ea`,
+  naming the 12 bottles it is about to wipe rather than showing `+12` as if
+  nothing were lost (item 22, finding 3, fixed 2026-07-30 but never rendered
+  on a device).
 
 Item 9's offline-queue pass covers the same screens and should be done in the
 same sitting.
+
+## 21. Case entry for spirits is deferred — DECIDED 2026-07-30
+
+**Trigger: Phase 2.0, or never. Not a bug, and not to be re-opened as one.**
+
+Owner's call: only bottled beer gets a case input. `QuantityEntry` and the
+back-office product form both render the case field on `isCountedByCase`
+(`lib/pack-level.ts`) and on nothing else. This is a scope decision in the shape
+of item 12's wine deferral.
+
+Why it went this way rather than staying a field with a hint, so a future
+session does not "restore" it:
+
+- **The old hint invited the wrong thing.** A spirit rendered a Cases stepper
+  reading *"No case size on file"*. CLAUDE.md is explicit that a blank
+  `case_size` on a spirit is correct rather than missing data, but a box with a
+  note about what it lacks reads as a prompt to fill it.
+- **The failure it invited is silent.** A case count against a NULL `case_size`
+  is the single input `computeLineUnits` cannot resolve, so that line is dropped
+  from valuation and reported as excluded rather than being visibly wrong. The
+  count total just comes out low.
+- **It is not a hard block on anything.** A spirit bought by the case is still
+  countable today — as eaches, which is how the bar counts it anyway (62 spirits,
+  2 liqueurs, 5 wines and 3 NA all carry NULL `case_size` deliberately).
+
+If it is ever built, the work is not the input box. It is deciding what a case
+means for a product the catalog has no pack level for, and that is a catalog
+question first: a spirits case size has to be entered, per product, before an
+input for it means anything. The back-office field is already gated on the live
+category select, so recategorising reveals it in the same edit — that is the
+mechanism a future version would extend, not replace.
+
+**Existing case data is preserved, not cleared.** `product-edit-form.tsx`
+submits `caseSize` whether or not the field is on screen, deliberately: hiding a
+field must not destroy a real value in a save the person thought was about the
+name. A spirit can therefore carry an invisible case size, which is inert
+(nothing reads it without a case count) and is the cheaper of the two mistakes.
+
+## 22. Three review findings from 2026-07-30 — fixed same day, unproven on a device
+
+**Trigger: the first phone test (item 20). Re-open only if the phone test shows
+one of the three not behaving as traced below — nothing since the fix has
+executed any of this code.**
+
+All three were found by a correctness review after the size/case work landed,
+fixed the same day, and confirmed by a second, adversarial confirm pass tracing
+real before/after values through each change. None were blockers. Recorded here
+rather than left in a session log, because all three are the
+plausible-and-wrong shape this project treats as its worst failure mode, and
+two of them still have zero runtime evidence — no test in this repo executes a
+React component, so "fixed" below means traced by hand, not observed running.
+
+1. **FIXED — changing a product's category no longer rewrites its stored
+   `size_ml`** (`components/office/product-edit-form.tsx`). Previously, when
+   the old size was absent from the new category's list, `changeCategory`
+   re-defaulted it — re-filing a 355 ml hard seltzer from Beer to Spirits
+   silently moved it to 750. Now `changeCategory` sets `sizeMode` to
+   `"other"` instead: the field flips to the free-text box already showing the
+   true stored number, and `sizeMl` itself is never touched. Traced against
+   Beer/355→Spirits, the mirror Spirits/750→Beer, a product already in "Other…"
+   mode (the function returns before touching it), and a size valid in two
+   lists at once (375 ml, both a spirits half and a wine half — stays on the
+   dropdown, correctly). The unused `defaultSizeMlFor` import was dropped from
+   this file; `enroll-form.tsx` deliberately keeps re-defaulting, because it is
+   creating a product and has no stored value to protect.
+   **Not fully closed:** a product that entered "Other…" mode never flips back
+   to the dropdown even if a later category change makes its typed value a
+   valid preset of the new list — cosmetic only (the correct value still saves,
+   and the user can manually re-select a preset), left as-is rather than fixed.
+2. **FIXED — the keg default is now the keg this bar actually taps**
+   (`lib/bottle-sizes.ts`). `KEG.defaultMl` changed from 58674 (half barrel) to
+   19533 (sixtel); the seed catalog is 7 sixtels, 1 quarter barrel, 1 half
+   barrel. The pinned `58674` test assertion was replaced with one that reads
+   `docs/catalog/products.csv`, computes the modal keg size, asserts it is a
+   strict majority, and asserts the default equals it — a guard that tracks the
+   catalog rather than a literal restating the constant, and the only one of
+   the three fixes an executed test actually covers (16th test in
+   `tests/bottle-sizes.test.ts`, up from 15).
+3. **FIXED — `describeAfter` now guards eaches falling to zero, not just
+   cases** (`components/count/quantity-entry.tsx`). Each axis now has its own
+   zero guard — `(c > 0 || currentCases > 0)` and `(e > 0 || currentEaches > 0
+   || parts.length === 0)` — so a SET that wipes either cases or eaches says
+   "0 cases" / "0 ea" out loud instead of dropping the term. Traced against
+   currentEaches=12→SET 1 case/0 eaches (now says "0 ea"), the mirror
+   currentCases=2→SET 0 cases/5 eaches (now says "0 cases"), and both-to-zero
+   (now says both). ADD-mode's label and the "was …" half of the SET line both
+   still call the original `describe()`, confirmed unchanged.
+
+Finding 3 is on the counting leg and is covered by open item 20's phone pass —
+folded in there rather than repeated as separate work. Finding 1 is the
+back-office product form, driven at a desk in a browser rather than on the
+phone; it has not had that click-through since the fix, but it is not blocked
+on item 20's trigger.

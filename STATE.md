@@ -45,8 +45,14 @@ Verified means *observed running*, not reviewed or typechecked.
 | **Error discrimination** | `tests/db-errors.test.ts` — asserts against the real `DrizzleQueryError` class, not a stand-in, because the shape that broke it came from the library |
 | **Back office UI** | Signed in through the real form in Chrome, dashboard and all office routes render, console clean, unauthenticated requests redirect |
 | **Role gating is structural** | A manager's HTML contains no unpriced tile at all, and zero dollar-shaped strings anywhere in the response |
+| **Size preset lists** | `tests/bottle-sizes.test.ts` — which list each category resolves to, the keg short-circuit ahead of category, the NA-on-the-beer-list decision, **every size in the seed catalog asserted against the list its own product resolves to**, and (added by the review fix below) the keg default computed as the catalog's modal keg size rather than a pinned literal. Pure module only: no component is executed by it |
 
-**57 tests across 4 files**, all green, as of 2026-07-30.
+**73 tests across 5 files**, all green, as of 2026-07-30 — `bun run test:docker`
+against MariaDB 11.8 in Docker, 316 assertions, 0 failures. The 16 in
+`tests/bottle-sizes.test.ts` are all 2026-07-30: 15 for the preset lists
+themselves, plus 1 more from the review fix below that replaced a pinned
+`58674` assertion with one computed from the catalog. The 57 that existed
+before are unchanged, so nothing was modified or disabled to get there.
 
 **The suite is checked for teeth, repeatedly.** Deleting the ledger insert from
 `applyIncrement` — the whole idempotency mechanism — fails exactly the four
@@ -55,6 +61,11 @@ par/reorder tests. Widening `isCountWritable` to accept `submitted` fails
 exactly the 3 write-refusal tests. In each case everything unrelated stays
 green. A suite that passes against a broken implementation is worse than none,
 so re-do this after any significant change to the write path.
+
+**The 16 size tests have not had that treatment.** They were run, they pass, and
+nobody has checked what they fail against. The seed-catalog block is the one
+worth mutating first, since it is the only guard against a preset-list edit
+orphaning a real product.
 
 ## What is built but unproven
 
@@ -77,6 +88,32 @@ Written, reviewed, typechecked — never observed working.
   20-second budget, so it wants timing specifically), the fill-correction mode,
   the optimistic rollback on a refused write, and the message naming a dropped
   queued write. Listed with how to exercise each as open-item #20.
+- **The size dropdown and the eaches-only quantity screen** (2026-07-30). Both
+  are on the counting leg and **neither has been opened on a phone, or in any
+  browser.** Typecheck, lint, `next build` and the full suite are green and none
+  of them executed a React component: no test in this repo imports one, and the
+  16 new tests import `lib/bottle-sizes.ts`, `node:fs` and `node:path` and
+  nothing else. So every behavioural claim in that change is client state
+  nothing has run — the size list re-pointing when the category or unit type
+  changes, the size *not* moving on mount of the edit form, the Cases stepper
+  appearing only for bottled beer, the "Other…" reveal, and the SET consequence
+  line on the one-column layout.
+  **This is more surface needing the phone test, not progress toward it.** It
+  changed the enroll screen and the quantity screen since the last time anyone
+  looked at either, while the number of humans who have counted a bottle with
+  this app is still zero. Two of the three review findings below live on exactly
+  these screens.
+- **The three review findings from 2026-07-30 are fixed, and two of them are
+  exactly the kind of change this section is about** (open-item #22 closed).
+  `changeCategory` now diverts to "Other…" instead of rewriting a stored
+  `size_ml`, and `describeAfter` now guards eaches falling to zero the same way
+  it already guarded cases — both in `components/office/product-edit-form.tsx`
+  and `components/count/quantity-entry.tsx`, both components no test in this
+  repo executes. "Fixed" for those two means traced by hand against real
+  before/after values in a confirm pass, not observed running. Only the third
+  — the keg default moved from a half barrel to a sixtel in
+  `lib/bottle-sizes.ts` — is backed by an executed test, because it is a
+  pure-function default, not a component.
 - **The offline write queue** (`lib/count-queue.ts`). Reasoned about only. It was
   already wrong once — the original had no drain path at all — and 2026-07-30
   changed its rejection behaviour, so a permanently-refused write now leaves the
@@ -90,6 +127,31 @@ Written, reviewed, typechecked — never observed working.
 
 ## Recent history
 
+- **2026-07-30** — **A size can no longer be mistyped, and only bottled beer is
+  offered a case.** Both were free-typed number boxes that accepted a plausible
+  wrong answer and reported nothing. `75` entered for `750` is a legal integer:
+  it saves clean and then values that product's whole count at a tenth of its
+  worth. A case count entered against a spirit's NULL `case_size` is the one
+  input `computeLineUnits` cannot resolve, so the line silently drops out of the
+  valuation rather than being wrong out loud — and the old form actively invited
+  it, hinting *"No case size on file"* under a Cases box on products the catalog
+  leaves blank on purpose. Sizes now come from category-aware preset lists
+  (`lib/bottle-sizes.ts`, the single definition the way `lib/pack-level.ts` is
+  for cases); the back office keeps an "Other…" escape and the count leg
+  deliberately has none, because a mistake on a phone in a dim bar is silent and
+  a mistake at a desk is correctable. Case entry for spirits is **deferred to
+  Phase 2.0 by owner decision** (open-item #21) — a scope call, not a gap.
+  Typecheck, lint, `next build` and `test:docker` are all green, 73/73, 316
+  assertions. **None of them ran a React component, and no browser was
+  opened** — see "built but unproven". An opus correctness review then found
+  three non-blocking, post-implementation defects, and all three are now
+  fixed (open-item #22): `changeCategory` no longer re-defaults a stored
+  `size_ml` on an unrelated category change, diverting to "Other…" instead;
+  the keg default moved from a half barrel to a sixtel, backed by a new
+  catalog-derived test rather than a pinned literal; and `describeAfter` now
+  guards eaches falling to zero the same way it already guarded cases. Two of
+  the three touch a component no test executes, so "fixed" there means traced
+  by hand against real values, not observed running.
 - **2026-07-30** — **The Phase 1 code gaps are closed** (`docs/mvp-gaps.md`,
   branch `fix/mvp-gaps-blockers`, nine commits). A, B, C, D1, D2, E, F, G and I
   fixed; H (vendors) and J (`scanCountLine` dead code) deliberately left. The
@@ -208,8 +270,9 @@ for one. Protocol for 1 and 2: **`docs/phone-count-test.md`**. Start at
 1. **Drive a real count on a phone.** Time it against the sub-20-minute target the
    whole design is justified by. A *first* pass enrols rather than counts — every
    barcode is unknown — so it measures the enroll flow's 20-second budget, not
-   the 20-minute one. Fold in open-item #20's four checks while you are in there;
-   they exercise the same screens.
+   the 20-minute one. Fold in open-item #20's six checks while you are in there;
+   they exercise the same screens — and two of the six only exist because the
+   2026-07-30 size and case work changed those screens again afterwards.
 2. **Exercise the offline queue for real** — turn the WiFi off mid-scan, and go
    into the walk-in.
 3. **Verify the production CSP** with `next build && next start` before any deploy.

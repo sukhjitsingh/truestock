@@ -482,6 +482,11 @@ export function CountLeg({
               currentCases={existing?.sealedCaseQty ?? 0}
               currentEaches={existing?.sealedEachQty ?? 0}
               caseSize={existing?.caseSizeAtCount ?? product.caseSize}
+              // Identity, not a flag: QuantityEntry asks `isCountedByCase`
+              // itself so this screen never gets its own idea of what a case
+              // is. Both fields come off the resolved product row.
+              category={product.category}
+              unitType={product.unitType}
               canSet={existing?.lineId != null}
               pending={busy}
               onSubmit={async (submission: QuantitySubmission) => {

@@ -119,6 +119,17 @@ testing decides whether this half needs building at all.
 These are correctness rules, not preferences. Violating them produces numbers that look
 plausible and are wrong, which is the worst failure mode this app has.
 
+**A plausible-but-wrong default is more dangerous than an obviously broken
+one, and this is not hypothetical — see "Draft beer" below.** The enroll
+form's keg size once defaulted to 750 ml, which is absurd on sight and
+self-correcting: nobody ships a keg count that small. It was changed to
+58674 (a half barrel), which looks like a real keg and is wrong for 7 of the
+9 kegs this bar actually stocks — and the whole point of a preselected
+default on a 20-second enroll form is that the counter is not expected to
+check it. The fix is not "pick a better guess"; it is deriving the default
+from the seed catalog and asserting it in a test, so the default and the
+catalog cannot drift apart silently again.
+
 1. **Closed counts are immutable.** Status `closed` means no edits, ever. Corrections are
    new adjustment records. Never update a closed count's lines.
 2. **Snapshot cost and case size onto the count line** (`unit_cost_at_count`,
@@ -195,6 +206,17 @@ Things to know about it:
   when `sealed_case_qty > 0` — "zero cases of an unknown size" is unambiguously zero. So a
   NULL case size on liquor never excludes a line. Do not "fix" the catalog by backfilling
   case sizes onto spirits; that would invent a pack level the bar doesn't use.
+  **As of 2026-07-30 the UI says this too, and that is an owner decision rather than an
+  omission.** The Cases stepper on the counting screen and the Case size field on the
+  back-office product form both render only when `isCountedByCase` (`lib/pack-level.ts`)
+  says so — bottled beer, keyed off the *live* category select rather than the saved row,
+  so recategorising a spirit to Beer reveals the field in the same edit that needs it.
+  Before this, a spirit showed a Cases box hinting *"No case size on file"*, which reads as
+  a prompt to fill it in; and a case count entered against a NULL `case_size` is the one
+  input `computeLineUnits` cannot resolve, so it takes the line out of the valuation
+  entirely — invisible, and the wrong direction. **Case entry for spirits is deferred to
+  Phase 2.0 by the owner.** Do not restore it as a bug fix. The decision is recorded as
+  `docs/open-items.md` #21.
 - **Spirits default to 750 ml.** Anything also stocked as a 1.75L handle needs its own
   row — different barcode, different case cost, different pour economics.
 - **`upc` is deliberately blank.** It fills through scan-to-enroll during the first count.
@@ -225,6 +247,49 @@ Draft is simpler than it looks and should not be special-cased:
   the catalog decays and the whole system dies. This is the highest-risk interaction.
 - **Always offer a search picker beside the scan button** — damaged labels, house
   infusions, and some wine have no usable barcode.
+- **Bottle size is picked from a list, and on the phone it can only be picked.** `size_ml`
+  comes from a category-aware preset dropdown: spirits and liqueur share a list, beer and
+  NA share another, wine has its own, and `unit_type: keg` short-circuits to the three keg
+  volumes before category is consulted at all. An unrecognised category falls back to
+  spirits rather than to an empty dropdown, because an empty required field is unfillable
+  and would dead-end the enroll form mid-count.
+  **The escape hatch is asymmetric on purpose.** The back-office form carries an "Other…"
+  option that reveals a number box; the count leg's enroll form has none. Typing `75` for
+  `750` is a legal integer — it saves clean and then values that product's entire count at
+  a tenth of its worth with nothing on screen looking wrong, the same silent failure class
+  as a wrong active location. At a desk that trade is acceptable and the odd bottle has to
+  be enterable somewhere; in a dim bar against a 20-second budget it is not, so an unlisted
+  bottle waits for a catalog edit instead of getting a free-text field. Do not "restore
+  consistency" by adding Other… to the phone or removing it from the desk — the asymmetry
+  *is* the design.
+  `lib/bottle-sizes.ts` is the single definition of what a size is, exactly the way
+  `lib/pack-level.ts` is for cases. Never let a second list appear inside a component.
+  Two things in it look like tidying and are not:
+  - **NA is on the beer list deliberately.** All three seeded NA products are 355 ml cans
+    and 355 is not a spirits size; filing NA with spirits would orphan every one of them
+    behind an "Other…" the phone does not have.
+  - **Editing a preset list can orphan a seeded product silently.** The list is closed, so
+    a removed or renumbered size does not error — it just makes some real product
+    unenterable on the leg that enrolls it. `tests/bottle-sizes.test.ts` reads the seed
+    catalog off disk and asserts every product's size against the list its own category and
+    unit type resolve to. That test is the guard. If it fails after a list edit, the list
+    is wrong, not the test.
+  One implementation rule that is load-bearing: re-defaulting the size when the category
+  changes happens in the change handler, **never in a `useEffect`** — an effect also fires
+  on mount, and mount is precisely when the edit form must not move a stored size.
+  **Re-defaulting and re-pointing are not the same action, and the back office only does
+  the second.** `enroll-form.tsx` (creating a product, no stored value to protect) may
+  re-default the size to the new category's default. `product-edit-form.tsx` (editing one)
+  never does: when a stored `size_ml` is not on the newly-chosen category's list,
+  `changeCategory` flips `sizeMode` to `"other"` and leaves the number untouched — the
+  field becomes the free-text box, already showing the real value, instead of a dropdown
+  snapping to a default. A save of an unrelated field (fixing a typo in the name) must
+  never rewrite `size_ml` as a side effect of the category select passing through; that is
+  the same plausible-and-wrong shape as the keg default above, just triggered by a click
+  instead of read off a screen unlooked-at.
+  `lib/validation/catalog.ts` is deliberately *not* tightened to an allowlist of these
+  presets; the reasoning is in that file, and shortening a list must not start bouncing
+  saves on rows this app itself wrote.
 - **The active location is locked per leg, with an escape hatch.** A count covers all five
   locations, but scanning is scoped to one at a time: pick a location, count it, tap
   *Finish section*, move on. A separate "count something elsewhere" action records a stray

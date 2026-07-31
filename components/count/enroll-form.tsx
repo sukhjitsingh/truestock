@@ -8,12 +8,21 @@ import {
   searchProductsAction,
 } from "@/app/actions/catalog";
 import type { ProductSummary } from "@/lib/domain/catalog";
+import { bottleSizesFor, defaultSizeMlFor, isPresetSizeMl } from "@/lib/bottle-sizes";
 import { isCountedByCase } from "@/lib/pack-level";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/field";
 
 const CATEGORIES = ["Spirits", "Beer", "Wine", "Liqueur", "NA"];
+
+/**
+ * What a new product opens as. Named rather than inlined because the starting
+ * size is derived from these two — `defaultSizeMlFor` owns the number, so a
+ * change to the preset lists cannot leave a stale literal behind here.
+ */
+const INITIAL_CATEGORY = "Spirits";
+const INITIAL_UNIT_TYPE = "bottle" as const;
 
 /**
  * What happens when a scanned barcode resolves to nothing.
@@ -283,15 +292,26 @@ function LinkExisting({
 /**
  * The rarer path: a product the catalog really does not have.
  *
- *  - Four fields. Name, category, size, unit type. Nothing else is required,
- *    because everything else is editable later from the back office at a desk.
+ *  - Four fields. Name, category, size, unit type. Only the name is typed;
+ *    the other three are picked. Nothing else is required, because everything
+ *    else is editable later from the back office at a desk.
  *  - No cost field at all. Cost is owner-only and would be dropped for anyone
  *    else anyway (lib/domain/catalog.ts), so showing it to the manager or
  *    bartender who is actually mid-count would be a field that silently does
  *    nothing. Cost comes off a supplier invoice, not off a bottle in the dark.
  *  - No vendor, no par, no reorder point. Same reason.
- *  - Size defaults to 750 — the overwhelming majority of the catalog
- *    (CLAUDE.md: "Spirits default to 750 ml"), so the common case is zero taps.
+ *  - Size is a closed list (lib/bottle-sizes.ts) with NO "Other…" escape
+ *    hatch, unlike the back-office form. A typed size is a field where `75`
+ *    for `750` saves clean and then values that product's whole count at a
+ *    tenth of its worth, with nothing on screen looking wrong. That is a bad
+ *    trade anywhere and an unacceptable one here, in a dim bar against a
+ *    20-second budget. An unlisted bottle waits for a catalog edit at a desk.
+ *  - The size that opens selected follows the category and unit type —
+ *    750 ml for spirits, 355 ml for beer and NA, a half barrel for a keg — so
+ *    the common case stays zero taps rather than one. Changing either of those
+ *    selects re-points the list, and re-defaults the size if the current one
+ *    is not on the new list; leaving 750 selected against the beer list would
+ *    render the select blank on a required field.
  *
  * If a field is ever added here, something else has to come off. That is the
  * trade, and it is deliberate.
@@ -306,13 +326,42 @@ function CreateNew({
   onBackToSearch: () => void;
 }) {
   const [name, setName] = useState("");
-  const [category, setCategory] = useState("Spirits");
-  const [sizeMl, setSizeMl] = useState("750");
-  const [unitType, setUnitType] = useState<"bottle" | "can" | "keg">("bottle");
+  const [category, setCategory] = useState<string>(INITIAL_CATEGORY);
+  const [unitType, setUnitType] = useState<"bottle" | "can" | "keg">(INITIAL_UNIT_TYPE);
+  const [sizeMl, setSizeMl] = useState(
+    String(defaultSizeMlFor({ category: INITIAL_CATEGORY, unitType: INITIAL_UNIT_TYPE })),
+  );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nameCollision, setNameCollision] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  const sizes = bottleSizesFor({ category, unitType });
+
+  /**
+   * Category and unit type both choose the size list, so both have to be able
+   * to move the size with them.
+   *
+   * Done in the change handler rather than in an effect on purpose: an effect
+   * would also run on mount, and the two are only distinguishable by extra
+   * state. Here "the user changed the category" is the only thing that can
+   * call this.
+   *
+   * The size is re-defaulted only when the current one is absent from the new
+   * list. Spirits 375 → Wine keeps 375 (both lists have it), which is what
+   * someone switching a mislabelled category means; Spirits 750 → Beer cannot
+   * keep 750, and a `<select>` whose value matches no option renders empty on
+   * a field the form requires.
+   */
+  function retarget(next: { category?: string; unitType?: typeof unitType }) {
+    const ctx = {
+      category: next.category ?? category,
+      unitType: next.unitType ?? unitType,
+    };
+    if (next.category !== undefined) setCategory(next.category);
+    if (next.unitType !== undefined) setUnitType(next.unitType);
+    if (!isPresetSizeMl(Number(sizeMl), ctx)) setSizeMl(String(defaultSizeMlFor(ctx)));
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -377,7 +426,11 @@ function CreateNew({
         </Field>
 
         <Field label="Category" htmlFor="p-category" error={fieldErrors.category}>
-          <Select id="p-category" value={category} onChange={(e) => setCategory(e.target.value)}>
+          <Select
+            id="p-category"
+            value={category}
+            onChange={(e) => retarget({ category: e.target.value })}
+          >
             {CATEGORIES.map((c) => (
               <option key={c} value={c}>
                 {c}
@@ -387,21 +440,24 @@ function CreateNew({
         </Field>
 
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Size (ml)" htmlFor="p-size" error={fieldErrors.sizeMl}>
-            <Input
+          <Field label="Size" htmlFor="p-size" error={fieldErrors.sizeMl}>
+            <Select
               id="p-size"
-              type="number"
-              inputMode="numeric"
               value={sizeMl}
               onChange={(e) => setSizeMl(e.target.value)}
-              required
-            />
+            >
+              {sizes.map((s) => (
+                <option key={s.ml} value={s.ml}>
+                  {s.label}
+                </option>
+              ))}
+            </Select>
           </Field>
           <Field label="Unit" htmlFor="p-unit" error={fieldErrors.unitType}>
             <Select
               id="p-unit"
               value={unitType}
-              onChange={(e) => setUnitType(e.target.value as typeof unitType)}
+              onChange={(e) => retarget({ unitType: e.target.value as typeof unitType })}
             >
               <option value="bottle">Bottle</option>
               <option value="can">Can</option>
