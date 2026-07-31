@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   submitCountAction,
   reviewCountAction,
+  reopenCountAction,
   closeCountAction,
 } from "@/app/actions/counts";
 import { ActionBar, ActionBarPrimary } from "@/components/ui/action-bar";
@@ -89,9 +90,33 @@ export function SessionActions({
     );
   }
 
+  /*
+    Reopen is offered at both `submitted` and `reviewed`, and it is what makes
+    the write freeze on those statuses safe to enforce. A submitted count
+    takes no more scans, so a Submit tapped by mistake with sections still
+    uncounted would otherwise be unrecoverable — the only forward move is to
+    close it, and invariant 1 makes that permanent.
+
+    It is deliberately the secondary action. Reopening is a real decision (it
+    un-reviews a count somebody signed off on), not the obvious next tap.
+    Never rendered at `closed`, because this component returns null there.
+  */
+  const reopen = (
+    <Button
+      variant="outline"
+      size="primary"
+      className="flex-1"
+      disabled={pending}
+      onClick={() => run(() => reopenCountAction({ countId }))}
+    >
+      {pending ? "Working…" : "Reopen"}
+    </Button>
+  );
+
   if (status === "submitted") {
     return (
       <Bar error={error}>
+        {reopen}
         <ActionBarPrimary
           label={pending ? "Working…" : "Mark reviewed"}
           disabled={pending}
@@ -106,6 +131,7 @@ export function SessionActions({
   // second row (design-system.md §8.3).
   return (
     <Bar error={error}>
+      {reopen}
       <ActionBarPrimary
         label={pending ? "Closing…" : "Close count"}
         value={totalValue}

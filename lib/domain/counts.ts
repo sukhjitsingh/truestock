@@ -81,10 +81,12 @@ import type { Actor } from "@/lib/authz";
 import { canSeeCost } from "@/lib/authz";
 import {
   ClosedCountError,
+  CountNotWritableError,
   InvalidCountTransitionError,
   NotFoundError,
 } from "@/lib/domain/errors";
 import { isDuplicateKeyError, withLockRetry } from "@/lib/domain/db-errors";
+import { isCountWritable } from "@/lib/count-status";
 import { resolveBarcodeForCount } from "@/lib/domain/catalog";
 import {
   computeLineValuation,
@@ -171,6 +173,13 @@ async function assertCountWritable(
   }
   if (row.status === "closed") {
     throw new ClosedCountError();
+  }
+  // Submitted and reviewed counts are no longer being counted. See
+  // CountNotWritableError for why this is enforced rather than merely implied
+  // by the UI hiding the "Keep counting" button, and lib/count-status.ts for
+  // why the predicate is shared rather than written out here.
+  if (!isCountWritable(row.status)) {
+    throw new CountNotWritableError(row.status);
   }
   return row.status;
 }
@@ -857,6 +866,34 @@ export async function submitCount(actor: Actor, countId: number): Promise<CountS
 /** Supervisory step — owner/manager only (enforced by the action layer too). */
 export async function reviewCount(actor: Actor, countId: number): Promise<CountSummaryRow> {
   const row = await transitionCount(actor.organizationId, countId, ["submitted"], "reviewed");
+  return row;
+}
+
+/**
+ * Send a submitted or reviewed count back to `in_progress` so counting can
+ * continue. Owner/manager only, like the other supervisory steps.
+ *
+ * This is the escape hatch that makes freezing writes on `submitted` safe to
+ * enforce at all. Without it, a mis-tapped Submit with three sections still
+ * uncounted would be unrecoverable: the count takes no more lines, and the
+ * only forward transition is to close it — which invariant 1 then makes
+ * immutable forever. The remedy would have been to throw the count away and
+ * recount the bar from scratch, which nobody would do; they would keep the
+ * wrong number instead.
+ *
+ * `closed` is deliberately NOT in the `from` list, and never should be. That
+ * is invariant 1 and it is absolute — corrections to a closed count are new
+ * adjustment records, not a reopened count. The distinction this function
+ * rests on is that `submitted` and `reviewed` are workflow states, while
+ * `closed` is a commitment.
+ */
+export async function reopenCount(actor: Actor, countId: number): Promise<CountSummaryRow> {
+  const row = await transitionCount(
+    actor.organizationId,
+    countId,
+    ["submitted", "reviewed"],
+    "in_progress",
+  );
   return row;
 }
 

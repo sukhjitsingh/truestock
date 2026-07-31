@@ -17,10 +17,15 @@ import { canSeeCost, canManageCost } from "@/lib/authz";
 import { ConflictError, NotFoundError } from "@/lib/domain/errors";
 import { isDuplicateKeyError } from "@/lib/domain/db-errors";
 import { getOnHandSnapshot } from "@/lib/domain/on-hand";
+import { isCountedByCase } from "@/lib/pack-level";
 import type {
   ProductCreateInput,
   ProductUpdateInput,
   ProductSearchInput,
+  LinkBarcodeInput,
+  VendorCreateInput,
+  VendorUpdateInput,
+  AssignVendorToProductsInput,
 } from "@/lib/validation/catalog";
 
 // ---------------------------------------------------------------------------
@@ -78,8 +83,20 @@ export interface ProductSummary {
  *   counted by the case; a NULL case size on a spirit, wine or keg is correct
  *   rather than missing (CLAUDE.md, "The catalog"), so this deliberately does
  *   not fire on them.
+ * - `needs_par` — no `product_par` row, so this product can never appear on
+ *   the reorder list no matter how far it runs down. Unlike the others this
+ *   is not derivable from the product row, so it is attached in
+ *   `attachStock` and therefore only appears when a caller asked for stock
+ *   figures (`includeOnHand`). That is the right split rather than a
+ *   limitation: the back-office catalog is the screen whose job is flagging
+ *   catalog decay, and the count-time picker would pay for a join to render
+ *   a pill nobody mid-count can act on.
  */
-export type ProductIncompleteReason = "needs_producer" | "needs_cost" | "needs_case_size";
+export type ProductIncompleteReason =
+  | "needs_producer"
+  | "needs_cost"
+  | "needs_case_size"
+  | "needs_par";
 
 interface IncompletenessInput {
   brand: string | null;
@@ -97,10 +114,10 @@ function incompleteReasons(row: IncompletenessInput, showCost: boolean): Product
     reasons.push("needs_producer");
   }
   // Bottled beer is the only thing counted both as eaches and as cases, so
-  // it is the only thing a missing case size is a gap for. `unit_type` is
-  // what separates bottled/canned beer from draft here — a keg is one unit
-  // measured in tenths and never has a case size.
-  if (category === "beer" && row.unitType !== "keg" && row.caseSize == null) {
+  // it is the only thing a missing case size is a gap for. That rule now
+  // lives in lib/pack-level.ts because the barcode-link screen asks the same
+  // question — see there for why it is shared rather than repeated.
+  if (isCountedByCase(row) && row.caseSize == null) {
     reasons.push("needs_case_size");
   }
   if (showCost && !row.currentUnitCost) {
@@ -259,6 +276,10 @@ async function attachStock(actor: Actor, rows: ProductSummary[]): Promise<Produc
     const par = parByProduct.get(row.id);
     return {
       ...row,
+      // A product with no par is invisible to the reorder list forever, and
+      // that failure is silent at every layer above: the list simply renders
+      // as though nothing is short. Saying so here is what makes it visible.
+      incomplete: par == null ? [...row.incomplete, "needs_par" as const] : row.incomplete,
       stock: {
         // null rather than 0 when there is no closed count to derive from:
         // "we have never counted this" and "we counted it and there are none"
@@ -383,6 +404,115 @@ async function assertVendorOwned(
   }
 }
 
+/**
+ * Invariant 9, same reasoning as `assertVendorOwned`: `product_id` arrives
+ * from the client on the barcode-link path, and the composite tenant foreign
+ * key would reject a cross-tenant id at the database — but as a 1452, which
+ * surfaces as an opaque server error rather than the NotFound invariant 9
+ * requires. Checking here means a foreign id is answered the same way a
+ * nonexistent one is, and never confirms the row is real.
+ */
+async function assertProductOwned(
+  runner: Runner,
+  organizationId: number,
+  productId: number,
+): Promise<void> {
+  const [owned] = await runner
+    .select({ id: product.id })
+    .from(product)
+    .where(and(eq(product.id, productId), eq(product.organizationId, organizationId)))
+    .limit(1);
+  if (!owned) {
+    throw new NotFoundError("Product");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Scan-to-enroll: link a scanned barcode to a product already in the catalog
+// ---------------------------------------------------------------------------
+
+/**
+ * The "this bottle is already in the catalog, it just has no barcode yet"
+ * path — which during the first count is the overwhelmingly common one, since
+ * `upc` is deliberately blank on all 97 seeded products (CLAUDE.md) and fills
+ * in through scanning.
+ *
+ * Without this, `createProduct` was the only enroll path, and typing the
+ * catalog's own name for the bottle collided with
+ * `product_name_size_ml_unique` and left the counter with an error and no way
+ * forward, mid-count, on the app's highest-risk interaction. Typing a
+ * *differing* name was worse rather than better: it succeeded, and produced a
+ * second copy of a product the catalog already had, with the count split
+ * silently across the two.
+ *
+ * `isPrimary` is derived, not accepted: the first barcode a product gets is
+ * its primary one, and any later one is not. Letting the client decide would
+ * allow two primaries on one product, which no constraint forbids and nothing
+ * would notice.
+ */
+export async function linkBarcodeToProduct(
+  actor: Actor,
+  input: LinkBarcodeInput,
+): Promise<ProductSummary> {
+  await db.transaction(async (tx) => {
+    // Inside the transaction so the product cannot be reassigned or
+    // deactivated between the check and the insert.
+    await assertProductOwned(tx, actor.organizationId, input.productId);
+
+    const [existing] = await tx
+      .select({ id: productBarcode.id })
+      .from(productBarcode)
+      .where(
+        and(
+          eq(productBarcode.organizationId, actor.organizationId),
+          eq(productBarcode.productId, input.productId),
+        ),
+      )
+      .limit(1);
+
+    try {
+      await tx.insert(productBarcode).values({
+        organizationId: actor.organizationId,
+        productId: input.productId,
+        barcode: input.barcode,
+        format: input.format,
+        packLevel: input.packLevel,
+        isPrimary: existing == null,
+      });
+    } catch (err) {
+      if (isDuplicateKeyError(err)) {
+        // product_barcode_organization_barcode_unique. Name who already holds
+        // it — mid-count, "already assigned" without a name is a dead end,
+        // and the answer is usually "you already scanned this one".
+        const [owner] = await tx
+          .select({ name: product.name })
+          .from(productBarcode)
+          .innerJoin(product, eq(product.id, productBarcode.productId))
+          .where(
+            and(
+              eq(productBarcode.organizationId, actor.organizationId),
+              eq(productBarcode.barcode, input.barcode),
+            ),
+          )
+          .limit(1);
+        throw new ConflictError(
+          owner
+            ? `Barcode ${input.barcode} is already assigned to "${owner.name}".`
+            : `Barcode ${input.barcode} is already assigned to another product.`,
+        );
+      }
+      throw err;
+    }
+  });
+
+  const rows = await selectProducts(actor, eq(product.id, input.productId), 1);
+  const result = rows[0];
+  if (!result) {
+    throw new NotFoundError("Product");
+  }
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Scan-to-enroll create
 // ---------------------------------------------------------------------------
@@ -503,12 +633,65 @@ export async function createProduct(
 // Update
 // ---------------------------------------------------------------------------
 
+/**
+ * Write (or clear) a product's OVERALL par — the `location_id IS NULL` row.
+ *
+ * Overall-only is the MVP convention (spec §8, and CLAUDE.md open question 2,
+ * which is still open on purpose). `ProductPar.location_id` is nullable
+ * precisely so per-location pars can be added later without a migration, and
+ * writing NULL rows now is what keeps that question deferred rather than
+ * answered by accident. The `location_scope` generated column enforces at
+ * most one overall par per product at the database level, so a concurrent
+ * double-write fails on the unique index rather than producing two.
+ *
+ * Passing `parLevel: null` deletes the row. "This product has no par" is a
+ * real state — it is the state all 97 seeded products are in — and it has to
+ * be reachable, or a par typed by mistake could never be taken back.
+ */
+async function upsertProductPar(
+  runner: Runner,
+  organizationId: number,
+  productId: number,
+  parLevel: number | null,
+  reorderPoint: number | null | undefined,
+): Promise<void> {
+  const scope = and(
+    eq(productPar.organizationId, organizationId),
+    eq(productPar.productId, productId),
+    isNull(productPar.locationId),
+  );
+
+  if (parLevel == null) {
+    await runner.delete(productPar).where(scope);
+    return;
+  }
+
+  // DECIMAL columns — drizzle's decimal mode is string in/out, so the
+  // validated numbers are formatted here rather than passed through. Same
+  // reasoning as `wasteFactor` below.
+  const values = {
+    parLevel: parLevel.toFixed(2),
+    reorderPoint: reorderPoint == null ? null : reorderPoint.toFixed(2),
+  };
+
+  const updated = await runner.update(productPar).set(values).where(scope);
+  if (updated[0].affectedRows > 0) {
+    return;
+  }
+  await runner.insert(productPar).values({
+    organizationId,
+    productId,
+    locationId: null,
+    ...values,
+  });
+}
+
 export async function updateProduct(
   actor: Actor,
   input: ProductUpdateInput,
 ): Promise<ProductSummary> {
   const allowCost = canManageCost(actor.role);
-  const { productId, currentUnitCost, wasteFactor, ...rest } = input;
+  const { productId, currentUnitCost, wasteFactor, parLevel, reorderPoint, ...rest } = input;
 
   const patch: Partial<typeof product.$inferInsert> = { ...rest };
   if (wasteFactor !== undefined) {
@@ -524,43 +707,60 @@ export async function updateProduct(
   // have it ignored (same reasoning as createProduct above) rather than the
   // whole update rejected.
 
-  // `null` is a legitimate value here — it clears the vendor — so only a
-  // non-null id needs proving. See assertVendorOwned.
-  if (patch.vendorId != null) {
-    await assertVendorOwned(db, actor.organizationId, patch.vendorId);
-  }
+  // One transaction, because a product edit can now write two tables: the
+  // product row and its `product_par` row. Saving the name and silently
+  // dropping the par (or the reverse) would be a half-applied edit that the
+  // form reports as success.
+  await db.transaction(async (tx) => {
+    // Existence and ownership, proven once and up front, before anything is
+    // written (invariant 9 — a cross-tenant id is answered as NotFound).
+    //
+    // This ALSO replaces the previous `affectedRows === 0 -> NotFoundError`
+    // check, which was subtly wrong and is now reachable in normal use.
+    // mysql2 does not set CLIENT_FOUND_ROWS, so `affectedRows` counts rows
+    // actually CHANGED, not rows matched — a save that submits identical
+    // values matches the row, changes nothing, and reported "Product not
+    // found". That was latent while every edit changed something; par levels
+    // make "save the form having only touched the par" an ordinary action,
+    // and it would have failed with an error naming the wrong thing.
+    await assertProductOwned(tx, actor.organizationId, productId);
 
-  if (Object.keys(patch).length === 0) {
-    const rows = await selectProducts(actor, eq(product.id, productId), 1);
-    const existing = rows[0];
-    if (!existing) throw new NotFoundError("Product");
-    return existing;
-  }
-
-  let result;
-  try {
-    // The organization predicate is what turns a cross-tenant update into a
-    // no-op (affectedRows 0 -> NotFoundError) instead of a successful write to
-    // someone else's catalog.
-    result = await db
-      .update(product)
-      .set(patch)
-      .where(
-        and(eq(product.id, productId), eq(product.organizationId, actor.organizationId)),
-      );
-  } catch (err) {
-    if (isDuplicateKeyError(err)) {
-      // product_name_size_ml_unique — only reachable if this update changes
-      // name and/or size_ml to a combination another product already has.
-      throw new ConflictError(
-        "Another product already has this name and size. Choose a different name or size.",
-      );
+    // `null` is a legitimate value here — it clears the vendor — so only a
+    // non-null id needs proving. See assertVendorOwned.
+    if (patch.vendorId != null) {
+      await assertVendorOwned(tx, actor.organizationId, patch.vendorId);
     }
-    throw err;
-  }
-  if (result[0].affectedRows === 0) {
-    throw new NotFoundError("Product");
-  }
+
+    if (Object.keys(patch).length > 0) {
+      try {
+        // The organization predicate stays on the write as well: the check
+        // above is the answer to the caller, this is the guarantee that a
+        // cross-tenant row cannot be touched even if that check were skipped.
+        await tx
+          .update(product)
+          .set(patch)
+          .where(
+            and(eq(product.id, productId), eq(product.organizationId, actor.organizationId)),
+          );
+      } catch (err) {
+        if (isDuplicateKeyError(err)) {
+          // product_name_size_ml_unique — only reachable if this update
+          // changes name and/or size_ml to a combination another product has.
+          throw new ConflictError(
+            "Another product already has this name and size. Choose a different name or size.",
+          );
+        }
+        throw err;
+      }
+    }
+
+    // `undefined` means the caller did not mention par at all, so leave it
+    // alone. `null` means "clear it". The distinction is why the schema makes
+    // this nullable-and-optional rather than just optional.
+    if (parLevel !== undefined) {
+      await upsertProductPar(tx, actor.organizationId, productId, parLevel, reorderPoint);
+    }
+  });
 
   const rows = await selectProducts(actor, eq(product.id, productId), 1);
   const updated = rows[0];
@@ -639,4 +839,161 @@ export async function listVendors(actor: Actor): Promise<VendorSummary[]> {
     .from(vendor)
     .where(eq(vendor.organizationId, actor.organizationId))
     .orderBy(vendor.name);
+}
+
+/**
+ * Create a new vendor. Simple insert; no ownership check needed since the id
+ * is server-generated.
+ */
+export async function createVendor(actor: Actor, input: VendorCreateInput): Promise<VendorSummary> {
+  const [inserted] = await db
+    .insert(vendor)
+    .values({
+      organizationId: actor.organizationId,
+      name: input.name,
+      contact: input.contact ?? null,
+      orderMethod: input.orderMethod ?? null,
+      leadTimeDays: input.leadTimeDays ?? null,
+    })
+    .$returningId();
+
+  const rows = await db
+    .select({
+      id: vendor.id,
+      name: vendor.name,
+      contact: vendor.contact,
+      orderMethod: vendor.orderMethod,
+      leadTimeDays: vendor.leadTimeDays,
+    })
+    .from(vendor)
+    .where(eq(vendor.id, inserted.id))
+    .limit(1);
+
+  const result = rows[0];
+  if (!result) {
+    throw new NotFoundError("Vendor");
+  }
+  return result;
+}
+
+/**
+ * Update an existing vendor. Invariant 9: ownership is checked before any
+ * write — a cross-tenant id returns NotFound, never an answer that confirms
+ * the row is real.
+ */
+export async function updateVendor(actor: Actor, input: VendorUpdateInput): Promise<VendorSummary> {
+  await db.transaction(async (tx) => {
+    // Existence and ownership check, proven once and up front.
+    await assertVendorOwned(tx, actor.organizationId, input.id);
+
+    // Build the patch from optional fields. `undefined` means "don't touch it".
+    const patch: Partial<typeof vendor.$inferInsert> = {};
+    if (input.name !== undefined) patch.name = input.name;
+    if (input.contact !== undefined) patch.contact = input.contact;
+    if (input.orderMethod !== undefined) patch.orderMethod = input.orderMethod;
+    if (input.leadTimeDays !== undefined) patch.leadTimeDays = input.leadTimeDays;
+
+    // Only write if there is something to update.
+    if (Object.keys(patch).length > 0) {
+      await tx
+        .update(vendor)
+        .set(patch)
+        .where(
+          and(eq(vendor.id, input.id), eq(vendor.organizationId, actor.organizationId)),
+        );
+    }
+  });
+
+  // Re-fetch and return the updated row.
+  const rows = await db
+    .select({
+      id: vendor.id,
+      name: vendor.name,
+      contact: vendor.contact,
+      orderMethod: vendor.orderMethod,
+      leadTimeDays: vendor.leadTimeDays,
+    })
+    .from(vendor)
+    .where(
+      and(
+        eq(vendor.id, input.id),
+        eq(vendor.organizationId, actor.organizationId),
+      ),
+    )
+    .limit(1);
+
+  const result = rows[0];
+  if (!result) {
+    throw new NotFoundError("Vendor");
+  }
+  return result;
+}
+
+/**
+ * Assign a vendor to multiple products atomically.
+ *
+ * ATOMIC: all products receive the assignment, or none do. A partial write
+ * leaves the catalog in a state nobody asked for and would fail silently —
+ * the UI shows "assigned" while the database only partially applied it.
+ *
+ * INVARIANT 9: every product id is ownership-checked against the actor's org
+ * in a single scoped query (not N queries). If any product is cross-tenant or
+ * nonexistent, the whole call fails as NotFound rather than silently assigning
+ * the subset that is valid — a partial success would let a probe discover
+ * which product ids are real across tenants.
+ *
+ * Duplicate ids in the input are deduplicated before the count check. This
+ * ensures that a caller sending a duplicate id (a checkbox list built without
+ * a Set, or a retried partial selection) succeeds if every unique id is valid.
+ * The deduplication also preserves the all-or-nothing behavior: a duplicate
+ * id mixed with a genuinely foreign id still refuses the whole call, and never
+ * distinguishes "exists but is not yours" from "does not exist".
+ *
+ * Null vendorId is a legitimate value — it clears the vendor on all products.
+ */
+export async function assignVendorToProducts(
+  actor: Actor,
+  input: AssignVendorToProductsInput,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    // Deduplicate the product ids once, up front. This set is used for both
+    // the query and the count comparison, so the two can never disagree.
+    const uniqueProductIds = Array.from(new Set(input.productIds));
+
+    // Ownership-check ALL unique product ids in a single org-scoped query.
+    // If the count doesn't match the unique id count, at least one id is
+    // invalid (cross-tenant or nonexistent).
+    const owned = await tx
+      .select({ id: product.id })
+      .from(product)
+      .where(
+        and(
+          eq(product.organizationId, actor.organizationId),
+          inArray(product.id, uniqueProductIds),
+        ),
+      );
+
+    if (owned.length !== uniqueProductIds.length) {
+      // At least one product id is not the actor's org, or doesn't exist.
+      // Return NotFound, not a partial count, so the answer doesn't confirm
+      // which ids are real.
+      throw new NotFoundError("Product");
+    }
+
+    // Vendor ownership check (only if not null — a null vendor needs no check).
+    if (input.vendorId != null) {
+      await assertVendorOwned(tx, actor.organizationId, input.vendorId);
+    }
+
+    // All checks passed — apply the vendor to all products.
+    await tx
+      .update(product)
+      .set({ vendorId: input.vendorId })
+      .where(
+        and(
+          eq(product.organizationId, actor.organizationId),
+          inArray(product.id, uniqueProductIds),
+        ),
+      );
+  });
 }

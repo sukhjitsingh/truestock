@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Card, CardStack } from "@/components/ui/card";
 import { StatusPill, type PillTone } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
@@ -123,6 +123,18 @@ export function Preflight() {
   const checks = useSyncExternalStore(subscribe, computeChecks, serverSnapshot);
   const [cameraResult, setCameraResult] = useState<Check | null>(null);
   const [testing, setTesting] = useState(false);
+  // Hydration beacon: renders as FAILING initially and flips to passing on
+  // mount. If chunks are blocked, no JavaScript runs and this stays red — the
+  // direct, mechanism-independent signal that the page is inert. Whether React
+  // has attached is not derivable during render — on the server and on the
+  // first client pass it is false by definition, and the *only* signal that
+  // it became true is the effect running. Rewriting this to satisfy the linter
+  // would mean inventing a different hydration signal, and the failure it guards
+  // is silent inertness described in CLAUDE.md. See components/login-form.tsx
+  // for the same carve-out and reasoning.
+  const [hydrated, setHydrated] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => setHydrated(true), []);
 
   // Permission is deliberately behind a tap rather than run on mount: a
   // permission prompt that appears before the user has asked for anything is
@@ -161,12 +173,47 @@ export function Preflight() {
     }
   }
 
+  // Hydration beacon: starts as failing and flips on mount. Always checked
+  // first — if chunks are blocked, this stays red and everything below it is
+  // either meaningless or misleading.
+  const hydrationCheck: Check = {
+    label: "JavaScript execution",
+    tone: hydrated ? "success" : "negative",
+    status: hydrated ? "Active" : "Not yet run",
+    detail: hydrated
+      ? "React has attached and client-side checks are running."
+      : "This page has not hydrated. If this stays red after a few seconds, chunks are blocked — the page renders but never runs. Check the Origin row above.",
+  };
+
+  /**
+   * This beacon MUST be built and rendered above the `!checks` early return,
+   * or it is dead code on exactly the page it exists for.
+   *
+   * `checks` comes from useSyncExternalStore, whose server snapshot is null —
+   * so on the server the component used to return "Checking this device…"
+   * before this row was ever constructed. When chunks are 403'd and no
+   * JavaScript runs, that placeholder is all a stuck device would ever see:
+   * a screen that never finishes loading, with no named cause. Legible, but
+   * not the red row this is for, and invisible to anyone grepping the server
+   * HTML for it.
+   *
+   * Caught by a verification agent grepping raw SSR HTML for the pill and
+   * finding zero matches in both the passing and failing case. The build
+   * summary had described it as server-rendered; only the grep disagreed.
+   */
   if (!checks) {
-    return <p className="text-row-subtitle text-muted-foreground">Checking this device…</p>;
+    return (
+      <div className="mt-section-gap">
+        <CheckRow check={hydrationCheck} />
+        <p className="mt-3 text-row-subtitle text-muted-foreground">
+          Checking this device…
+        </p>
+      </div>
+    );
   }
 
-  const blocking = checks.filter((c) => c.tone === "negative");
-  const all = cameraResult ? [...checks, cameraResult] : checks;
+  const blocking = checks.filter((c) => c.tone === "negative").concat(hydrated ? [] : [hydrationCheck]);
+  const all = cameraResult ? [hydrationCheck, ...checks, cameraResult] : [hydrationCheck, ...checks];
 
   return (
     <div className="mt-section-gap">
@@ -185,13 +232,7 @@ export function Preflight() {
 
       <CardStack>
         {all.map((check) => (
-          <Card key={check.label}>
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-row-title text-card-foreground">{check.label}</p>
-              <StatusPill tone={check.tone}>{check.status}</StatusPill>
-            </div>
-            <p className="mt-1 text-row-subtitle text-muted-foreground">{check.detail}</p>
-          </Card>
+          <CheckRow key={check.label} check={check} />
         ))}
       </CardStack>
 
@@ -201,5 +242,23 @@ export function Preflight() {
         </Button>
       </div>
     </div>
+  );
+}
+
+/**
+ * One preflight row. Extracted so the hydration beacon renders identically
+ * whether it appears alone (server-side, before the client checks resolve) or
+ * inside the full list — two copies of this markup would be two chances for
+ * the pre-hydration view to drift away from the one people actually read.
+ */
+function CheckRow({ check }: { check: Check }) {
+  return (
+    <Card>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-row-title text-card-foreground">{check.label}</p>
+        <StatusPill tone={check.tone}>{check.status}</StatusPill>
+      </div>
+      <p className="mt-1 text-row-subtitle text-muted-foreground">{check.detail}</p>
+    </Card>
   );
 }

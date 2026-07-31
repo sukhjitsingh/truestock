@@ -111,6 +111,8 @@ export async function resetDatabase(): Promise<void> {
 export interface Fixtures {
   owner: Actor;
   manager: Actor;
+  /** Count-only — used to prove an action's role gate refuses a role it doesn't cover. */
+  staff: Actor;
   /** A second tenant, for proving cross-tenant reads and writes are refused. */
   otherOwner: Actor;
   organizationId: number;
@@ -123,6 +125,8 @@ export interface Fixtures {
   unpricedProductId: number;
   /** A second priced product, for multi-line and concurrency cases. */
   secondProductId: number;
+  /** A product belonging to the OTHER tenant — invariant 9's negative case. */
+  otherProductId: number;
 }
 
 /**
@@ -159,6 +163,18 @@ export async function createFixtures(): Promise<Fixtures> {
       email: "manager@test.local",
       emailVerified: true,
       role: "manager",
+      active: true,
+      organizationId: org.id,
+    })
+    .$returningId();
+
+  const [staff] = await db
+    .insert(userTable)
+    .values({
+      name: "Test Staff",
+      email: "staff@test.local",
+      emailVerified: true,
+      role: "staff",
       active: true,
       organizationId: org.id,
     })
@@ -226,9 +242,24 @@ export async function createFixtures(): Promise<Fixtures> {
     })
     .$returningId();
 
+  // Deliberately shares a name and size with `priced` above. Two tenants
+  // stocking the same bottle is the normal case, not an edge one, and
+  // `product_name_size_ml_unique` must be per-tenant for that to work.
+  const [otherProduct] = await db
+    .insert(productTable)
+    .values({
+      organizationId: otherOrg.id,
+      name: "Tito's Handmade Vodka",
+      category: "Spirits",
+      unitType: "bottle",
+      sizeMl: 750,
+    })
+    .$returningId();
+
   return {
     owner: { userId: owner.id, role: "owner", organizationId: org.id },
     manager: { userId: manager.id, role: "manager", organizationId: org.id },
+    staff: { userId: staff.id, role: "staff", organizationId: org.id },
     otherOwner: { userId: otherOwner.id, role: "owner", organizationId: otherOrg.id },
     organizationId: org.id,
     otherOrganizationId: otherOrg.id,
@@ -237,6 +268,7 @@ export async function createFixtures(): Promise<Fixtures> {
     pricedProductId: priced.id,
     unpricedProductId: unpriced.id,
     secondProductId: second.id,
+    otherProductId: otherProduct.id,
   };
 }
 

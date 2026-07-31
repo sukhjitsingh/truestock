@@ -28,7 +28,18 @@ export default async function ScanPage({
   // Invariant 1: a closed count takes no writes, ever. Sending someone into a
   // scanning screen that would reject every scan is worse than not opening it
   // — they would count a whole section before finding out.
-  if (detail.data.count.status === "closed") {
+  //
+  // Submitted and reviewed counts are refused here for the same reason, and
+  // this redirect is the half that makes the rule usable rather than merely
+  // enforced. `assertCountWritable` rejects those statuses at the write, so
+  // without this the screen would open, accept taps, and fail on every single
+  // save — which is the "count a whole section before finding out" failure
+  // written slightly differently.
+  if (
+    detail.data.count.status === "closed" ||
+    detail.data.count.status === "submitted" ||
+    detail.data.count.status === "reviewed"
+  ) {
     redirect(`/count/${countId}`);
   }
 

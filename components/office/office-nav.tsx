@@ -22,6 +22,7 @@ export function OfficeNav({ role }: { role: Role }) {
     { href: "/office", label: "Dashboard", exact: true },
     { href: "/office/counts", label: "Counts" },
     { href: "/office/catalog", label: "Catalog" },
+    { href: "/office/vendors", label: "Vendors" },
     { href: "/office/reorder", label: "Reorder" },
   ];
 

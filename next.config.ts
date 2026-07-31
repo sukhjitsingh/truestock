@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { parseDevOriginHosts } from "./lib/dev-origins";
 
 // Baseline security headers (open-items.md #5). This app self-hosts — no
 // platform-side mitigation exists, so these are the whole defense, not a
@@ -51,26 +52,10 @@ const SECURITY_HEADERS = [
 // GETs send no Origin header and are never blocked — so getting it wrong costs
 // you hot reload, not the app. Set by scripts/dev-lan.sh; empty otherwise, and
 // `next dev` is the only thing that reads it.
-// `127.0.0.1` is listed because Next's built-in allowance covers `localhost`
-// and `*.localhost` ONLY — the IP literal is a different host to that check,
-// so `/_next/*` returns 403 and the client bundle never runs. The page still
-// renders and returns 200; it simply never hydrates, which is the same silent
-// failure shape as the CSP incident. Confirmed by request, not by reading:
-// the same chunk returns 403 for an `Origin` of 127.0.0.1:3000 and 200 for
-// localhost:3000.
 //
-// It is listed here rather than left alone because lib/auth.ts deliberately
-// trusts `http://127.0.0.1:3000` as a dev origin, and docker-compose.yml
-// publishes on 127.0.0.1 by default. Those said 127.0.0.1 was supported while
-// this said otherwise, and the disagreement was invisible.
-// DEV_LAN_ORIGIN is comma-separated (http on :3000 and https on :3443 are two
-// origins), but this list wants HOSTNAMES — so both collapse to the same entry
-// and the Set removes the duplicate.
-const devLanHosts = (process.env.DEV_LAN_ORIGIN ?? "")
-  .split(",")
-  .map((origin) => URL.parse(origin.trim())?.hostname)
-  .filter((host): host is string => Boolean(host));
-const devOrigins = [...new Set(["127.0.0.1", ...devLanHosts])];
+// Derived from lib/dev-origins.ts (single source of truth for DEV_LAN_ORIGIN
+// parsing), which is also used by the preflight's server-side origin check.
+const devOrigins = parseDevOriginHosts();
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: devOrigins,

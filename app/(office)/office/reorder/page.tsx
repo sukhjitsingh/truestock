@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireOfficeUser } from "@/lib/current-user";
 import { reorderListAction } from "@/app/actions/reports";
 import { formatUnits } from "@/lib/utils";
@@ -24,7 +25,7 @@ export default async function ReorderPage() {
     );
   }
 
-  const { asOfCountId, items } = result.data;
+  const { asOfCountId, items, productsWithPar } = result.data;
 
   // Group by vendor. `reorderList` already sorts so same-vendor items are
   // adjacent, so this is a walk, not a re-sort.
@@ -53,10 +54,35 @@ export default async function ReorderPage() {
         </p>
       )}
 
+      {/*
+        Two very different empty states, deliberately not sharing a message.
+        "Nothing is short" is good news. "No product has a par" means this
+        screen cannot produce a row no matter how empty the shelves get — and
+        for as long as par levels were unwritable, it printed the good-news
+        version. A finished-looking screen reporting a confident wrong answer
+        is the failure mode CLAUDE.md's invariants exist to prevent, and it
+        does not stop being one just because the sentence is grammatical.
+      */}
       {items.length === 0 && asOfCountId != null ? (
-        <p className="mt-6 text-row-subtitle text-muted-foreground">
-          Nothing is below its reorder point.
-        </p>
+        productsWithPar === 0 ? (
+          <p className="mt-6 max-w-prose text-row-subtitle text-muted-foreground">
+            No product has a par level yet, so nothing can appear here. Set one on a
+            product in the{" "}
+            <Link href="/office/catalog" className="text-foreground underline">
+              catalog
+            </Link>{" "}
+            — the products missing one are tagged{" "}
+            <strong className="text-foreground">Needs par</strong>.
+          </p>
+        ) : (
+          <p className="mt-6 text-row-subtitle text-muted-foreground">
+            Nothing is below its reorder point.{" "}
+            <span className="text-caption">
+              ({productsWithPar} {productsWithPar === 1 ? "product has" : "products have"} a
+              par level.)
+            </span>
+          </p>
+        )
       ) : null}
 
       <div className="mt-8 flex flex-col gap-section-gap">

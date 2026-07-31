@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { cn, formatUnits } from "@/lib/utils";
+import { isCountedByCase } from "@/lib/pack-level";
 import { Button } from "@/components/ui/button";
 
 export type QuantityMode = "add" | "set";
@@ -26,11 +27,20 @@ export interface QuantitySubmission {
  * Cases and eaches stay separate all the way through (invariant 4). The
  * combined unit figure shown below the fields is reference only and is never
  * what gets written.
+ *
+ * Only bottled beer gets a Cases box (`isCountedByCase`). Rendering one for a
+ * spirit hinting "No case size on file" invites a number into a field the
+ * catalog leaves NULL on purpose — and a case count on a product with no case
+ * size is the one input `computeLineUnits` cannot resolve, so it would take
+ * the line out of the valuation entirely. Case entry for spirits is deferred
+ * to Phase 2.0.
  */
 export function QuantityEntry({
   currentCases,
   currentEaches,
   caseSize,
+  category,
+  unitType,
   canSet,
   pending,
   onSubmit,
@@ -41,6 +51,14 @@ export function QuantityEntry({
   /** Snapshot case size, if known. Null is normal — most of the catalog has none. */
   caseSize: number | null;
   /**
+   * The product's identity, not a `showCases` boolean, so `isCountedByCase`
+   * stays the single definition of what a case is. A boolean prop would let a
+   * caller answer the question a second way, which is the drift
+   * lib/pack-level.ts exists to prevent.
+   */
+  category: string;
+  unitType: string;
+  /**
    * SET maps to `setCountLineQuantitiesAction`, which needs an existing
    * count line. A product not yet on this count can only be ADDed.
    */
@@ -50,8 +68,20 @@ export function QuantityEntry({
   onCancel: () => void;
 }) {
   const [mode, setMode] = useState<QuantityMode>("add");
-  const [cases, setCases] = useState(0);
+  const [caseInput, setCaseInput] = useState(0);
   const [eaches, setEaches] = useState(0);
+
+  const countsByCase = isCountedByCase({ category, unitType });
+
+  /**
+   * Zero when there is no Cases box, derived rather than zeroed at the
+   * `onSubmit` call. Everything downstream — the consequence line, the unit
+   * figure, the disabled test — then reads the same number the server gets,
+   * so the button cannot promise a case the write does not make. Clearing the
+   * state instead would leave that gap open for one render, and would depend
+   * on an effect firing.
+   */
+  const cases = countsByCase ? caseInput : 0;
 
   const nextCases = mode === "add" ? currentCases + cases : cases;
   const nextEaches = mode === "add" ? currentEaches + eaches : eaches;
@@ -60,6 +90,30 @@ export function QuantityEntry({
     const parts: string[] = [];
     if (c > 0) parts.push(`${c} ${c === 1 ? "case" : "cases"}`);
     if (e > 0 || parts.length === 0) parts.push(`${e} ea`);
+    return parts.join(", ");
+  };
+
+  /**
+   * The same, for the AFTER side of a SET, where either count falling to
+   * zero is precisely what has to be said out loud. `describe` drops a zero
+   * case count AND drops a zero each count whenever the other part is
+   * present, so a line already carrying both would go from "2 cases, 3 ea"
+   * to "3 ea" (cases dropped) or from "1 case, 12 ea" to "1 case" (eaches
+   * dropped) — either way the loss reads as formatting, not as data going to
+   * zero. That is the SET-mistaken-for-ADD failure wearing a different hat.
+   * The guard is per axis, not one combined special case, because cases and
+   * eaches fall to zero independently: a case-only SET zeroes loose bottles
+   * without touching cases, and a bottled-beer product with cases already
+   * on the line can have either wiped on its own.
+   */
+  const describeAfter = (c: number, e: number) => {
+    const parts: string[] = [];
+    // Each axis is guarded on its own condition, not folded into one
+    // combined check, because cases and eaches reach zero independently — a
+    // case-only SET wipes loose bottles without touching cases, and either
+    // one can be the count that was already sitting on the line.
+    if (c > 0 || currentCases > 0) parts.push(`${c} ${c === 1 ? "case" : "cases"}`);
+    if (e > 0 || currentEaches > 0 || parts.length === 0) parts.push(`${e} ea`);
     return parts.join(", ");
   };
 
@@ -107,6 +161,11 @@ export function QuantityEntry({
         </div>
       ) : null}
 
+      {/*
+        Deliberately reports `currentCases` even where the Cases box is
+        hidden. Hiding the input must not hide cases the line already holds —
+        an invisible real number is worse than a field nobody should type in.
+      */}
       <p className="text-caption text-muted-foreground">
         {canSet ? (
           <>
@@ -120,18 +179,25 @@ export function QuantityEntry({
         )}
       </p>
 
-      <div className="grid grid-cols-2 gap-3">
-        <Stepper
-          label="Cases"
-          value={cases}
-          onChange={setCases}
-          hint={caseSize != null ? `× ${caseSize} per case` : "No case size on file"}
-        />
+      {/*
+        One column when there are no cases, so eaches is the input rather than
+        the left-hand half of a grid with a hole in it. A dim bar and one free
+        hand do not need a layout that reads as something failing to load.
+      */}
+      <div className={cn("grid gap-3", countsByCase ? "grid-cols-2" : "grid-cols-1")}>
+        {countsByCase ? (
+          <Stepper
+            label="Cases"
+            value={caseInput}
+            onChange={setCaseInput}
+            hint={caseSize != null ? `× ${caseSize} per case` : "No case size on file"}
+          />
+        ) : null}
         <Stepper
           label="Eaches"
           value={eaches}
           onChange={setEaches}
-          hint="Loose bottles, not part of a case"
+          hint={countsByCase ? "Loose bottles, not part of a case" : "Sealed bottles"}
         />
       </div>
 
@@ -153,7 +219,7 @@ export function QuantityEntry({
           <span className="text-label uppercase">
             {mode === "add"
               ? `Add ${describe(cases, eaches)}`
-              : `Set to ${describe(cases, eaches)}`}
+              : `Set to ${describeAfter(cases, eaches)}`}
           </span>
           <span className="text-caption tabular-nums opacity-80">
             {mode === "add"

@@ -162,15 +162,27 @@ that was deliberately deferred.
 
 **Trigger: when the compliance packet (spec §10, Phase 3) is built. Not before.**
 
-Every other write path to `count_line` records a `count_line_write` row. Fill
-corrections do not, because `count_line_write.partial_fills_delta` is modelled
-for additive appends from the scan path, and a full-array replace has no
-delta representation in that shape.
+**Updated 2026-07-30 — the function is now actually reachable.** It had zero
+callers when this item was written, which made the gap theoretical. `FillEntry`
+now has a correction mode (docs/mvp-gaps.md finding C), so fill corrections are
+a real thing that happens during a real count, and "who changed this bottle's
+fill level, and when" is a real question with no answer.
 
-Not a correctness bug: a replace is naturally idempotent, so a replayed fill
-correction produces the identical row state. It is an **audit trail** gap — the
-count is right, but "who changed this bottle's fill level, and when" is not
-recoverable. That only matters for the audit packet, which is deferred.
+That raises the priority but does not change the trigger, and it is still not a
+correctness bug. Every other write path to `count_line` records a
+`count_line_write` row. Fill corrections do not, because
+`count_line_write.partial_fills_delta` is modelled for additive appends from
+the scan path, and a full-array replace has no delta representation in that
+shape.
+
+A replace is naturally idempotent, so a replayed fill correction produces the
+identical row state — the count is right either way. It is an **audit trail**
+gap.
+
+**Half of the work is already done.** `editCountLineFillsSchema` now requires a
+`clientLineId` (the offline queue needs an id to store the write under), so
+closing this is a change to the domain function alone rather than to the
+boundary and every caller of it.
 
 **How to close it:** decide a ledger convention for replaces (a discriminator
 column, or storing before/after arrays) and write the entry inside the existing
@@ -336,23 +348,21 @@ the entry screen is pure overhead. That could be a real speed win on the
 the abstract** — and if the answer is no, delete the action rather than
 leaving a hardened write path that nothing exercises.
 
-## 11. One location count mode was assigned without the owner
+## 11. One location count mode was assigned without the owner — CONFIRMED 2026-07-31
 
-**Trigger: before the first real count — one question, ask it.**
+**Confirmed 2026-07-31.** The owner answered the one question this item asked:
+Walk-In holds sealed packaged beer only, no open kegs. `count_mode` stays
+`quantity`, as seeded. **No code change** — the inferred value was correct,
+and what this item was waiting on was the confirmation, not the value.
 
-`location.count_mode` is new (`tenths` | `quantity`), because CLAUDE.md says
+`location.count_mode` (`tenths` | `quantity`) exists because CLAUDE.md says
 the input mode is "driven entirely by location" and there was nowhere to put
-that. Speed Rail, Back Bar and Storeroom come straight from the owner's own
-notes in `locations.csv`. One is still inferred:
+that. Speed Rail, Back Bar and Storeroom came straight from the owner's own
+notes in `locations.csv`. Walk-In was the one inferred — from its note,
+"Packaged beer." — rather than confirmed, and is now both.
 
-- **Walk-In → `quantity`.** From its note, "Packaged beer." If open kegs
-  live in there, it needs `tenths` instead.
-
-Getting it wrong is not silent — the screen visibly offers the wrong input —
-but it is annoying enough mid-count to be worth one question first.
-
-**Wine Rack is settled: `tenths`, and it does not need confirming.** `tenths`
-is the superset mode — it offers the fill pad *and* sealed quantities, where
+**Wine Rack was already settled without asking: `tenths`.** `tenths` is the
+superset mode — it offers the fill pad *and* sealed quantities, where
 `quantity` offers only quantities. So a tenths location can record anything a
 quantity location can. It is the safe default wherever the answer is
 uncertain or low-stakes, which is exactly the wine situation (item 12).
@@ -453,34 +463,36 @@ real data (a draft count, with its Resume action).
 
 Cheap to close: close one count and look at the tile.
 
-## 16. A scanned barcode cannot be attached to an existing product
+## 16. ~~A scanned barcode cannot be attached to an existing product~~ — CLOSED 2026-07-30
 
-**Trigger: before the first count at a real bar. Harmless locally, wrong in
-production.**
+Kept rather than deleted because the *shape* is the lesson: the failure had two
+modes and the milder-looking one was the dangerous one.
 
-`product_barcode` ships empty — CLAUDE.md says `upc` is deliberately blank and
-"fills through scan-to-enroll during the first count". But the enroll path only
-*creates*: `count-leg.tsx` sends an unresolved barcode to `EnrollForm`, which
-calls `createProductAction`, and no action attaches a barcode to a product that
-already exists. `searchProductsAction` finds the existing row but offers no way
-to bind the code that was just scanned to it.
+`linkBarcodeToProduct` now inserts a `product_barcode` row against an existing
+product, after an ownership check on the client-supplied product id (invariant
+9 — a foreign key proves the row exists, not whose it is). `EnrollForm` opens
+on **search** rather than on the new-product form, because during the first
+count "already in the catalog, just never scanned" is the common case and a
+genuinely new product is the rare one.
 
-So the intended first count — walk the bar, scan each bottle, watch the seeded
-catalog fill in its barcodes — instead produces a **second copy of all 97
-products**, with the count split across the duplicates and the seeded rows left
-at zero. Nothing errors; the totals just describe a catalog that does not exist.
+`pack_level` was the real design question, as this item said. Answered as:
+`each` by default with no extra tap, and an each/case choice shown only for
+products counted both ways — `isCountedByCase` in `lib/pack-level.ts`, shared
+with `incompleteReasons` so there is one definition of what a case is. That is
+zero extra taps for 81 of the 97 seeded products and an explicit choice for the
+16 where guessing wrong silently miscounts by the case size.
 
-This was found while setting up the phone test (2026-07-28) and is not urgent
-for a throwaway local database, where it is merely a reason to
-`bun run docker:reset` between runs (see `docs/phone-count-test.md`).
+**The two failure modes, for the record.** This item and `STATE.md` both said
+the symptom was "a second copy of all 97 products". That was the *second*-worst
+case, and it needed the counter to type a name differing from the catalog's.
+Typing the catalog's own name — the natural thing to do — hit
+`product_name_size_ml_unique` and was a hard stop with no way forward,
+mid-count, on the interaction CLAUDE.md holds to a 20-second budget. The
+create-only path made the honest action fail and the careless one corrupt the
+catalog.
 
-What it needs, roughly: when a barcode does not resolve, offer *"link to an
-existing product"* beside *"new product"*, backed by an action that inserts a
-`product_barcode` row after an ownership check on the product id (invariant 9 —
-a foreign key proves the row exists, not whose it is). The `pack_level` on the
-new barcode is the real design question, not the plumbing: the same bottle and
-its case carry different codes, and guessing wrong there silently miscounts
-beer.
+Covered by 7 tests in `tests/catalog-write-path.test.ts`, including that two
+tenants can enrol the same UPC against their own products.
 
 ## 17. `127.0.0.1` was blocked by Next's dev cross-origin guard — CLOSED 2026-07-28
 
@@ -502,3 +514,332 @@ for both.
 causes** — a CSP without a nonce (#13) and this. The cheap check for both is
 the same, and it is in `docs/phone-count-test.md`: load `/login` and look at
 whether the submit button is still disabled a second later.
+
+## 18. `isDuplicateKeyError` was blind to wrapped errors — CLOSED 2026-07-30
+
+Recorded rather than deleted, because this is the third instance of one pattern
+and the pattern is the point.
+
+`lib/domain/db-errors.ts` read `err.code` directly. Drizzle wraps query
+failures in `DrizzleQueryError`, which carries `query`, `params` and `cause`
+and **no `code` of its own** — so the check returned false for every wrapped
+error, and both predicates in that file silently stopped discriminating.
+
+Every `ConflictError` in `lib/domain/catalog.ts` was therefore unreachable.
+"A product named X already exists" and "Barcode Y is already assigned to Z"
+arrived as *"Something went wrong"* — mid-count, on the highest-risk
+interaction, with the actionable half of the message thrown away.
+
+**Why it looked fine.** The paths that had coverage happened to receive
+unwrapped errors, so the replay-rollback tests passed and the idempotency
+mechanism looked proven. A mocked error object would have passed forever: the
+shape that broke it came from the library, not from us.
+
+**Fixed** by walking the `cause` chain (bounded against a self-referential
+cause) and matching `errno` as well as `code`. `tests/db-errors.test.ts`
+asserts both predicates against the real `DrizzleQueryError` class.
+
+**The pattern, now three deep:** #13 (static CSP), #17 (dev cross-origin 403),
+and this. In all three every gate stayed green — typecheck, build, lint, status
+codes, and the existing tests — and the bug was found only by exercising the
+real thing. When something here "cannot fail", that is the claim worth testing
+against the actual library or the actual browser.
+
+## 19. ~~Vendors still have no write path anywhere~~ — CLOSED 2026-07-31
+
+Split out of `docs/mvp-gaps.md` finding H, because finding A being fixed had
+changed its status from hypothetical to visible. Closed by `createVendor`,
+`updateVendor` and `assignVendorToProducts` (50e2512), and the
+`/office/vendors` screen plus bulk catalog assignment that make them reachable
+(87a8d63).
+
+Three role-gated server actions (owner/manager, matching `updateProduct` —
+vendors and reordering are a manager's job per spec §4), zod schemas, an
+idempotent `seedVendors` keyed on `(organization_id, name)` so a re-seed never
+duplicates a vendor someone edited in the app, and a screen that lists,
+creates and edits — no delete, matching the schema's own deliberate absence of
+one. `assignVendorToProducts` is the widest invariant-9 surface in the
+catalog: ids are deduplicated first, ownership is checked for every id in one
+org-scoped query rather than N, and a list mixing a foreign id with the
+actor's own **refuses the whole call** rather than assigning the valid
+subset — partial success on a tenancy failure is how a prober learns which ids
+are real.
+
+**The domain layer is genuinely verified** — 12 DB-backed tests including
+cross-tenant refusal, bulk-assign atomicity with a re-read proving no partial
+apply, and reorder grouping end to end. Mutation-checked: disabling the
+ownership guard fails exactly one test.
+
+**The screens were driven in real Chrome with database verification** —
+create, edit, bulk assign, bulk clear, the stale-selection blocker, the sticky
+bar, the consequence strings. Four defects were found doing that, all fixed
+the same day (87a8d63's message has the full detail): a stale selection
+surviving a search — a blocker, it wrote to off-screen products, and the
+header checkbox rendered checked against a selection matching nothing
+visible; vendors creatable but not editable (the form existed, nothing wired
+it — the build agent reported the capability and only a DOM read caught it);
+the bulk bar rendering below 98 rows, off-screen; and the clear-vendor label
+reading "Set vendor" when "No vendor" was chosen explicitly.
+
+**The final `router.refresh()` fix in `components/office/vendors-list.tsx` was
+the one line here never opened in a browser — CONFIRMED 2026-07-31.** Creating
+a vendor from the empty state and editing its name both showed on the list with
+no manual reload; the database held exactly one row after the edit (so it
+updated rather than inserted); and a real navigation reloaded to the same state,
+ruling out a screen that self-updates but disagrees with a reload — which would
+have been worse than the staleness it replaced. The dev-only Fast Refresh
+empty-state flash seen in an earlier session did not reproduce.
+
+Worth keeping for the shape: the regression existed because `VendorEditForm`
+calls `router.refresh()` only on the branch where no `onSuccess` prop is passed,
+and `VendorsList` always passes one — so the refresh lived in dead code while
+the write succeeded and the screen showed the old name. A save that looks like
+it silently failed invites retyping it. **Two overlapping mechanisms are what
+produce a dead one;** the refresh now lives with whoever owns the stale data.
+
+Two defects were also found while verifying this, by running things rather
+than reading them, and both are recorded as new items below: `vendors.csv`'s
+own documentation comment silently broke the entire seed (fixed in `parseCsv`
+itself), and `db/seed.ts` ran `main()` at module scope, so importing it to
+test the parser fired the real seed against the live database (fixed by
+guarding `main()` and moving the parser to `db/csv.ts` — see item 23 for the
+sibling script with the identical shape, and CLAUDE.md's migrations/seed
+convention).
+
+The other two halves of finding H stay as they were: users are CLI-only (item
+3), and locations are seed-only but recoverable by editing
+`docs/catalog/locations.csv` and re-seeding.
+
+## 20. The count-leg UI changes have not been driven on a phone
+
+**Trigger: the first phone test — fold into `docs/phone-count-test.md` rather
+than doing separately.**
+
+Six of the 2026-07-30 changes are UI on the counting leg, and every one of them
+is backed by domain tests plus a browser hydration check, not by anyone actually
+scanning a bottle. Nothing in this repo's test suite imports a React component,
+so all six are client state that has never executed:
+
+- **The barcode-link screen** (finding B). Search-first, and the each/case
+  choice for beer. Worth timing against the 20-second budget specifically —
+  it added a search step to a path that previously went straight to a form.
+- **Fill correction** (finding C). The "Correct these" affordance and its
+  live `was … · −0.8 units` line.
+- **Optimistic rollback** (D1). Needs a deliberately-refused write to see —
+  the easiest is to submit a count in one tab and keep scanning in another,
+  which is now refused (finding E).
+- **The dropped-write message** (D2). Same trick: force a rejection while
+  offline and confirm the chip returns to "Synced" and names the write.
+- **The size dropdown on the enroll form** (added later the same day). The thing
+  to watch is the *reactivity*, not the list: with 750 ml selected, change
+  Category to Beer and confirm the size select re-points to the beer list and
+  shows 355 rather than rendering **blank** — a `<select>` whose value matches
+  no option shows empty on a required field, and the whole re-default exists to
+  stop that. Do the same with Unit → Keg, which must jump to the keg volumes
+  regardless of category. Then the one that actually costs time: pick a bottle
+  whose real size is *not* on its list and confirm what a counter does next,
+  because there is no "Other…" here on purpose (`lib/bottle-sizes.ts`). If that
+  turns out to be common rather than rare, the asymmetry is the thing to revisit
+  — not by adding free text, but by lengthening a list.
+  While there, confirm the keg default: enrolling any keg should now preselect
+  **19533 ml (sixtel)**, not the half barrel it used to open on — 7 of the 9
+  seeded kegs are sixtels, and the default was moved to match (finding 2 in
+  item 22, fixed 2026-07-30). If a keg enroll opens on anything else, the fix
+  did not make it to the screen the phone is looking at.
+- **The eaches-only quantity screen.** With the Cases stepper gone for spirits,
+  the layout is one column and the ADD/SET tabs sit above a single box.
+  **Confirm a SET still visibly announces a loss** — put a spirit on 12 eaches,
+  switch to SET, type 3, and check the button reads `SET TO 3 EA / was 12 ea ·
+  −9` before it is tapped. That live consequence line is the only guard on this
+  control (CLAUDE.md is explicit that a modal here would be worse than none), and
+  it now has to do its job in a layout nobody has looked at. On a bottled beer,
+  do the mirror: cases 0 / eaches 12, SET 1 case / 0 eaches, and read what the
+  button claims — it should now say `SET TO 1 CASE, 0 EA / was 0 cases, 12 ea`,
+  naming the 12 bottles it is about to wipe rather than showing `+12` as if
+  nothing were lost (item 22, finding 3, fixed 2026-07-30 but never rendered
+  on a device).
+
+Item 9's offline-queue pass covers the same screens and should be done in the
+same sitting.
+
+## 21. Case entry for spirits is deferred — DECIDED 2026-07-30
+
+**Trigger: Phase 2.0, or never. Not a bug, and not to be re-opened as one.**
+
+Owner's call: only bottled beer gets a case input. `QuantityEntry` and the
+back-office product form both render the case field on `isCountedByCase`
+(`lib/pack-level.ts`) and on nothing else. This is a scope decision in the shape
+of item 12's wine deferral.
+
+Why it went this way rather than staying a field with a hint, so a future
+session does not "restore" it:
+
+- **The old hint invited the wrong thing.** A spirit rendered a Cases stepper
+  reading *"No case size on file"*. CLAUDE.md is explicit that a blank
+  `case_size` on a spirit is correct rather than missing data, but a box with a
+  note about what it lacks reads as a prompt to fill it.
+- **The failure it invited is silent.** A case count against a NULL `case_size`
+  is the single input `computeLineUnits` cannot resolve, so that line is dropped
+  from valuation and reported as excluded rather than being visibly wrong. The
+  count total just comes out low.
+- **It is not a hard block on anything.** A spirit bought by the case is still
+  countable today — as eaches, which is how the bar counts it anyway (62 spirits,
+  2 liqueurs, 5 wines and 3 NA all carry NULL `case_size` deliberately).
+
+If it is ever built, the work is not the input box. It is deciding what a case
+means for a product the catalog has no pack level for, and that is a catalog
+question first: a spirits case size has to be entered, per product, before an
+input for it means anything. The back-office field is already gated on the live
+category select, so recategorising reveals it in the same edit — that is the
+mechanism a future version would extend, not replace.
+
+**Existing case data is preserved, not cleared.** `product-edit-form.tsx`
+submits `caseSize` whether or not the field is on screen, deliberately: hiding a
+field must not destroy a real value in a save the person thought was about the
+name. A spirit can therefore carry an invisible case size, which is inert
+(nothing reads it without a case count) and is the cheaper of the two mistakes.
+
+## 22. Three review findings from 2026-07-30 — fixed same day, unproven on a device
+
+**Trigger: the first phone test (item 20). Re-open only if the phone test shows
+one of the three not behaving as traced below — nothing since the fix has
+executed any of this code.**
+
+All three were found by a correctness review after the size/case work landed,
+fixed the same day, and confirmed by a second, adversarial confirm pass tracing
+real before/after values through each change. None were blockers. Recorded here
+rather than left in a session log, because all three are the
+plausible-and-wrong shape this project treats as its worst failure mode, and
+two of them still have zero runtime evidence — no test in this repo executes a
+React component, so "fixed" below means traced by hand, not observed running.
+
+1. **FIXED — changing a product's category no longer rewrites its stored
+   `size_ml`** (`components/office/product-edit-form.tsx`). Previously, when
+   the old size was absent from the new category's list, `changeCategory`
+   re-defaulted it — re-filing a 355 ml hard seltzer from Beer to Spirits
+   silently moved it to 750. Now `changeCategory` sets `sizeMode` to
+   `"other"` instead: the field flips to the free-text box already showing the
+   true stored number, and `sizeMl` itself is never touched. Traced against
+   Beer/355→Spirits, the mirror Spirits/750→Beer, a product already in "Other…"
+   mode (the function returns before touching it), and a size valid in two
+   lists at once (375 ml, both a spirits half and a wine half — stays on the
+   dropdown, correctly). The unused `defaultSizeMlFor` import was dropped from
+   this file; `enroll-form.tsx` deliberately keeps re-defaulting, because it is
+   creating a product and has no stored value to protect.
+   **Not fully closed:** a product that entered "Other…" mode never flips back
+   to the dropdown even if a later category change makes its typed value a
+   valid preset of the new list — cosmetic only (the correct value still saves,
+   and the user can manually re-select a preset), left as-is rather than fixed.
+2. **FIXED — the keg default is now the keg this bar actually taps**
+   (`lib/bottle-sizes.ts`). `KEG.defaultMl` changed from 58674 (half barrel) to
+   19533 (sixtel); the seed catalog is 7 sixtels, 1 quarter barrel, 1 half
+   barrel. The pinned `58674` test assertion was replaced with one that reads
+   `docs/catalog/products.csv`, computes the modal keg size, asserts it is a
+   strict majority, and asserts the default equals it — a guard that tracks the
+   catalog rather than a literal restating the constant, and the only one of
+   the three fixes an executed test actually covers (16th test in
+   `tests/bottle-sizes.test.ts`, up from 15).
+3. **FIXED — `describeAfter` now guards eaches falling to zero, not just
+   cases** (`components/count/quantity-entry.tsx`). Each axis now has its own
+   zero guard — `(c > 0 || currentCases > 0)` and `(e > 0 || currentEaches > 0
+   || parts.length === 0)` — so a SET that wipes either cases or eaches says
+   "0 cases" / "0 ea" out loud instead of dropping the term. Traced against
+   currentEaches=12→SET 1 case/0 eaches (now says "0 ea"), the mirror
+   currentCases=2→SET 0 cases/5 eaches (now says "0 cases"), and both-to-zero
+   (now says both). ADD-mode's label and the "was …" half of the SET line both
+   still call the original `describe()`, confirmed unchanged.
+
+Finding 3 is on the counting leg and is covered by open item 20's phone pass —
+folded in there rather than repeated as separate work. Finding 1 is the
+back-office product form, driven at a desk in a browser rather than on the
+phone; it has not had that click-through since the fix, but it is not blocked
+on item 20's trigger.
+
+## 23. `scripts/create-user.ts` has the same unguarded-`main()` shape `db/seed.ts` just had
+
+**Trigger: the first time anything imports this script rather than running it
+as a CLI — a test, a future admin action, a wrapper script.**
+
+Noted while closing item 19 (50e2512), not fixed. `db/seed.ts` ran `main()` at
+module scope until that same commit; importing it to unit-test the pure CSV
+parser executed the real seed against the active `DATABASE_URL`, racing the
+test suite's truncation and leaving `process.exitCode = 1` behind it — `bun
+test` printed all-pass and `test:docker` still exited 1. See item 19's close
+note and CLAUDE.md's migrations/seed convention for how that one was fixed:
+guard `main()`, and move anything worth unit-testing out of the entry-point
+module.
+
+`scripts/create-user.ts` has the identical shape — nothing calls it except the
+CLI today, but nothing stops a later import either — and its side effect is
+worse than a seed race: it opens an interactive password prompt.
+
+**How to close it:** guard `main()` the same way `db/seed.ts` now is —
+`import.meta.url === pathToFileURL(process.argv[1]).href` — before anything
+ever has a reason to import this file.
+
+## 24. A plain `docker:up` silently reverts a live LAN session
+
+**Trigger: before this project is handed to anyone who doesn't already know
+this by heart, or the next time an agent is told to "just try `docker:up`" as
+a generic troubleshooting step while a phone is mid-session on the LAN URL.**
+
+Confirmed 2026-07-31. The owner could not sign in on his phone over the LAN
+https URL — the login page just refreshed on submit. Root cause:
+`DEV_LAN_ORIGIN` was empty in the app container, so `next.config.ts`'s
+`devOrigins` resolved to `["127.0.0.1"]` only. Next 16 blocks `/_next/*` for
+any host outside `localhost`/`*.localhost` plus `allowedDevOrigins` — item
+#17's mechanism, tripped on a new host — so every client chunk 403'd for the
+phone's origin while the document itself returned a clean 200. No chunks
+means no hydration, no hydration means the login form's `onSubmit` never
+attached, and the browser fell back to a native form POST — which presents as
+"the page refreshes," not as "JavaScript is broken."
+
+How it got that way: the app had been brought up with plain `bun run
+docker:up` instead of `bun run docker:up:lan`. `docker:down && docker:up` is
+documented as the deliberate way to restore the loopback-only bind — that part
+is fine. What is not written down anywhere is that an *incidental*
+`docker:up` — from `docker:reset`, from a script, from an agent told to "try
+`docker:up` once if the database looks down" — silently reverts a live LAN
+session with no warning and no error. The container comes back up healthy.
+`curl` against the LAN URL still returns 200. Nothing announces that the phone
+just lost its allowlisted origin.
+
+**This is not "we forgot to run the right command."** The fragility is that
+two commands with adjacent names (`docker:up`, `docker:up:lan`) leave the
+stack in observably identical states — healthy container, 200 on every
+route — while one of them silently strips the one thing the phone depends on.
+Anything that ever runs `docker:up` for an unrelated reason (chasing a
+database connection, a reset script, a future CI step) is a footgun aimed at
+whoever is mid-count on a phone at the time.
+
+**What was actually built, 2026-07-31: detection, not prevention.**
+`components/count/preflight-origin-check.tsx` reads the `Host` header
+server-side and fails loudly — naming the fix — if it is not in the
+allowlist; it is placed first in `/count/preflight`, ahead of the camera and
+decoder checks, so it is checked before anything else is trusted. A hydration
+beacon was added alongside it (`components/count/preflight.tsx`) so a
+blocked-chunks failure shows red instead of silently rendering. Both catch
+the symptom fast, on the device, before anyone starts counting — but **neither
+stops the revert from happening.** `docs/phone-count-test.md`'s triage table
+now also carries the symptom → cause → fix entry for this specific failure,
+plus a note that the phone can have cached the broken, non-hydrating page and
+a plain reload won't show the fix.
+
+**What would actually fix it, not just catch it faster:**
+- Make the LAN state sticky — persist `DEV_LAN_ORIGIN` (and the TLS profile
+  choice) somewhere `docker:up` reads and preserves by default, so leaving LAN
+  mode requires saying so, rather than being the silent side effect of any
+  bare `up`.
+- Or have `docker:up` itself detect that a LAN session is live (the cert
+  exists, the `tls` compose profile is running, `DEV_LAN_ORIGIN` was
+  previously set) and refuse or warn before tearing it down — the way a
+  destructive migration would ask first.
+
+Neither is built. The preflight row is the cheap fix that ships today; the
+sticky-state fix is the one that would have prevented the incident rather
+than shortened it.
+
+This is also the fifth instance of the pattern item #18 named: the server was
+fine and returned 200 (`curl https://192.168.12.33:3443/login`, the whole
+time it was broken) while the app was completely unusable on the device it
+was built for. See `STATE.md`'s "every gate stayed green" paragraph.

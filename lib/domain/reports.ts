@@ -314,6 +314,17 @@ export interface ReorderList {
   /** The closed count on-hand figures are computed from; null if none exist yet. */
   asOfCountId: number | null;
   items: ReorderItem[];
+  /**
+   * How many active products have an overall par at all.
+   *
+   * Reported because zero items means two completely different things and the
+   * screen cannot otherwise tell them apart: "everything is well stocked" and
+   * "no product has a par, so this list is structurally incapable of ever
+   * showing a row". The second read as the first for as long as par levels
+   * were unwritable — a finished-looking screen confidently reporting that
+   * all is well.
+   */
+  productsWithPar: number;
 }
 
 export async function reorderList(actor: Actor): Promise<ReorderList> {
@@ -326,7 +337,7 @@ export async function reorderList(actor: Actor): Promise<ReorderList> {
   );
 
   if (asOfCountId == null) {
-    return { asOfCountId: null, items: [] };
+    return { asOfCountId: null, items: [], productsWithPar: 0 };
   }
 
   // MVP only ever writes overall par rows (location_id IS NULL) — spec §8.
@@ -347,7 +358,7 @@ export async function reorderList(actor: Actor): Promise<ReorderList> {
     );
 
   if (parRows.length === 0) {
-    return { asOfCountId, items: [] };
+    return { asOfCountId, items: [], productsWithPar: 0 };
   }
 
   const productIds = parRows.map((p) => p.productId);
@@ -406,5 +417,5 @@ export async function reorderList(actor: Actor): Promise<ReorderList> {
     return a.productName.localeCompare(b.productName);
   });
 
-  return { asOfCountId, items };
+  return { asOfCountId, items, productsWithPar: parRows.length };
 }

@@ -5,14 +5,25 @@ commit `68d0f15`. Read alongside `STATE.md`, which covers what is *unproven*;
 this file covers what is **absent or wrong in the code as written**, which is a
 different list.
 
-Verified this pass:
+**Status 2026-07-31: A, B, C, D1, D2, E, F, G, H and I are fixed.** J is still
+open and keeps its section below. Each fixed section keeps its original
+text — the reasoning is why the fix looks as it does — with a **FIXED** note
+saying what changed. Nothing is deleted, because the failure *shapes* here are
+the reusable part.
+
+Verified after the fixes:
 
 | Check | Result |
 |---|---|
 | `bun run typecheck` | passes |
+| `bun run lint` | passes (was 1 error — finding F) |
 | `bun run build` | passes, 16 routes |
-| `bun run lint` | **fails** — 1 error (see F) |
-| `bun run test` | not run: no Docker in this environment, suite needs a real MariaDB |
+| `bun run test:docker` | **94 tests / 381 assertions**, 0 fail, across 7 files, against MariaDB 11.8 |
+
+The suite was checked for teeth rather than assumed to have them: breaking
+`upsertProductPar` fails exactly the 8 par/reorder tests, and widening
+`isCountWritable` to accept `submitted` fails exactly the 3 write-refusal
+tests, with every unrelated test still green.
 
 Nothing here was taken from the docs. Every finding below is a claim about a
 specific file, and the reasoning states how to check it.
@@ -25,6 +36,17 @@ produce a trustworthy number?**
 ## A. The reorder list can never produce a single row
 
 **Blocker. Not previously recorded anywhere.**
+
+**FIXED 2026-07-30.** `parLevel`/`reorderPoint` are on `productUpdateSchema`,
+`upsertProductPar` writes the `location_id IS NULL` row (and a null par level
+deletes it), the product form has a Reordering section, and `needs_par` is
+attached in `attachStock` so the catalog says which products still have none.
+`reorderList` now also returns `productsWithPar`, because "nothing is short"
+and "no par exists anywhere" produced an identical empty array and the screens
+said the reassuring thing about both. Covered by 13 tests.
+
+Open question 2 (par per product or per location) is deliberately still open —
+the MVP writes overall rows only, which is what keeps it open.
 
 `product_par` is read in two places and **written in none.**
 
@@ -79,6 +101,19 @@ precisely so this could be deferred, and writing null rows keeps it deferred.
 **Blocker for the first count. Logged as open-item #16, but that entry
 describes the wrong failure.**
 
+**FIXED 2026-07-30.** `linkBarcodeToProduct` inserts a `product_barcode` row
+against an existing product after an ownership check on the product id
+(invariant 9), and `EnrollForm` now **opens on search** rather than on the
+new-product form — during the first count "already in the catalog, just never
+scanned" is the common case and creating is the rare one. The name-collision
+error also now offers a way through to the link screen instead of dead-ending.
+
+`pack_level` was the real question and is answered without a universal extra
+tap: `each` by default, with an each/case choice shown only for products
+counted both ways (`isCountedByCase`, lib/pack-level.ts — the same predicate
+`incompleteReasons` uses, shared rather than duplicated). `isPrimary` is
+derived server-side, never taken from the client.
+
 All 97 seeded products ship with no barcode, so during the first count *every*
 scan is unresolved and routes to `EnrollForm` (`count-leg.tsx:270`). The
 counter types the product's real name — "Tito's Handmade Vodka", 750ml — and
@@ -112,6 +147,23 @@ silently miscounts beer.
 ## C. An open-bottle fill reading cannot be corrected. At all.
 
 **High.**
+
+**FIXED 2026-07-30**, with one half deliberately left open. `FillEntry` has a
+correction mode reached from "Correct these": it seeds a draft from the
+existing readings, chips remove them, the pad adds them back, and the button
+states the consequence live (`was 2.3 · −0.8 units`) in the same way the
+quantity SET does. It writes through the queue as a new `fills` write kind, so
+a correction made with the WiFi down survives.
+
+`clientLineId` is now required by `editCountLineFillsSchema` — the queue needs
+an id to store the write under, and requiring it now means closing the ledger
+gap is a change to the domain function alone rather than to this boundary and
+every caller.
+
+**Still open: the ledger entry (open item 2).** That was a deliberate call:
+a replace is naturally idempotent, so this is an audit-trail gap rather than a
+correctness one, and inventing a delta convention for replaces silently would
+change what the audit export means.
 
 `editCountLineFillsAction` has **zero callers** — verified by grepping every
 `.ts`/`.tsx` outside `app/actions/`. It is the only path that can rewrite
@@ -155,6 +207,23 @@ only way to fix a mistyped fill during a live count.
 ## D. A rejected write stays on screen as counted, and jams the queue forever
 
 **High. Two distinct defects in `count-leg.tsx`'s `runWrite`, neither recorded.**
+
+**FIXED 2026-07-30, both halves.**
+
+**D1** — `runWrite` captures the affected line's prior value on the way past
+(inside the state updater, so it is exact rather than a render behind) and
+restores it when the server refuses, deleting the row if it did not exist
+before. One line rather than the whole map: a blanket snapshot would also
+revert anything that landed in between. Nothing can today, because `busy`
+serializes writes, but a rollback that silently depends on that gate is a trap
+for whoever removes it.
+
+**D2** — a server *rejection* now `dequeue`s instead of `markAttempt`ing. The
+server has already decided, so a replay gets the same answer; keeping it made
+`pendingFor` return it forever and pinned the chip at "1 pending", which is
+exactly the signal spec §11 wants trustworthy. Dropping it silently would be
+its own bug, so `QueuedWrite` gained a `label` and the error names the write
+("Tito's Handmade Vodka · Back Bar was refused… Re-count that one to be sure").
 
 **D1 — the optimistic row is never rolled back.** `setLines(optimistic)` runs at
 line 184, before the network call. On failure (line 244) the handler calls
@@ -202,6 +271,18 @@ anything.
 
 **Medium. Possibly deliberate, but nothing says so, and the UI implies otherwise.**
 
+**FIXED 2026-07-30 — decided the first way: submission freezes writes.**
+`assertCountWritable` refuses anything `isCountWritable` rejects, the scan page
+redirects on `submitted`/`reviewed` as well as `closed`, and the Resume/Continue
+buttons become Review. The predicate lives in `lib/count-status.ts` because the
+disagreement between four layers *was* the finding.
+
+The freeze needed an escape hatch to be safe, so **`reopenCount` was added**
+(submitted|reviewed → in_progress, owner/manager). Without it a mis-tapped
+Submit with sections still uncounted would be unrecoverable: the count takes no
+more lines and the only forward move is a close that invariant 1 makes
+permanent. `closed` is not in its `from` list and never should be.
+
 `assertCountWritable` (`lib/domain/counts.ts:172`) rejects one status:
 
 ```ts
@@ -233,6 +314,10 @@ allow late writes should be written down.
 
 **Medium, and cheap.**
 
+**FIXED 2026-07-30.** Disabled with the reason at `login-form.tsx:20`, as this
+section recommended, rather than rewritten — whether React has attached is not
+derivable during render, so the effect *is* the signal. `bun run lint` passes.
+
 ```
 components/login-form.tsx
   20:19  error  react-hooks/set-state-in-effect
@@ -256,6 +341,12 @@ same treatment: a disable with the reason, not a rewrite.
 
 **Low severity, high nuisance — it is the first thing the phone test hits.**
 
+**FIXED 2026-07-30.** The message now names the working URL, built from the
+current host (`https://<host>:3443<path>`), explains the self-signed warning is
+about identity rather than encryption, and points at `/count/preflight`. The
+chrome://flags suggestion is gone, with a comment recording that it silently
+did nothing twice because the handset was not Chromium.
+
 `components/count/barcode-scanner.tsx:56` tells the user:
 
 > …or, for LAN testing, allow this origin in
@@ -272,6 +363,21 @@ at `/count/preflight`. As written it costs an hour to whoever reads it.
 ## H. No write path for vendors, users, or (in-app) locations
 
 **Medium. Partly deliberate; the vendor half is not.**
+
+**FIXED 2026-07-31 — the vendor half.** `createVendor`, `updateVendor` and
+`assignVendorToProducts` (50e2512), plus the `/office/vendors` screen and bulk
+catalog assignment that make them reachable (87a8d63), give vendors a write
+path end to end. `listVendorsAction` now returns real rows, the product form's
+vendor `<select>` populates, and `/office/reorder` groups by vendor instead of
+dumping every row under "No vendor set". Closed as open item #19 — see that
+entry for the domain-layer test count (12 DB-backed tests, mutation-checked),
+the four screen defects found and fixed the same week, and the one thing left
+unverified: the final `router.refresh()` fix in
+`components/office/vendors-list.tsx`, typechecked and built but not confirmed
+in a browser before the session that wrote it ended.
+
+The users half (open item #3) and the locations half stay exactly as
+described below — neither has moved.
 
 **Vendors — nothing writes them anywhere.** Not a server action, not the seed
 (`db/seed.ts` header: "Does NOT seed: User, **Vendor**…"). `listVendorsAction`
@@ -302,6 +408,10 @@ means editing a CSV rather than tapping a setting.
 ## I. Two forms are missing `method="post"`
 
 **Low.**
+
+**FIXED 2026-07-30.** Added to `enroll-form.tsx` and `product-edit-form.tsx`.
+`catalog-table.tsx`'s search box stays GET, which this section already called
+the honest verb for it.
 
 CLAUDE.md's working agreement, written after the login form serialized a
 plaintext password into the query string:
@@ -339,7 +449,72 @@ exercises.
 
 ---
 
-## Suggested order
+## K. `isDuplicateKeyError` never fired for a wrapped error
+
+**Found 2026-07-30 while testing finding B. Not in the original audit — no
+amount of reading would have shown it, which is the point.**
+
+`lib/domain/db-errors.ts` read `err.code` directly. Drizzle wraps query
+failures in `DrizzleQueryError`, which carries `query`, `params` and `cause`
+and **no `code` of its own**, so the check returned false for every wrapped
+error and both predicates in that file silently stopped discriminating.
+
+What it cost: every `ConflictError` in `lib/domain/catalog.ts` was unreachable.
+"A product named X already exists" and "Barcode Y is already assigned to Z"
+fell through to the generic handler and arrived as *"Something went wrong"* —
+mid-count, on the app's highest-risk interaction, with the entire actionable
+half of the message discarded.
+
+Why it survived: the paths that *had* coverage happened to receive unwrapped
+errors, so the replay-rollback tests passed and the mechanism looked proven. A
+mocked error object would have kept passing forever, because the shape that
+broke it came from the library, not from us.
+
+**Fixed** by walking the `cause` chain (bounded, so a self-referential cause
+cannot spin), matching on `errno` as well as `code`, and testing both
+predicates directly against the real `DrizzleQueryError` class —
+`tests/db-errors.test.ts`.
+
+The reusable lesson: this is the third failure in this project whose defining
+feature is that **every gate stayed green** — after the static CSP (#13) and
+the dev cross-origin 403 (#17). All three were invisible to status codes and to
+the tests that existed, and each was found only by exercising the real thing.
+
+---
+
+## Still open
+
+**J — `scanCountLine` is dead code.** Untouched, and still correct to leave
+until someone times a real count (open item 10). Note it now has one more
+unreachable sibling: `QueuedWriteKind` gained `"fills"`, which IS reachable, so
+`"scan"` is the only dead branch left in `runWrite`/`sendQueued`.
+
+**H is closed 2026-07-31** — see finding H above and open item #19. The vendor
+half was the one that mattered; users (item #3) and locations stay as they
+were.
+
+---
+
+## What is still unproven
+
+Fixing these closed the *code* gaps. It did not close `STATE.md`'s question,
+and the distinction is the whole reason these are two files:
+
+- **The counting screens have still never run on a phone.** Everything in B, C
+  and D is UI on the count leg, verified by domain tests and a browser
+  hydration check — not by anyone scanning a bottle.
+- **The offline queue is still unexercised in a browser** (open item 9). D2
+  changed its rejection behaviour, which makes that test more worth doing, not
+  less.
+- **The reorder list has never rendered a real row**, because no product has a
+  real par yet and costs are still unentered (open item 4).
+
+---
+
+## Suggested order — original, kept for the record
+
+This was the ordering the audit proposed. 1-6 and 7 are done; what remains is
+J, which is why it sits at the bottom of it.
 
 Ordered by what blocks the first trustworthy count, not by effort.
 

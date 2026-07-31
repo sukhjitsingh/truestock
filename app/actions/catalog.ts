@@ -16,6 +16,10 @@ import {
   productDeactivateSchema,
   productSearchSchema,
   resolveBarcodeSchema,
+  linkBarcodeSchema,
+  vendorCreateSchema,
+  vendorUpdateSchema,
+  assignVendorToProductsSchema,
 } from "@/lib/validation/catalog";
 
 /**
@@ -72,6 +76,26 @@ export async function createProductAction(
 }
 
 /**
+ * Attach a scanned barcode to a product already in the catalog. Same three
+ * roles as `createProductAction`, and for the same reason: this is the other
+ * half of the unknown-barcode loop, and during the first count it is the
+ * common half — whoever is holding the phone must be able to finish it
+ * without a role change.
+ *
+ * Ownership of `productId` is checked in the domain layer (invariant 9 — a
+ * foreign key proves the row exists, not whose it is), not here.
+ */
+export async function linkBarcodeToProductAction(
+  input: unknown,
+): Promise<ActionResult<catalog.ProductSummary>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager", "staff");
+    const parsed = linkBarcodeSchema.parse(input);
+    return catalog.linkBarcodeToProduct(actor, parsed);
+  });
+}
+
+/**
  * Full catalog edit (back office) — owner/manager only. Staff is
  * "count only" (spec §4) and doesn't get catalog-management access beyond
  * scan-to-enroll.
@@ -111,5 +135,53 @@ export async function listVendorsAction(): Promise<ActionResult<catalog.VendorSu
   return runAction(async () => {
     const actor = await requireRole("owner", "manager");
     return catalog.listVendors(actor);
+  });
+}
+
+/**
+ * Create a vendor. Owner/manager only — vendors and reordering are a
+ * manager's job (spec §4), matching the role gating on `updateProductAction`.
+ */
+export async function createVendorAction(
+  input: unknown,
+): Promise<ActionResult<catalog.VendorSummary>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = vendorCreateSchema.parse(input);
+    return catalog.createVendor(actor, parsed);
+  });
+}
+
+/**
+ * Update a vendor. Owner/manager only. Ownership of `id` is checked in the
+ * domain layer (invariant 9), not here.
+ */
+export async function updateVendorAction(
+  input: unknown,
+): Promise<ActionResult<catalog.VendorSummary>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = vendorUpdateSchema.parse(input);
+    return catalog.updateVendor(actor, parsed);
+  });
+}
+
+/**
+ * Assign a vendor to multiple products atomically. Owner/manager only.
+ *
+ * Every product id is ownership-checked in the domain layer in a single
+ * scoped query (not N). The vendor id is also ownership-checked unless null.
+ * If any product is not the actor's, the whole call fails as NotFound rather
+ * than silently assigning the subset that is — a partial success would probe
+ * cross-tenant ids.
+ */
+export async function assignVendorToProductsAction(
+  input: unknown,
+): Promise<ActionResult<{ count: number }>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = assignVendorToProductsSchema.parse(input);
+    await catalog.assignVendorToProducts(actor, parsed);
+    return { count: parsed.productIds.length };
   });
 }

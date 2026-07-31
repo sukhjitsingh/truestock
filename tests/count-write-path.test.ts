@@ -23,11 +23,17 @@ import {
   setCountLineQuantities,
   submitCount,
   reviewCount,
+  reopenCount,
   closeCount,
   getCount,
   getCountTotals,
 } from "@/lib/domain/counts";
-import { ClosedCountError, NotFoundError } from "@/lib/domain/errors";
+import {
+  ClosedCountError,
+  CountNotWritableError,
+  InvalidCountTransitionError,
+  NotFoundError,
+} from "@/lib/domain/errors";
 import {
   migrateTestDatabase,
   resetDatabase,
@@ -373,6 +379,98 @@ describe("cost visibility (invariant 8)", () => {
 
     const totals = await getCountTotals(fx.manager, c.id);
     expect(totals.totalValue).toBeUndefined();
+  });
+});
+
+describe("a submitted count is no longer being counted", () => {
+  /** Puts one line on a count and submits it. */
+  async function submittedCount() {
+    const c = await openCount(fx.owner, { type: "full" });
+    await incrementCountLine(fx.owner, {
+      clientLineId: newClientLineId(),
+      countId: c.id,
+      productId: fx.pricedProductId,
+      locationId: fx.locationId,
+      sealedCaseQtyDelta: 0,
+      sealedEachQtyDelta: 1,
+      newPartialFills: [],
+    });
+    await submitCount(fx.owner, c.id);
+    return c;
+  }
+
+  const oneMore = (countId: number) => ({
+    clientLineId: newClientLineId(),
+    countId,
+    productId: fx.secondProductId,
+    locationId: fx.locationId,
+    sealedCaseQtyDelta: 0,
+    sealedEachQtyDelta: 1,
+    newPartialFills: [],
+  });
+
+  test("a write to a submitted count is refused", async () => {
+    const c = await submittedCount();
+    // The UI already presented submission as a freeze — SessionActions drops
+    // "Keep counting" — while the write path went on accepting scans from
+    // anyone who reached the scan URL directly.
+    await expect(incrementCountLine(fx.owner, oneMore(c.id))).rejects.toThrow(
+      CountNotWritableError,
+    );
+  });
+
+  test("a write to a reviewed count is refused", async () => {
+    const c = await submittedCount();
+    await reviewCount(fx.owner, c.id);
+    // The one that actually matters: a reviewer signing off on numbers that
+    // someone is still changing underneath them.
+    await expect(incrementCountLine(fx.owner, oneMore(c.id))).rejects.toThrow(
+      CountNotWritableError,
+    );
+  });
+
+  test("the refusal is distinct from a closed count's", async () => {
+    const c = await submittedCount();
+    // "Submitted, reopen it" and "closed, immutable forever" have different
+    // remedies, so they must not arrive as the same error.
+    await expect(incrementCountLine(fx.owner, oneMore(c.id))).rejects.not.toBeInstanceOf(
+      ClosedCountError,
+    );
+  });
+
+  test("reopening returns it to in_progress and writes land again", async () => {
+    const c = await submittedCount();
+    const reopened = await reopenCount(fx.owner, c.id);
+    expect(reopened.status).toBe("in_progress");
+
+    // Without this the freeze would be a trap: a Submit tapped by mistake
+    // with sections still uncounted would leave the count unwritable, and the
+    // only forward move is a close that invariant 1 makes permanent.
+    const line = await incrementCountLine(fx.owner, oneMore(c.id));
+    expect(line.sealedEachQty).toBe(1);
+  });
+
+  test("a reviewed count can be reopened too", async () => {
+    const c = await submittedCount();
+    await reviewCount(fx.owner, c.id);
+    const reopened = await reopenCount(fx.owner, c.id);
+    expect(reopened.status).toBe("in_progress");
+  });
+
+  test("a CLOSED count can never be reopened — invariant 1 is absolute", async () => {
+    const c = await submittedCount();
+    await reviewCount(fx.owner, c.id);
+    await closeCount(fx.owner, c.id);
+
+    await expect(reopenCount(fx.owner, c.id)).rejects.toThrow(InvalidCountTransitionError);
+
+    const after = await getCount(fx.owner, c.id);
+    expect(after.count.status).toBe("closed");
+  });
+
+  test("another tenant cannot reopen the count", async () => {
+    const c = await submittedCount();
+    await expect(reopenCount(fx.otherOwner, c.id)).rejects.toThrow(NotFoundError);
   });
 });
 

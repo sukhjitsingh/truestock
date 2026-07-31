@@ -24,7 +24,10 @@ export default async function ProductEditPage({
   // returns the same role-shaped summary. Rather than add a near-duplicate
   // domain function, this filters the list — 97 products, one indexed query.
   const [all, vendors] = await Promise.all([
-    searchProductsAction({ limit: 100, activeOnly: false }),
+    // includeOnHand so the form can render the product's current par level —
+    // par lives in `product_par`, not on the product row, and this read is
+    // the only thing that fetches it.
+    searchProductsAction({ limit: 100, activeOnly: false, includeOnHand: true }),
     listVendorsAction(),
   ]);
   if (!all.ok) notFound();

@@ -4,8 +4,16 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { updateProductAction, deactivateProductAction } from "@/app/actions/catalog";
 import type { ProductSummary, VendorSummary } from "@/lib/domain/catalog";
+import { bottleSizesFor, isPresetSizeMl } from "@/lib/bottle-sizes";
+import { isCountedByCase } from "@/lib/pack-level";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/field";
+
+/**
+ * The `<option>` value that means "not on the list". A string no size can
+ * collide with, because every other option's value is `String(ml)`.
+ */
+const SIZE_OTHER = "other";
 
 /**
  * Product edit.
@@ -30,14 +38,74 @@ export function ProductEditForm({
   const [brand, setBrand] = useState(product.brand ?? "");
   const [category, setCategory] = useState(product.category);
   const [sizeMl, setSizeMl] = useState(String(product.sizeMl));
+  /**
+   * Preset dropdown, or the free-text box behind "Other…".
+   *
+   * Seeded from the product's OWN stored size, so a row holding a size that is
+   * not on its category's list opens on that size and saves it back unchanged.
+   * The alternative — always opening on the dropdown — would render a value
+   * the list does not contain, and the first save of an unrelated field would
+   * write whatever the select had snapped to. Rewriting catalog data as a side
+   * effect of editing a name is exactly the plausible-and-wrong failure the
+   * invariants exist to stop, and it would be silent: the size is not on the
+   * screen the person was looking at.
+   *
+   * Nothing in today's seed is a non-preset size (tests/bottle-sizes.test.ts
+   * pins that), which is why this has to be deliberate rather than something
+   * a passing test would have caught.
+   */
+  const [sizeMode, setSizeMode] = useState<"preset" | typeof SIZE_OTHER>(
+    isPresetSizeMl(product.sizeMl, product) ? "preset" : SIZE_OTHER,
+  );
   const [caseSize, setCaseSize] = useState(product.caseSize == null ? "" : String(product.caseSize));
   const [vendorId, setVendorId] = useState(product.vendorId == null ? "" : String(product.vendorId));
   const [cost, setCost] = useState(product.currentUnitCost ?? "");
+  const [parLevel, setParLevel] = useState(
+    product.stock?.parLevel == null ? "" : String(product.stock.parLevel),
+  );
+  const [reorderPoint, setReorderPoint] = useState(
+    product.stock?.reorderPoint == null ? "" : String(product.stock.reorderPoint),
+  );
 
   const [pending, setPending] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  // Unit type is not editable here, so the size list moves only with category.
+  const sizeContext = { category, unitType: product.unitType };
+  const sizes = bottleSizesFor(sizeContext);
+
+  /**
+   * Re-point the size list when the category changes.
+   *
+   * In the change handler and not an effect, because an effect also fires on
+   * mount — which is the one moment this must not run. Opening a product to
+   * fix a typo in its name would move its size before anyone touched it.
+   *
+   * "Other…" is left alone entirely: a size someone typed because it is not on
+   * any list is not the dropdown's to reset. And a preset that survives into
+   * the new list stays (375 is both a spirits half and a wine half); a size
+   * the new list cannot render flips the field into "Other…" rather than
+   * being replaced.
+   *
+   * Re-defaulting instead of revealing was the bug: `size_ml` is a real,
+   * previously-saved fact — half of `product_name_size_ml_unique` and the
+   * divisor for the Phase 2 pour model — not a value the category select is
+   * free to overwrite because it doesn't fit the new list. A hard seltzer
+   * stored as Beer/bottle/355 re-filed to Spirits (355 is not a spirits
+   * preset) must not silently become 750 on the next save of an unrelated
+   * field; it must land in "Other…" showing the true 355, editable if it's
+   * actually wrong. (enroll-form.tsx re-defaults on the same event, and
+   * correctly: it has no stored value to protect because it is creating the
+   * product, not editing one.)
+   */
+  function changeCategory(next: string) {
+    setCategory(next);
+    if (sizeMode === SIZE_OTHER) return;
+    const ctx = { category: next, unitType: product.unitType };
+    if (!isPresetSizeMl(Number(sizeMl), ctx)) setSizeMode(SIZE_OTHER);
+  }
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
@@ -52,8 +120,33 @@ export function ProductEditForm({
       brand: brand.trim() === "" ? null : brand,
       category,
       sizeMl: Number(sizeMl),
+      /**
+       * Submitted whether or not the field is on screen — hiding it PRESERVES
+       * the stored case size rather than clearing it.
+       *
+       * The trade, stated plainly. Preserving leaves a value the UI no longer
+       * shows: a spirit can carry a case size nobody can see or edit here.
+       * Clearing would instead destroy a real one — open a beer product,
+       * brush the category select on the way to fixing a typo, and its case
+       * size is gone, silently, in a save the person thought was about the
+       * name.
+       *
+       * Preserving wins because the two mistakes are not the same size. A
+       * stale case size on a spirit is inert: `computeLineUnits` reads it only
+       * against a case count, spirits are never counted in cases, and
+       * `incompleteReasons` doesn't ask about it for non-beer. A lost case
+       * size on beer mis-values every case ever counted against it. Blanking
+       * the box while it IS shown still clears it, so the desk keeps a
+       * deliberate way to say "none".
+       */
       caseSize: caseSize.trim() === "" ? null : Number(caseSize),
       vendorId: vendorId === "" ? null : Number(vendorId),
+      // Blank clears the par rather than meaning "leave it alone" — the field
+      // is always rendered with its current value, so a blank box is a
+      // deliberate erasure, not an omission. The server distinguishes the two
+      // (null clears, undefined ignores); this form only ever means the former.
+      parLevel: parLevel.trim() === "" ? null : Number(parLevel),
+      reorderPoint: reorderPoint.trim() === "" ? null : Number(reorderPoint),
       ...(canEditCost ? { currentUnitCost: cost.trim() === "" ? null : cost } : {}),
     });
 
@@ -79,7 +172,10 @@ export function ProductEditForm({
   }
 
   return (
-    <form onSubmit={save} className="mt-6 flex flex-col gap-section-gap" noValidate>
+    // method="post" per CLAUDE.md's working agreement — see enroll-form.tsx
+    // for the failure it prevents. A pre-hydration submit degrades to a bare
+    // 405 instead of serializing fields into the query string.
+    <form method="post" onSubmit={save} className="mt-6 flex flex-col gap-section-gap" noValidate>
       <section className="flex flex-col gap-4">
         <h2 className="text-label uppercase text-muted-foreground">Details</h2>
 
@@ -105,7 +201,7 @@ export function ProductEditForm({
             <Select
               id="category"
               value={category}
-              onChange={(e) => setCategory(e.target.value)}
+              onChange={(e) => changeCategory(e.target.value)}
             >
               {["Spirits", "Beer", "Wine", "Liqueur", "NA"].map((c) => (
                 <option key={c} value={c}>
@@ -114,39 +210,80 @@ export function ProductEditForm({
               ))}
             </Select>
           </Field>
-          <Field label="Size (ml)" htmlFor="size" error={fieldErrors.sizeMl}>
-            <Input
+          {/*
+            The desk is where an unlisted size gets entered — the count leg is
+            dropdown-only on purpose (see lib/bottle-sizes.ts), so this
+            "Other…" is the only path to one. Removing it would strand any
+            product whose real size is not a preset.
+          */}
+          <Field
+            label="Size"
+            htmlFor="size"
+            error={fieldErrors.sizeMl}
+            hint={sizeMode === SIZE_OTHER ? "Millilitres." : undefined}
+          >
+            <Select
               id="size"
-              type="number"
-              inputMode="numeric"
-              value={sizeMl}
-              onChange={(e) => setSizeMl(e.target.value)}
-            />
+              value={sizeMode === SIZE_OTHER ? SIZE_OTHER : sizeMl}
+              onChange={(e) => {
+                // Switching TO "Other…" keeps the current number rather than
+                // blanking it: the box opens on what the product actually is,
+                // so an accidental tap on Other costs nothing.
+                if (e.target.value === SIZE_OTHER) {
+                  setSizeMode(SIZE_OTHER);
+                  return;
+                }
+                setSizeMode("preset");
+                setSizeMl(e.target.value);
+              }}
+            >
+              {sizes.map((s) => (
+                <option key={s.ml} value={s.ml}>
+                  {s.label}
+                </option>
+              ))}
+              <option value={SIZE_OTHER}>Other…</option>
+            </Select>
+            {sizeMode === SIZE_OTHER ? (
+              <Input
+                id="size-other"
+                type="number"
+                inputMode="numeric"
+                aria-label="Size in millilitres"
+                value={sizeMl}
+                onChange={(e) => setSizeMl(e.target.value)}
+              />
+            ) : null}
           </Field>
         </div>
 
-        <Field
-          label="Case size"
-          htmlFor="caseSize"
-          error={fieldErrors.caseSize}
-          hint={
-            // CLAUDE.md is explicit that a blank case size on a spirit, wine
-            // or keg is correct rather than missing data, and that
-            // backfilling one would invent a pack level the bar doesn't use.
-            // The hint says so, so nobody "fixes" it.
-            category === "Beer" && product.unitType !== "keg"
-              ? "Bottled beer is counted by the case and by the each — this is needed."
-              : "Leave blank. Only bottled beer is counted by the case."
-          }
-        >
-          <Input
-            id="caseSize"
-            type="number"
-            inputMode="numeric"
-            value={caseSize}
-            onChange={(e) => setCaseSize(e.target.value)}
-          />
-        </Field>
+        {/*
+          Only bottled beer is counted by the case, so only bottled beer gets
+          the field. CLAUDE.md is explicit that a blank case size on a spirit,
+          wine or keg is correct rather than missing data; a rendered box —
+          even one hinting "leave blank" — is an invitation to backfill a pack
+          level the bar doesn't use.
+
+          Keyed off the LIVE category select rather than `product.category`,
+          so recategorising a spirit to Beer reveals the field in the same
+          edit that needs it.
+        */}
+        {isCountedByCase({ category, unitType: product.unitType }) ? (
+          <Field
+            label="Case size"
+            htmlFor="caseSize"
+            error={fieldErrors.caseSize}
+            hint="Bottled beer is counted by the case and by the each — this is needed."
+          >
+            <Input
+              id="caseSize"
+              type="number"
+              inputMode="numeric"
+              value={caseSize}
+              onChange={(e) => setCaseSize(e.target.value)}
+            />
+          </Field>
+        ) : null}
 
         <Field label="Vendor" htmlFor="vendor" error={fieldErrors.vendorId}>
           <Select id="vendor" value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
@@ -158,6 +295,53 @@ export function ProductEditForm({
             ))}
           </Select>
         </Field>
+      </section>
+
+      {/*
+        Par is not a product column — it is a `product_par` row with
+        `location_id IS NULL`, the "one par overall" convention the MVP
+        writes (spec §8). Per-location pars are still an open question
+        (CLAUDE.md open question 2) and the nullable column is what keeps it
+        open; nothing here answers it.
+
+        This section is visible to managers as well as owners. Par levels are
+        quantities, not cost data, and running the reorder is a manager's job
+        (spec §4) — invariant 8 gates money, not stock.
+      */}
+      <section className="flex flex-col gap-4">
+        <h2 className="text-label uppercase text-muted-foreground">Reordering</h2>
+        <div className="grid grid-cols-2 gap-3">
+          <Field
+            label="Par level"
+            htmlFor="parLevel"
+            error={fieldErrors.parLevel}
+            hint="Target stock to hold. Blank means this product never appears on the reorder list."
+          >
+            <Input
+              id="parLevel"
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              value={parLevel}
+              onChange={(e) => setParLevel(e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Reorder point"
+            htmlFor="reorderPoint"
+            error={fieldErrors.reorderPoint}
+            hint="Order when on-hand drops to this. Blank uses the par level itself."
+          >
+            <Input
+              id="reorderPoint"
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              value={reorderPoint}
+              onChange={(e) => setReorderPoint(e.target.value)}
+            />
+          </Field>
+        </div>
       </section>
 
       {canEditCost ? (

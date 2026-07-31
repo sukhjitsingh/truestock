@@ -1,0 +1,4 @@
+name,contact,order_method,lead_time_days
+# Edit this file to list your supplier relationships here, or add vendors through /office/vendors.
+# Columns: supplier name, contact info (phone/email/name), ordering method (website/phone/rep/etc), lead time in days.
+# Do not invent vendor names — a wrong vendor on the reorder list sends an order to the wrong company.

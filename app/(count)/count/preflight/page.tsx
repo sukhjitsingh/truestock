@@ -1,5 +1,6 @@
 import { requireUser } from "@/lib/current-user";
 import { Preflight } from "@/components/count/preflight";
+import { PreflightOriginCheck } from "@/components/count/preflight-origin-check";
 
 export const metadata = { title: "Preflight · Truestock" };
 
@@ -21,6 +22,9 @@ export default async function PreflightPage() {
       <p className="mt-1 text-row-subtitle text-muted-foreground">
         What this phone can and cannot do, before it matters.
       </p>
+      <div className="mt-section-gap">
+        <PreflightOriginCheck />
+      </div>
       <Preflight />
     </div>
   );
