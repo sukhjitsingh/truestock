@@ -70,7 +70,7 @@ export function CountLineCard({
   return (
     <article
       className={cn(
-        "flex items-start gap-3 rounded-lg border border-border bg-card p-card-pad",
+        "flex min-h-tap-min items-start gap-3 rounded-lg border border-border bg-card p-card-pad",
         className,
       )}
     >

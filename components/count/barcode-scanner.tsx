@@ -157,14 +157,17 @@ export function BarcodeScanner({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black">
-      <div className="flex items-center justify-between p-bar-pad">
+      <div
+        className="flex items-center justify-between p-bar-pad"
+        style={{ paddingTop: "max(var(--spacing-bar-pad), env(safe-area-inset-top))" }}
+      >
         <button
           type="button"
           onClick={onClose}
           aria-label="Close scanner"
-          className="flex size-11 items-center justify-center rounded-full border border-white/25 text-white"
+          className="flex size-tap-primary items-center justify-center rounded-full border border-white/25 text-white active:bg-white/10"
         >
-          <X className="size-5" aria-hidden="true" />
+          <X className="size-6" aria-hidden="true" />
         </button>
         {torchSupported ? (
           <button
@@ -172,7 +175,7 @@ export function BarcodeScanner({
             onClick={toggleTorch}
             aria-label={torchOn ? "Turn torch off" : "Turn torch on"}
             aria-pressed={torchOn}
-            className="flex size-11 items-center justify-center rounded-full border border-white/25 text-white"
+            className="flex size-tap-primary items-center justify-center rounded-full border border-white/25 text-white active:bg-white/10"
           >
             {torchOn ? (
               <Zap className="size-5" aria-hidden="true" />
