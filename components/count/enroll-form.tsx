@@ -256,7 +256,7 @@ function LinkExisting({
                 }
                 void link(p, "each");
               }}
-              className="rounded-lg border border-border bg-card p-card-pad text-left disabled:opacity-50"
+              className="flex min-h-tap-primary flex-col justify-center rounded-lg border border-border bg-card p-card-pad text-left disabled:opacity-50 active:bg-muted"
             >
               <span className="block text-row-title text-card-foreground">{p.name}</span>
               <span className="block text-row-subtitle text-muted-foreground">

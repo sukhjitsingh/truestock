@@ -21,17 +21,17 @@ export default async function OfficeLayout({
   return (
     <div className="flex min-h-dvh flex-col bg-background text-foreground">
       <header className="border-b border-border">
-        <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-6 py-4">
-          <Link href="/office" className="text-row-title text-foreground">
+        <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 overflow-x-auto px-4 py-4 sm:px-6">
+          <Link href="/office" className="shrink-0 text-row-title text-foreground">
             Truestock
           </Link>
           <OfficeNav role={user.role} />
-          <div className="hidden text-caption text-muted-foreground sm:block">
+          <div className="hidden shrink-0 text-caption text-muted-foreground sm:block">
             {user.name} &middot; {user.role}
           </div>
         </div>
       </header>
-      <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">{children}</main>
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 sm:py-8">{children}</main>
     </div>
   );
 }

@@ -17,7 +17,7 @@ export default async function CountLayout({
   const user = await requireUser();
 
   return (
-    <div className="dark flex min-h-dvh flex-col bg-background text-foreground">
+    <div className="dark flex min-h-dvh flex-col bg-background text-foreground touch-manipulation">
       <div className="flex-1">{children}</div>
       <CountTabBar role={user.role} />
     </div>

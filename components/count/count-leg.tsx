@@ -587,9 +587,9 @@ export function CountLeg({
             type="button"
             aria-label="Scan barcode"
             onClick={() => setScannerOpen(true)}
-            className="-mr-2 flex size-11 shrink-0 items-center justify-center rounded-md text-accent"
+            className="-mr-2 flex size-tap-primary shrink-0 items-center justify-center rounded-md text-accent active:bg-muted"
           >
-            <ScanLine className="size-5" aria-hidden="true" />
+            <ScanLine className="size-6" aria-hidden="true" />
           </button>
         </div>
         {/* Search is always beside scan, never behind it — damaged labels,
@@ -610,7 +610,7 @@ export function CountLeg({
               <button
                 key={p.id}
                 type="button"
-                className="rounded-lg border border-border bg-card p-card-pad text-left"
+                className="flex min-h-tap-primary flex-col justify-center rounded-lg border border-border bg-card p-card-pad text-left active:bg-muted"
                 onClick={() => {
                   setResults([]);
                   setQuery("");
@@ -663,7 +663,10 @@ export function CountLeg({
         />
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-40 flex gap-3 border-t border-border bg-background p-bar-pad">
+      <div
+        className="fixed inset-x-0 bottom-0 z-40 flex gap-3 border-t border-border bg-background px-bar-pad pt-bar-pad"
+        style={{ paddingBottom: "max(var(--spacing-bar-pad), env(safe-area-inset-bottom))" }}
+      >
         <Button
           variant="outline"
           size="primary"

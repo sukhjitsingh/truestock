@@ -19,7 +19,8 @@ project has twice shipped something that looked finished and was not.
 **MVP is built and not deployed — and as of 2026-07-31 a human has counted
 with it.** The sentence that stood here since this file was written — *"the
 counting app, the actual product, has never been used by a human"* — is finally
-false.
+false. As of 2026-08-01, a full mobile UI pass has been applied and the LAN
+server is ready for the next phone test.
 
 On 2026-07-31 the owner signed in on a phone over the LAN https origin, scanned
 a barcode the catalog did not have, created the product through scan-to-enroll,
@@ -100,7 +101,9 @@ Written, reviewed, typechecked — never observed working.
 - **The counting app on a phone.** Scan, tenths, sealed quantities, scan-to-enroll,
   the locked-location leg. This is the product, and it is the biggest unknown.
   The environment around it is now built and largely verified (see below); what
-  has never happened is a human counting bottles with it.
+  has never happened is a human counting bottles with it. The 2026-08-01 UI pass
+  (larger tap targets, safe-area insets, touch-manipulation, bigger fill and
+  quantity buttons) is built and typechecked but **not yet driven on a device**.
 - **The camera, on any real device.** The LAN HTTPS path was built precisely so
   the camera can exist at all, and everything testable from a terminal passes —
   certificate SAN, a 200 over TLS, client chunks served, Server Actions
@@ -162,6 +165,39 @@ Written, reviewed, typechecked — never observed working.
 - **The deploy pipeline.** Built, never run against a real host.
 
 ## Recent history
+
+- **2026-08-01** — **Full mobile UI pass applied.** A design audit of every
+  screen identified and fixed the following gaps, all of which are now built
+  but unproven on a real phone:
+  - **Fill entry** (`components/count/fill-entry.tsx`): Empty/Half/Full
+    shortcuts enlarged to `h-20` (80 px) with a % sub-label. Tenths buttons
+    raised to `min-h-[56px]` (tap-primary floor). Correction-mode delta is
+    now colour-coded green/red so the sign is readable at a glance.
+  - **Quantity entry stepper** (`components/count/quantity-entry.tsx`):
+    `−`/`+` buttons enlarged from `size-11 → size-14` (44→56 px), font
+    raised to `text-numeral-md`, `active:bg-muted` feedback added.
+  - **Scan button** (`components/count/count-leg.tsx`): enlarged from
+    `size-11 → size-tap-primary` (44→56 px).
+  - **Fixed action bar** (`count-leg.tsx`): now applies
+    `max(16px, env(safe-area-inset-bottom))` so it clears the iOS home
+    indicator without hardcoding a pixel offset.
+  - **Barcode scanner** (`components/count/barcode-scanner.tsx`): close and
+    torch buttons enlarged to `size-tap-primary`; header respects
+    `safe-area-inset-top` for the notch/Dynamic Island.
+  - **Count-line-card** (`components/count/count-line-card.tsx`): added
+    `min-h-tap-min` so every product row meets the 44 px touch floor.
+  - **Search result rows** (count-leg and enroll-form): raised to
+    `min-h-tap-primary` with `active:bg-muted` feedback.
+  - **Count layout root** (`app/(count)/layout.tsx`): `touch-manipulation`
+    added — eliminates the 300 ms tap delay without disabling pinch-zoom.
+  - **Office nav** (`components/office/office-nav.tsx`): `overflow-x-auto +
+    shrink-0 + whitespace-nowrap` — all 5 nav links reachable by horizontal
+    scroll on a 375 px phone.
+  - **Office layout** (`app/(office)/layout.tsx`): `px-4 sm:px-6` (was
+    `px-6`), main `py-6 sm:py-8` — comfortable on narrow phones.
+  None of these changes touch logic, tests, or the data model. Typecheck and
+  `next build` are green. **None has been exercised on a real phone yet** —
+  that is the next step.
 
 - **2026-07-31** — **The owner could not sign in on his phone over the LAN
   https URL — the login page just refreshed on submit.** `DEV_LAN_ORIGIN` was
@@ -404,19 +440,21 @@ references them).
 
 ## Next three things
 
-Unchanged by the 2026-07-30 work, and that is the point: closing the code gaps
-removed the reasons a phone test would have dead-ended, it did not substitute
-for one. Protocol for 1 and 2: **`docs/phone-count-test.md`**. Start at
+The 2026-08-01 mobile UI pass is done — larger tap targets, safe-area insets,
+touch-manipulation, bigger fill/quantity buttons. The LAN server is live.
+Protocol for 1 and 2: **`docs/phone-count-test.md`**. Start at
 `/count/preflight` on the phone.
 
-1. **Drive a real count on a phone.** Time it against the sub-20-minute target the
-   whole design is justified by. A *first* pass enrols rather than counts — every
-   barcode is unknown — so it measures the enroll flow's 20-second budget, not
-   the 20-minute one. Fold in open-item #20's six checks while you are in there;
-   they exercise the same screens — and two of the six only exist because the
-   2026-07-30 size and case work changed those screens again afterwards.
-2. **Exercise the offline queue for real** — turn the WiFi off mid-scan, and go
-   into the walk-in.
+1. **Drive a real count on a phone — now with the improved UI.** Time it against
+   the sub-20-minute target the whole design is justified by. A *first* pass
+   enrols rather than counts — every barcode is unknown — so it measures the
+   enroll flow's 20-second budget, not the 20-minute one. Fold in open-item
+   #20's six checks while you are in there. Pay specific attention to the new
+   fill-entry button sizes (Empty/Half/Full are now 80 px tall) and the
+   quantity stepper (56 px +/- buttons) — these are the most-touched controls
+   and they have never been pressed by a human.
+2. **Exercise the offline queue for real** — turn the WiFi off mid-scan, go into
+   the walk-in, then reconnect and confirm the queue drains.
 3. **Verify the production CSP** with `next build && next start` before any deploy.
 
 After those, the shortest path to a genuinely useful reorder list is real

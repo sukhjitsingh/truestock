@@ -33,3 +33,8 @@ next-env.d.ts
 
 # local db dumps
 *.sql.gz
+
+# Jcode / Codex agent config — local tooling, not part of the project
+.agents/
+.codex/
+AGENTS.md

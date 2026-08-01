@@ -44,26 +44,21 @@ export function FillEntry({
    * Correction mode replaces `partial_fills` outright instead of appending.
    *
    * Why this exists at all: every tap here is APPEND-only, so before this
-   * there was no way to walk back a misread bottle. Tap 80% when you meant
-   * 30% and the line carried an extra half-unit forever — the only remedy was
-   * a second wrong reading to average it out, which is not a remedy.
-   *
-   * Sealed quantities have had an answer for exactly this since the start
-   * (SET, with a live before/after on the button). Open bottles are the half
-   * that needs it MORE, not less: a sealed count is a number anyone can
-   * re-derive by looking at the shelf, while a fill level is a judgement call
-   * recorded once by one person in a dim room.
+   * screen existed, the only way to fix a wrong reading was to scan the
+   * bottle again and go negative — which is wrong in a different way and
+   * produces a −0.3 reading the next count's valuation has to explain. A
+   * correction replaces the whole array instead, from a draft that starts
+   * pre-loaded with what is currently recorded so the counter just drops
+   * the wrong reading and taps save.
    */
   const [correcting, setCorrecting] = useState(false);
   const [draft, setDraft] = useState<number[]>([]);
 
-  const add = (value: number) =>
-    correcting
-      ? setDraft((prev) => [...prev, value])
-      : setFills((prev) => [...prev, value]);
-  const removeAt = (index: number) => setFills((prev) => prev.filter((_, i) => i !== index));
+  const add = (v: number) => setFills((prev) => [...prev, v]);
+  const removeAt = (i: number) => setFills((prev) => prev.filter((_, j) => j !== i));
+  const total = fills.reduce((s, f) => s + f, 0);
 
-  const total = fills.reduce((sum, f) => sum + f, 0);
+  // ---- correction mode -------------------------------------------------------
 
   if (correcting) {
     const was = existingFills.reduce((sum, f) => sum + f, 0);
@@ -105,14 +100,37 @@ export function FillEntry({
 
         <div>
           <p className="mb-2 text-label uppercase text-muted-foreground">Add a reading back</p>
-          <div className="grid grid-cols-6 gap-2">
+          {/*
+            Three big shortcuts — the main row, same as the normal pad.
+            Correction mode has the same one-hand constraint; the targets need
+            to be just as generous.
+          */}
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label: "Empty", value: 0, sub: "0%" },
+              { label: "Half", value: 0.5, sub: "50%" },
+              { label: "Full", value: 1, sub: "100%" },
+            ].map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                onClick={() => setDraft((prev) => [...prev, preset.value])}
+                className="flex h-20 flex-col items-center justify-center gap-1 rounded-xl border border-input bg-card text-foreground active:bg-muted"
+              >
+                <span className="text-row-title font-semibold">{preset.label}</span>
+                <span className="text-caption text-muted-foreground">{preset.sub}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-3 grid grid-cols-6 gap-2">
             {TENTHS.map((t) => (
               <button
                 key={t}
                 type="button"
-                onClick={() => add(t)}
+                onClick={() => setDraft((prev) => [...prev, t])}
                 aria-label={`${Math.round(t * 100)} percent full`}
-                className="min-h-tap-min rounded-md border border-input bg-card text-numeral-sm tabular-nums text-foreground"
+                className="flex min-h-[56px] items-center justify-center rounded-lg border border-input bg-card text-numeral-sm tabular-nums text-foreground active:bg-muted"
               >
                 {Math.round(t * 100)}
               </button>
@@ -125,18 +143,13 @@ export function FillEntry({
             variant="outline"
             size="primary"
             className="flex-1"
-            onClick={() => setCorrecting(false)}
+            onClick={() => {
+              setCorrecting(false);
+              setDraft([]);
+            }}
           >
             Cancel
           </Button>
-          {/*
-            The button states the consequence as they edit, same rule as the
-            quantity SET (CLAUDE.md): a replace that someone meant as an
-            append loses bottles with nothing on screen looking wrong
-            afterwards, because the line just reads its new total either way.
-            No modal — a dialog on a control used this often gets clicked
-            through blind inside a week, which is worse than no guard.
-          */}
           <button
             type="button"
             disabled={pending}
@@ -147,14 +160,19 @@ export function FillEntry({
               Replace with {draft.length} {draft.length === 1 ? "bottle" : "bottles"}
             </span>
             <span className="text-caption tabular-nums opacity-80">
-              was {was.toFixed(1)} · {delta >= 0 ? "+" : "−"}
-              {Math.abs(delta).toFixed(1)} units
+              was {was.toFixed(1)} ·{" "}
+              <span className={delta >= 0 ? "text-success" : "text-negative"}>
+                {delta >= 0 ? "+" : "−"}
+                {Math.abs(delta).toFixed(1)} units
+              </span>
             </span>
           </button>
         </div>
       </div>
     );
   }
+
+  // ---- normal add mode -------------------------------------------------------
 
   return (
     <div className="flex flex-col gap-4">
@@ -182,25 +200,35 @@ export function FillEntry({
         </div>
       ) : null}
 
+      {/*
+        Three dominant shortcuts: the most common readings in a real bar.
+        Tall enough (h-20 = 80px) to hit one-handed while holding a bottle.
+        The tenths row sits below as precision without being the first target.
+      */}
       <div className="grid grid-cols-3 gap-3">
         {[
-          { label: "Empty", value: 0 },
-          { label: "Half", value: 0.5 },
-          { label: "Full", value: 1 },
+          { label: "Empty", value: 0, sub: "0%" },
+          { label: "Half", value: 0.5, sub: "50%" },
+          { label: "Full", value: 1, sub: "100%" },
         ].map((preset) => (
           <button
             key={preset.label}
             type="button"
             onClick={() => add(preset.value)}
-            className="min-h-tap-primary rounded-md border border-input bg-card text-label uppercase text-foreground"
+            className="flex h-20 flex-col items-center justify-center gap-1 rounded-xl border border-input bg-card text-foreground active:bg-muted"
           >
-            {preset.label}
+            <span className="text-row-title font-semibold">{preset.label}</span>
+            <span className="text-caption text-muted-foreground">{preset.sub}</span>
           </button>
         ))}
       </div>
 
       <div>
         <p className="mb-2 text-label uppercase text-muted-foreground">Or tap a tenth</p>
+        {/*
+          6-column grid so each cell is ~55px wide on a 375px phone — above the
+          44px touch floor. min-h-[56px] = tap-primary minimum per design system.
+        */}
         <div className="grid grid-cols-6 gap-2">
           {TENTHS.map((t) => (
             <button
@@ -208,7 +236,7 @@ export function FillEntry({
               type="button"
               onClick={() => add(t)}
               aria-label={`${Math.round(t * 100)} percent full`}
-              className="min-h-tap-min rounded-md border border-input bg-card text-numeral-sm tabular-nums text-foreground"
+              className="flex min-h-[56px] items-center justify-center rounded-lg border border-input bg-card text-numeral-sm tabular-nums text-foreground active:bg-muted"
             >
               {Math.round(t * 100)}
             </button>
@@ -234,9 +262,6 @@ export function FillEntry({
               </button>
             ))}
           </div>
-          <p className="mt-2 text-caption text-muted-foreground">
-            Adds {total.toFixed(1)} units to {productName}. Tap a chip to remove it.
-          </p>
         </div>
       ) : null}
 
@@ -256,7 +281,9 @@ export function FillEntry({
             Add {fills.length || ""} {fills.length === 1 ? "bottle" : "bottles"}
           </span>
           {fills.length > 0 ? (
-            <span className="text-caption tabular-nums opacity-80">+{total.toFixed(1)} units</span>
+            <span className="text-caption tabular-nums opacity-80">
+              +{total.toFixed(1)} units
+            </span>
           ) : null}
         </button>
       </div>

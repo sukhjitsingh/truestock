@@ -27,7 +27,7 @@ export function OfficeNav({ role }: { role: Role }) {
   ];
 
   return (
-    <nav className="flex items-center gap-1" aria-label="Back office">
+    <nav className="flex items-center gap-1 overflow-x-auto" aria-label="Back office">
       {links.map((link) => {
         const active = link.exact ? pathname === link.href : pathname.startsWith(link.href);
         return (
@@ -36,7 +36,7 @@ export function OfficeNav({ role }: { role: Role }) {
             href={link.href}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "flex min-h-tap-min items-center rounded-md px-3 text-label uppercase",
+              "flex min-h-tap-min shrink-0 items-center rounded-md px-3 text-label uppercase whitespace-nowrap",
               active ? "bg-secondary text-foreground" : "text-muted-foreground",
             )}
           >
@@ -48,7 +48,7 @@ export function OfficeNav({ role }: { role: Role }) {
           on a different device, in a different theme. */}
       <Link
         href="/count"
-        className="ml-2 flex min-h-tap-min items-center rounded-md border border-input px-3 text-label uppercase text-foreground"
+        className="ml-2 flex min-h-tap-min shrink-0 items-center rounded-md border border-input px-3 text-label uppercase text-foreground whitespace-nowrap"
       >
         Count
       </Link>
