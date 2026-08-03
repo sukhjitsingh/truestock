@@ -24,6 +24,7 @@ export function OfficeNav({ role }: { role: Role }) {
     { href: "/office/catalog", label: "Catalog" },
     { href: "/office/vendors", label: "Vendors" },
     { href: "/office/reorder", label: "Reorder" },
+    ...(role === "owner" ? [{ href: "/office/users", label: "Users" }] : []),
   ];
 
   return (
