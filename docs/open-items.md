@@ -189,25 +189,25 @@ column, or storing before/after arrays) and write the entry inside the existing
 transaction. Do not invent the convention silently — it changes what the audit
 export means.
 
-## 3. No user-management action exists
+## ~~3. No user-management action exists~~ — **closed 2026-08-03**
 
-**Trigger: the moment anyone needs to deactivate a user or change a role.**
+`lib/domain/users.ts` — `listUsers`, `setUserActive`, `setUserRole` — with all
+three guards in place: self-deactivation blocked, self-demotion blocked,
+last-active-owner lockout blocked. `setUserActive` deletes the user's `session`
+rows in the same transaction, so a deactivated account is locked out on its
+very next request with no live session remaining.
 
-Today `user.role` and `user.active` are only ever written by
-`scripts/create-user.ts` (create-only). Deactivating a bartender means a manual
-`UPDATE` against the database.
+`app/actions/users.ts` — three owner-only server actions wrapping the domain.
+`components/office/office-nav.tsx` exposes the Users link for owner role.
+`/office/users` renders the list with role-change selects and active toggles.
 
-When the action is built it **must revoke the user's `session` rows in the same
-transaction** as flipping `active`. Authorization re-reads `active` from the
-database on every server action, so a deactivated user is already locked out of
-all app data on their very next request — but their Better Auth session row
-stays valid until natural expiry, and an account that is off should not leave a
-live session behind. `auth.api.revokeUserSessions` or a direct delete of the
-user's `session` rows, inside the same transaction.
+Tests: `tests/user-write-path.test.ts` (DB-backed, bun:test) covers all three
+guards and the cross-tenant refusal. `tests/rapid-scan.test.ts` covers
+idempotent `client_line_id` behaviour on the count write path alongside.
 
-Also note: there is no owner-facing "add user" screen. Accounts are created by
-CLI only, deliberately — no public signup path can hand out a role. A back-office
-user screen is a reasonable later addition; a public one is not.
+**Status: built and typechecked. Domain layer tested against real MariaDB.
+The UI has not been driven in a browser yet** — add to the "built but unproven"
+list along with open-item #20 work before the next phone-count session.
 
 ## 4. Costs are not entered, so valuation is untested in anger
 

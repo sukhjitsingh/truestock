@@ -81,6 +81,11 @@ and `tests/seed-csv-parser.test.ts` landed 2026-07-31 with the vendor work,
 bringing the file count from 5 to 7. The 73 that existed before those two files
 are unchanged, so nothing was modified or disabled to get there.
 
+Two new test files landed 2026-08-03 (`tests/user-write-path.test.ts`,
+`tests/rapid-scan.test.ts`), bringing the file count to 9. Both require a live
+MariaDB connection (`test:docker`) and will error with a clear message outside
+that context, consistent with all other DB-integration tests.
+
 **The suite is checked for teeth, repeatedly.** Deleting the ledger insert from
 `applyIncrement` — the whole idempotency mechanism — fails exactly the four
 dependent tests. Stubbing out `upsertProductPar` fails exactly the 13
@@ -165,6 +170,33 @@ Written, reviewed, typechecked — never observed working.
 - **The deploy pipeline.** Built, never run against a real host.
 
 ## Recent history
+
+- **2026-08-03** — **User management screen built, closing open-item #3.**
+  `lib/domain/users.ts` provides `listUsers`, `setUserActive`, `setUserRole` with
+  three lockout guards: self-deactivation blocked, self-demotion blocked,
+  last-active-owner cannot be deactivated or demoted. `setUserActive` deletes the
+  target user's `session` rows in the same transaction, so a deactivated account
+  is refused on its very next server request with no live session remaining.
+  `app/actions/users.ts` wraps all three as owner-only server actions.
+  `/office/users` renders the list; the Users nav link is exposed for the owner role.
+
+  The page had four bugs introduced by commit 97d019c and fixed in the same
+  session before the image shipped:
+  1. `users-list.tsx` imported `@/components/ui/table`, `@/components/ui/select`,
+     `@/components/ui/switch` (none of which exist in this project) and `sonner`
+     (not installed) — replaced with native `<table>`, `<select>`,
+     `<input type="checkbox">` + Tailwind.
+  2. `loadUsers()` referenced `result` without declaring it — missing
+     `const result = await actionListUsers()`.
+  3. Both new test files imported from `"vitest"` instead of `"bun:test"`,
+     making `npx tsc --noEmit` fail and bun's test runner complain.
+
+  TypeScript now reports zero errors. Docker rebuilt cleanly with the fixed
+  image; migrations applied; app serving and routing correctly.
+
+  **Status of the `/office/users` page: built, typechecked, domain layer DB-tested.
+  The page itself has not been driven in a browser** — add to the phone-count
+  session checklist alongside the other back-office screens.
 
 - **2026-08-01** — **Full mobile UI pass applied.** A design audit of every
   screen identified and fixed the following gaps, all of which are now built
