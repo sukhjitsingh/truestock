@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "bun:test";
 import { db } from "@/db";
 import { user, session, organization } from "@/db/schema";
 import { eq, sql } from "drizzle-orm";

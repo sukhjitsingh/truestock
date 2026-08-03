@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "bun:test";
 import { db } from "@/db";
 import { product, location, count, productBarcode } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
