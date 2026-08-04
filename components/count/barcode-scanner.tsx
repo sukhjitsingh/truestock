@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { X, Zap, ZapOff } from "lucide-react";
+import { createRescanGuard, offerFrame } from "@/lib/rescan-guard";
 
 /**
  * Live barcode scanning via the native `BarcodeDetector`, falling back to the
@@ -18,14 +19,10 @@ import { X, Zap, ZapOff } from "lucide-react";
  * is worse than a slow scan.
  */
 /**
- * Minimum gap between two accepted hits in continuous mode.
- *
- * 900ms is above the time it takes to move one bottle out of frame and the
- * next one in, and well above the frame-drop gaps that would otherwise let a
- * stationary bottle re-arm. It is a backstop to the `armed` flag, not the
- * primary guard.
+ * The re-scan guard lives in `lib/rescan-guard.ts` so the rule that decides
+ * whether a frame counts can be tested without a camera. See that file for
+ * why continuity, not barcode value, is what the guard keys on.
  */
-const RESCAN_COOLDOWN_MS = 900;
 
 export function BarcodeScanner({
   onDetected,
@@ -80,9 +77,7 @@ export function BarcodeScanner({
   useEffect(() => {
     let cancelled = false;
     let raf = 0;
-    /** False while a barcode is still in frame from the last accepted hit. */
-    let armed = true;
-    let lastHitAt = 0;
+    const guard = createRescanGuard();
 
     async function start() {
       try {
@@ -152,35 +147,16 @@ export function BarcodeScanner({
             const results = await detector.detect(videoRef.current);
             const hit = results.find((r) => r.rawValue);
 
-            if (!hit) {
-              // A clear frame is what re-arms continuous mode: the bottle has
-              // left the view, so the next detection is a new bottle rather
-              // than the same one still sitting in front of the lens.
-              armed = true;
-            } else if (!cancelled) {
-              if (!continuousRef.current) {
-                onDetectedRef.current(hit.rawValue);
-                return; // one-shot: the parent closes us, stop scanning now
-              }
-              // Continuous (rapid) mode. Two conditions must BOTH hold before
-              // a frame counts, and each catches a different double-count:
-              //
-              //   `armed`  — the barcode left the frame since the last hit.
-              //              Without it a bottle held still is re-detected
-              //              every frame, so one bottle becomes twenty.
-              //   cooldown — a floor on the gap between hits, for when the
-              //              detector drops a frame mid-bottle and briefly
-              //              reports nothing while the bottle has not moved.
-              //
-              // Erring toward missing a scan is deliberate: a missed scan is
-              // visible (the counter sees no confirmation and scans again),
-              // whereas a phantom one is silent and inflates the count.
-              const now = Date.now();
-              if (armed && now - lastHitAt > RESCAN_COOLDOWN_MS) {
-                armed = false;
-                lastHitAt = now;
-                onDetectedRef.current(hit.rawValue);
-              }
+            if (hit && !cancelled && !continuousRef.current) {
+              onDetectedRef.current(hit.rawValue);
+              return; // one-shot: the parent closes us, stop scanning now
+            }
+
+            // Continuous (rapid) mode: every frame is offered to the guard,
+            // including the empty ones — a frame with no barcode is what
+            // re-arms it, so it carries as much information as a hit.
+            if (!cancelled && offerFrame(guard, hit?.rawValue ?? null, Date.now())) {
+              onDetectedRef.current(hit!.rawValue);
             }
           } catch {
             // A single failed frame is not an error worth surfacing — the
