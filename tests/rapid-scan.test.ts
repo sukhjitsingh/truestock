@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { db } from "@/db";
-import { product, location, count, productBarcode } from "@/db/schema";
+import { product, count, productBarcode } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
 import { scanCountLine } from "@/lib/domain/counts";
 import { resetDatabase, createFixtures } from "./helpers/test-db";

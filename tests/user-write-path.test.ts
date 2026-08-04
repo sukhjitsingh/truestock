@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { db } from "@/db";
 import { user, session, organization } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { listUsers, setUserActive, setUserRole } from "@/lib/domain/users";
-import { DomainError, NotFoundError } from "@/lib/domain/errors";
+import { NotFoundError } from "@/lib/domain/errors";
 import type { Actor } from "@/lib/authz";
 import { resetDatabase } from "./helpers/test-db";
 
@@ -121,18 +121,58 @@ describe("User Write Path", () => {
       .rejects.toThrow("You cannot deactivate your own account.");
   });
 
-  it("refuses to demote the last active owner", async () => {
+  it("allows demoting an owner while another owner is still active", async () => {
     const actor = makeActor(owner1Id, org1Id, "owner");
 
-    // owner1 is the only owner. Demoting self is blocked.
+    // owner1 is the only owner. Demoting self is blocked before any count runs.
     await expect(setUserRole(actor, { userId: owner1Id, role: "staff" }))
       .rejects.toThrow("You cannot change your own role.");
 
-    // Promote staff1, then have staff1 demote owner1 (last active owner guard).
+    // Promote staff1 so the org has two active owners, then demote staff1.
+    // This must SUCCEED: the guard protects the last *active* owner, and
+    // owner1 is still active, so the org is not left without one.
     await db.update(user).set({ role: "owner" }).where(eq(user.id, staff1Id));
-    const actor2 = makeActor(staff1Id, org1Id, "owner");
-    await expect(setUserRole(actor2, { userId: owner1Id, role: "staff" }))
+    await setUserRole(actor, { userId: staff1Id, role: "staff" });
+
+    const [row] = await db.select().from(user).where(eq(user.id, staff1Id));
+    expect(row.role).toBe("staff");
+  });
+
+  it("refuses to demote the last active owner", async () => {
+    // The guard counts *active* owners other than the target. Reaching it
+    // therefore needs an actor who is an owner whose own row is inactive —
+    // otherwise the actor is themselves the second active owner and the
+    // demotion is legitimately allowed (the case above).
+    //
+    // This state is not reachable through the UI: requireSession refuses an
+    // inactive user with a 403 (lib/authz.ts) before any action runs, and
+    // deactivation deletes the user's sessions in the same transaction. The
+    // test calls the domain function directly to prove the invariant holds at
+    // the layer that owns it, rather than relying on the authz layer above it.
+    // Defence in depth is the point: if the session check is ever bypassed —
+    // and several Next.js CVEs have been middleware bypasses (invariant 7) —
+    // the org still cannot be left with no active owner.
+    await db.update(user).set({ role: "owner", active: false }).where(eq(user.id, staff1Id));
+    const inactiveOwner = makeActor(staff1Id, org1Id, "owner");
+
+    await expect(setUserRole(inactiveOwner, { userId: owner1Id, role: "staff" }))
       .rejects.toThrow(/last active owner/);
+
+    // owner1 must still be an owner — the write was refused, not partially applied.
+    const [row] = await db.select().from(user).where(eq(user.id, owner1Id));
+    expect(row.role).toBe("owner");
+  });
+
+  it("refuses to deactivate an owner when no other owner is active", async () => {
+    // Same shape as above, for the deactivation leg of the same invariant.
+    await db.update(user).set({ role: "owner", active: false }).where(eq(user.id, staff1Id));
+    const inactiveOwner = makeActor(staff1Id, org1Id, "owner");
+
+    await expect(setUserActive(inactiveOwner, { userId: owner1Id, active: false }))
+      .rejects.toThrow(/last active owner/);
+
+    const [row] = await db.select().from(user).where(eq(user.id, owner1Id));
+    expect(row.active).toBe(true);
   });
 
   it("refuses cross-tenant operations", async () => {
