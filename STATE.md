@@ -71,6 +71,9 @@ Verified means *observed running*, not reviewed or typechecked.
 | **Size preset lists** | `tests/bottle-sizes.test.ts` — which list each category resolves to, the keg short-circuit ahead of category, the NA-on-the-beer-list decision, **every size in the seed catalog asserted against the list its own product resolves to**, and (added by the review fix below) the keg default computed as the catalog's modal keg size rather than a pinned literal. Pure module only: no component is executed by it |
 | **Vendor write path** | `tests/vendor-write-path.test.ts` — 12 DB-backed tests: `createVendor`/`updateVendor`, cross-tenant refusal, bulk-assign atomicity confirmed by a re-read that finds no partial apply, and reorder-list vendor grouping end to end. Mutation-checked: disabling the ownership guard fails exactly one test |
 | **Seed CSV parser** | `tests/seed-csv-parser.test.ts` — the pure parser, moved to `db/csv.ts` so this test never has to import the seed's own entry-point module (see Recent history, 2026-07-31) |
+| **User management** | `tests/user-write-path.test.ts` — self-deactivation, self-demotion, last-active-owner lockout and cross-tenant refusal, plus the session rows being deleted in the same transaction as the deactivation. **Browser-verified 2026-08-04**: `scripts/verify-browser.mjs` drives it in a real Chromium and confirms a refused self-demotion both reports the refusal and snaps the select back to the role the user actually holds |
+| **Rapid-scan frame guard** | `tests/rescan-guard.test.ts` — 11 cases covering both directions, since both are silent: a bottle held in frame for 60 frames counts once, and three identical bottles presented in sequence count three times. Two modelled shelf sweeps at different cadences. Pure module, no camera or DOM |
+| **Rapid-scan write path** | `tests/rapid-scan.test.ts` — pack-level routing from the barcode (server-resolved, never client-supplied), mixed case/each scans landing on ONE line as 2 cases + 3 eaches (invariants 3 and 4), and another tenant's barcode refused rather than resolved (invariant 9) |
 
 **94 tests across 7 files**, all green, as of 2026-07-31 — `bun run
 test:docker` against MariaDB 11.8 in Docker, 381 assertions, 0 failures. The 16
@@ -80,6 +83,18 @@ themselves, plus 1 more from the review fix below that replaced a pinned
 and `tests/seed-csv-parser.test.ts` landed 2026-07-31 with the vendor work,
 bringing the file count from 5 to 7. The 73 that existed before those two files
 are unchanged, so nothing was modified or disabled to get there.
+
+Two new test files landed 2026-08-03 (`tests/user-write-path.test.ts`,
+`tests/rapid-scan.test.ts`), bringing the file count to 9. Both require a live
+MariaDB connection (`test:docker`) and will error with a clear message outside
+that context, consistent with all other DB-integration tests.
+
+**121 tests across 10 files**, all green, as of 2026-08-04. `tests/rescan-guard.test.ts`
+is the tenth file and the only pure one of the recent batch — it models frame
+sequences rather than touching a database, which is the point of having pulled
+the guard out of the scanner's effect. The rapid-scan and user-write-path files
+grew in the same pass: mixed case/each on one line, cross-tenant barcode
+refusal, and the last-active-owner deactivation leg that had no coverage.
 
 **The suite is checked for teeth, repeatedly.** Deleting the ledger insert from
 `applyIncrement` — the whole idempotency mechanism — fails exactly the four
@@ -117,6 +132,18 @@ Written, reviewed, typechecked — never observed working.
   20-second budget, so it wants timing specifically), the fill-correction mode,
   the optimistic rollback on a refused write, and the message naming a dropped
   queued write. Listed with how to exercise each as open-item #20.
+- **Rapid-scan mode, against an actual camera** (2026-08-04). The write path and
+  the frame guard are both tested — the guard hard, in both directions, because
+  both of its failure modes are silent. But those tests feed it *modelled* frame
+  sequences. What no test can tell us is whether the assumptions behind them
+  hold in the hand: that a bottle leaving the frame reliably produces a clear
+  frame the detector reports as empty, that 250ms is above the real flicker gap
+  on a mid-range Android, and that a glossy label under bar lighting does not
+  produce long runs of dropped frames that read as a bottle leaving. Writing the
+  tests already found two silent miscounts in logic that looked right; the
+  camera is the next layer down and nothing has exercised it. **Count a real
+  shelf, then count it by hand, and compare** — this is the one feature where an
+  off-by-one is invisible on screen by construction.
 - **The size dropdown and the eaches-only quantity screen** (2026-07-30). Both
   are on the counting leg and **neither has been opened on a phone, or in any
   browser.** Typecheck, lint, `next build` and the full suite are green and none
@@ -165,6 +192,33 @@ Written, reviewed, typechecked — never observed working.
 - **The deploy pipeline.** Built, never run against a real host.
 
 ## Recent history
+
+- **2026-08-03** — **User management screen built, closing open-item #3.**
+  `lib/domain/users.ts` provides `listUsers`, `setUserActive`, `setUserRole` with
+  three lockout guards: self-deactivation blocked, self-demotion blocked,
+  last-active-owner cannot be deactivated or demoted. `setUserActive` deletes the
+  target user's `session` rows in the same transaction, so a deactivated account
+  is refused on its very next server request with no live session remaining.
+  `app/actions/users.ts` wraps all three as owner-only server actions.
+  `/office/users` renders the list; the Users nav link is exposed for the owner role.
+
+  The page had four bugs introduced by commit 97d019c and fixed in the same
+  session before the image shipped:
+  1. `users-list.tsx` imported `@/components/ui/table`, `@/components/ui/select`,
+     `@/components/ui/switch` (none of which exist in this project) and `sonner`
+     (not installed) — replaced with native `<table>`, `<select>`,
+     `<input type="checkbox">` + Tailwind.
+  2. `loadUsers()` referenced `result` without declaring it — missing
+     `const result = await actionListUsers()`.
+  3. Both new test files imported from `"vitest"` instead of `"bun:test"`,
+     making `npx tsc --noEmit` fail and bun's test runner complain.
+
+  TypeScript now reports zero errors. Docker rebuilt cleanly with the fixed
+  image; migrations applied; app serving and routing correctly.
+
+  **Status of the `/office/users` page: built, typechecked, domain layer DB-tested.
+  The page itself has not been driven in a browser** — add to the phone-count
+  session checklist alongside the other back-office screens.
 
 - **2026-08-01** — **Full mobile UI pass applied.** A design audit of every
   screen identified and fixed the following gaps, all of which are now built

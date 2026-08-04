@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, MapPin, ScanLine, Search, CloudOff, Check } from "lucide-react";
+import { ChevronLeft, MapPin, ScanLine, Search, CloudOff, Check, Zap } from "lucide-react";
 import {
   scanCountLineAction,
   incrementCountLineAction,
@@ -43,6 +43,26 @@ type Phase =
   | { kind: "counting" }
   | { kind: "entry"; product: ProductSummary; locationId: number; isStray: boolean }
   | { kind: "enroll"; barcode: string };
+
+/**
+ * One rapid-mode scan, kept only long enough to be shown over the camera.
+ *
+ * `ok: false` entries matter more than the successes: in rapid mode the
+ * scanner does not close, so a refusal has no screen of its own to land on.
+ * If a failure were silent the counter would keep scanning past it and the
+ * bottle would simply be missing from the count — the same quiet shortfall
+ * CLAUDE.md's `client_line_id` note warns about, arrived at from the UI side.
+ */
+interface RapidEvent {
+  /** Fresh per scan, so React keys stay unique when the same bottle repeats. */
+  key: string;
+  ok: boolean;
+  title: string;
+  detail: string;
+}
+
+/** How many rapid scans stay on screen. Enough to see a mistake, not a wall of text. */
+const RAPID_LOG_LIMIT = 4;
 
 function lineKey(productId: number, locationId: number) {
   return `${productId}:${locationId}`;
@@ -101,7 +121,32 @@ export function CountLeg({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Rapid mode: the scanner stays open and every scan records "one more of
+   * this" without an entry screen (open-item #10). Only meaningful where the
+   * count is quantities-only — a tenths location needs a fill reading per
+   * bottle, which is exactly the entry screen rapid mode skips.
+   */
+  const [rapid, setRapid] = useState(false);
+  /** Last few rapid scans, newest first, for the on-scanner confirmation. */
+  const [rapidLog, setRapidLog] = useState<RapidEvent[]>([]);
+  /** Held for the duration of one rapid write, so two can never overlap. */
+  const rapidInFlight = useRef(false);
+
   const activeLocation = locations.find((l) => l.id === activeLocationId) ?? null;
+
+  /**
+   * Rapid mode is offered only where the location is counted by quantity.
+   *
+   * On a tenths location every open bottle needs a fill reading, which is the
+   * entry screen rapid mode exists to skip — a "+1 each" there would record a
+   * whole sealed bottle for what is actually a part-full one, and the count
+   * would read high with nothing on screen looking wrong. The mode is hidden
+   * rather than disabled because the location already states its input mode
+   * two lines up, so a greyed-out control would be asking a question the
+   * screen has answered.
+   */
+  const rapidAvailable = activeLocation?.countMode !== "tenths";
 
   const refreshPending = useCallback(async () => {
     setPendingWrites((await pendingFor(countId)).length);
@@ -324,8 +369,17 @@ export function CountLeg({
   );
 
   async function onBarcode(barcode: string) {
-    setScannerOpen(false);
     if (activeLocationId == null) return;
+
+    // Rapid mode keeps the camera up and records +1 per scan. It is only
+    // offered on quantity locations, so there is no fill reading to collect
+    // and no reason to leave the scanner.
+    if (rapid && activeLocation?.countMode !== "tenths") {
+      await rapidScan(barcode, activeLocationId);
+      return;
+    }
+
+    setScannerOpen(false);
     setBusy(true);
     const resolved = await resolveBarcodeAction({ barcode });
     setBusy(false);
@@ -349,6 +403,102 @@ export function CountLeg({
     });
   }
 
+  /**
+   * One rapid scan: resolve, write +1 of whatever pack level the barcode is,
+   * and stay on the camera.
+   *
+   * The write goes through `scanCountLine` (the "scan" kind) rather than
+   * `incrementCountLine`, and that is the point of the mode: the barcode is
+   * re-resolved on the SERVER, so the pack level that decides whether this is
+   * a case or an each is never taken from the client. A case barcode adds one
+   * case, an each barcode adds one each, and invariant 4 holds without the
+   * client having an opinion.
+   *
+   * An unknown barcode drops out of rapid mode into the enroll form instead of
+   * being counted or skipped. Skipping it would lose the bottle silently, and
+   * enrolling mid-count is the catalog's designed growth path (spec §12) — but
+   * enrolment needs the form, so the camera closes for it and rapid mode
+   * resumes when the form is done.
+   */
+  async function rapidScan(barcode: string, locationId: number) {
+    // Serialize rapid writes explicitly.
+    //
+    // `runWrite` captures the pre-write value of a line so a refused write can
+    // be rolled back, and its own comment notes that this is only exact while
+    // writes do not overlap — until now `busy` guaranteed that, because every
+    // entry screen gated its submit on it. Rapid mode has no submit button to
+    // gate, so the guarantee has to be restored here or the rollback silently
+    // stops being correct: two scans of the same product in flight together
+    // would both capture the same "before", and undoing one would erase the
+    // other.
+    //
+    // A ref, not `busy`, because `busy` is state — a second scan arriving in
+    // the same tick would read the stale value and sail through the check.
+    if (rapidInFlight.current) return;
+    rapidInFlight.current = true;
+    try {
+      await rapidScanInner(barcode, locationId);
+    } finally {
+      rapidInFlight.current = false;
+    }
+  }
+
+  async function rapidScanInner(barcode: string, locationId: number) {
+    setBusy(true);
+    const resolved = await resolveBarcodeAction({ barcode });
+
+    if (!resolved.ok) {
+      setBusy(false);
+      pushRapid({ ok: false, title: "Scan failed", detail: resolved.error.message });
+      return;
+    }
+
+    if (!resolved.data) {
+      setBusy(false);
+      setScannerOpen(false);
+      setPhase({ kind: "enroll", barcode });
+      return;
+    }
+
+    const { product, packLevel } = resolved.data;
+    const location = locations.find((l) => l.id === locationId);
+    if (!location) {
+      setBusy(false);
+      return;
+    }
+
+    const ok = await runWrite(
+      "scan",
+      lineKey(product.id, locationId),
+      writeLabel(product, location),
+      { countId, barcode, locationId, qty: 1 },
+      (prev) =>
+        applyIncrement(
+          prev,
+          product,
+          location,
+          packLevel === "case" ? 1 : 0,
+          packLevel === "each" ? 1 : 0,
+          [],
+        ),
+    );
+
+    pushRapid({
+      ok,
+      title: product.name,
+      detail: ok
+        ? `+1 ${packLevel === "case" ? "case" : "each"}`
+        : "Not saved — scan it again",
+    });
+  }
+
+  /** Prepend a rapid result, keeping the list short. */
+  function pushRapid(event: Omit<RapidEvent, "key">) {
+    setRapidLog((prev) =>
+      [{ ...event, key: newWriteId() }, ...prev].slice(0, RAPID_LOG_LIMIT),
+    );
+  }
+
   async function search(value: string) {
     setQuery(value);
     if (value.trim().length < 2) {
@@ -370,6 +520,12 @@ export function CountLeg({
         onPick={(id) => {
           setActiveLocationId(id);
           setPhase({ kind: "counting" });
+          // Rapid mode does not survive a leg change. It is a per-location
+          // decision (a tenths leg cannot use it at all), and carrying it
+          // silently into the next leg would mean the first scan there
+          // records +1 without the counter having asked for that.
+          setRapid(false);
+          setRapidLog([]);
         }}
       />
     );
@@ -542,7 +698,57 @@ export function CountLeg({
   return (
     <div className="pb-action-bar">
       {scannerOpen ? (
-        <BarcodeScanner onDetected={onBarcode} onClose={() => setScannerOpen(false)} />
+        <BarcodeScanner
+          onDetected={onBarcode}
+          onClose={() => setScannerOpen(false)}
+          continuous={rapidAvailable && rapid}
+          overlay={
+            rapidAvailable && rapid ? (
+              <div className="flex flex-col gap-1">
+                {rapidLog.map((e) => (
+                  <div
+                    key={e.key}
+                    className={cn(
+                      "rounded-md px-3 py-2 text-caption backdrop-blur-sm",
+                      e.ok ? "bg-black/70 text-white" : "bg-negative-bg/95 text-negative",
+                    )}
+                  >
+                    <span className="font-medium">{e.title}</span>
+                    <span className="opacity-80"> · {e.detail}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null
+          }
+          footer={
+            rapidAvailable ? (
+              <div className="flex flex-col items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRapid((v) => !v);
+                    setRapidLog([]);
+                  }}
+                  aria-pressed={rapid}
+                  className={cn(
+                    "flex min-h-tap-primary items-center gap-2 rounded-full px-5 text-body font-medium",
+                    rapid
+                      ? "bg-accent text-accent-foreground"
+                      : "border border-white/25 text-white active:bg-white/10",
+                  )}
+                >
+                  <Zap className="size-5" aria-hidden="true" />
+                  {rapid ? "Rapid mode on" : "Rapid mode off"}
+                </button>
+                <p className="text-center text-caption text-white/70">
+                  {rapid
+                    ? "Each scan records one more. The camera stays open."
+                    : "Point at the barcode. Damaged label? Close this and search instead."}
+                </p>
+              </div>
+            ) : null
+          }
+        />
       ) : null}
 
       <div className="flex items-center justify-between gap-2 px-bar-pad pt-4">

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { X, Zap, ZapOff } from "lucide-react";
+import { createRescanGuard, offerFrame } from "@/lib/rescan-guard";
 
 /**
  * Live barcode scanning via the native `BarcodeDetector`, falling back to the
@@ -17,18 +18,52 @@ import { X, Zap, ZapOff } from "lucide-react";
  * support, and left off by default — a bartender pointing a torch at a guest
  * is worse than a slow scan.
  */
+/**
+ * The re-scan guard lives in `lib/rescan-guard.ts` so the rule that decides
+ * whether a frame counts can be tested without a camera. See that file for
+ * why continuity, not barcode value, is what the guard keys on.
+ */
+
 export function BarcodeScanner({
   onDetected,
   onClose,
+  overlay,
+  footer,
+  continuous = false,
 }: {
   onDetected: (barcode: string) => void;
   onClose: () => void;
+  /**
+   * Rendered over the camera, above the aiming frame. Rapid mode uses it to
+   * confirm each scan without closing the scanner — in that mode this is the
+   * only place a result, or a refusal, can be seen at all.
+   */
+  overlay?: React.ReactNode;
+  /** Replaces the default hint line. Rapid mode puts its toggle here. */
+  footer?: React.ReactNode;
+  /**
+   * Keep detecting after a hit instead of firing once and stopping.
+   *
+   * The one-shot default is not laziness: it relies on the parent closing the
+   * scanner, which is exactly what rapid mode does not do. Left at `false`
+   * with the scanner held open, the loop returns after the first barcode and
+   * the camera sits there live and inert.
+   */
+  continuous?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [torchOn, setTorchOn] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
+
+  // Read inside the detection loop, which is started once and must not be torn
+  // down when the mode is toggled — restarting it would drop the camera and
+  // re-prompt for permission mid-count.
+  const continuousRef = useRef(continuous);
+  useEffect(() => {
+    continuousRef.current = continuous;
+  }, [continuous]);
 
   // Latest-callback ref so the detection loop never restarts (and never tears
   // down the camera) just because the parent re-rendered with a new closure.
@@ -42,6 +77,7 @@ export function BarcodeScanner({
   useEffect(() => {
     let cancelled = false;
     let raf = 0;
+    const guard = createRescanGuard();
 
     async function start() {
       try {
@@ -110,9 +146,17 @@ export function BarcodeScanner({
           try {
             const results = await detector.detect(videoRef.current);
             const hit = results.find((r) => r.rawValue);
-            if (hit && !cancelled) {
+
+            if (hit && !cancelled && !continuousRef.current) {
               onDetectedRef.current(hit.rawValue);
-              return; // parent closes us; stop scanning immediately
+              return; // one-shot: the parent closes us, stop scanning now
+            }
+
+            // Continuous (rapid) mode: every frame is offered to the guard,
+            // including the empty ones — a frame with no barcode is what
+            // re-arms it, so it carries as much information as a hit.
+            if (!cancelled && offerFrame(guard, hit?.rawValue ?? null, Date.now())) {
+              onDetectedRef.current(hit!.rawValue);
             }
           } catch {
             // A single failed frame is not an error worth surfacing — the
@@ -196,17 +240,25 @@ export function BarcodeScanner({
         />
         {/* Aiming frame. Purely visual — detection runs on the whole frame. */}
         <div className="pointer-events-none absolute inset-x-8 top-1/2 h-40 -translate-y-1/2 rounded-lg border-2 border-white/70" />
+        {overlay ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 p-bar-pad">{overlay}</div>
+        ) : null}
       </div>
 
-      <div className="p-bar-pad">
+      <div
+        className="p-bar-pad"
+        style={{ paddingBottom: "max(var(--spacing-bar-pad), env(safe-area-inset-bottom))" }}
+      >
         {error ? (
           <p className="rounded-md bg-negative-bg px-3 py-2 text-caption text-negative" role="alert">
             {error}
           </p>
         ) : (
-          <p className="text-center text-caption text-white/70">
-            Point at the barcode. Damaged label? Close this and search instead.
-          </p>
+          (footer ?? (
+            <p className="text-center text-caption text-white/70">
+              Point at the barcode. Damaged label? Close this and search instead.
+            </p>
+          ))
         )}
       </div>
     </div>

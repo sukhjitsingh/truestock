@@ -34,9 +34,12 @@ happen without being nagged, and the numbers are trusted enough to act on.
 Small, unglamorous, and it is what decides whether the MVP is still in use in
 three months. Driven by open-items, each with its own trigger.
 
-- **User management** (#3) — a screen to deactivate someone and change a role.
-  Must revoke `session` rows in the same transaction as flipping `active`.
-  *Trigger: the first time anyone needs deactivating.*
+- ~~**User management** (#3)~~ — **DONE 2026-08-03, browser-verified 2026-08-04.**
+  `listUsers`, `setUserActive`, `setUserRole` and `/office/users`. Deactivation
+  deletes the user's `session` rows in the same transaction, so the account is
+  locked out on its very next request. Self-deactivation, self-demotion and
+  last-active-owner lockout are all refused, and the control snaps back to the
+  real value when the server says no.
 - **Real costs entered** (#4) — 88 unit costs and 16 case sizes. Valuation is thin
   until this happens. *Trigger: the owner working through supplier invoices.*
 - ~~**Vendor write path** (#19)~~ — **DONE 2026-07-31.** `createVendor`,
@@ -51,9 +54,13 @@ three months. Driven by open-items, each with its own trigger.
   aggregate. *Trigger: catalog passes ~100 products.*
 - **Session sweep** (#1b) — a batched nightly delete on Hostinger cron.
   *Trigger: first deploy, or `session` growth being noticed.*
-- **Rapid-scan mode** (#10) — `scanCountLine` is built and unreachable. Could be a
-  real win on the 60–75% of units that are sealed. *Decide against a timed count,
-  not in the abstract — and if the answer is no, delete it.*
+- ~~**Rapid-scan mode** (#10)~~ — **DONE 2026-08-04.** Wired rather than deleted:
+  the item said to decide it against a timed count, and the owner asked for it
+  directly. Quantity locations only — a blind +1 on a tenths leg would record a
+  full bottle for a part-full one. The frame guard lives in
+  `lib/rescan-guard.ts` and is tested without a camera; writing those tests
+  found two silent miscounts before anyone scanned anything.
+  *Still unproven: nobody has counted a real shelf with it.*
 
 ---
 
