@@ -205,9 +205,27 @@ Tests: `tests/user-write-path.test.ts` (DB-backed, bun:test) covers all three
 guards and the cross-tenant refusal. `tests/rapid-scan.test.ts` covers
 idempotent `client_line_id` behaviour on the count write path alongside.
 
-**Status: built and typechecked. Domain layer tested against real MariaDB.
-The UI has not been driven in a browser yet** — add to the "built but unproven"
-list along with open-item #20 work before the next phone-count session.
+**Status: browser-verified 2026-08-04.** `scripts/verify-browser.mjs` drives
+the screen in a real Chromium and asserts on behaviour that only exists if
+React attached — 11/11 checks, no CSP violations, no console errors. The one
+that matters: changing your own role is refused *and the select snaps back to
+the role you actually have*, with the message on screen. A control left
+showing a role the user does not hold is the same silent-wrong-value class
+CLAUDE.md warns about, moved from counts to authorization.
+
+Two corrections found while verifying, both now fixed:
+
+- The list was fetched in a `useEffect` that called `setState`, which is the
+  cascading-render pattern the React lint rule rejects — it was the single
+  error in `bun run lint` — and it painted an empty table on first load. It
+  now reads on the server and passes rows down, like VendorsList and every
+  other office screen. `router.refresh()` after a write re-reads it.
+- `refuses to demote the last active owner` asserted a scenario that cannot
+  happen: it left two active owners in the org and expected the demotion to
+  be refused, but with a second active owner that demotion is legitimately
+  allowed. The test was wrong, not `setUserRole`. It is now split into the
+  allow case and the refuse case, with the matching deactivation leg that had
+  no coverage at all.
 
 ## 4. Costs are not entered, so valuation is untested in anger
 
@@ -330,23 +348,64 @@ Walk-ins are metal boxes and routinely kill WiFi (spec §11 says to test
 this) — so this is the room where the queue either works or the count is
 wrong.
 
-## 10. `scanCountLine` is fully built and unreachable from the UI
+## ~~10. `scanCountLine` is fully built and unreachable from the UI~~ — **closed 2026-08-04**
 
-**Trigger: when someone times a real count and wants it faster.**
+**The trigger was "decide it against a timed count, not in the abstract."
+The owner asked for it directly, which settles the question this item was
+holding open.** The action is now wired rather than deleted.
 
 `scanCountLineAction` / `lib/domain/counts.ts`'s `scanCountLine` resolve a
-barcode server-side and apply a pack-level-aware +1 in a single call, and
-its own doc comment calls it "the primary write path during a live count."
-Nothing calls it. The UI implements CLAUDE.md's stated core loop instead —
-scan → resolve → tap tenths or type a quantity → next — which needs the
-read (`resolveBarcodeAction`) plus `incrementCountLine`, not this.
+barcode server-side and apply a pack-level-aware +1 in a single call. The
+normal loop does not need that — it reads with `resolveBarcodeAction` and
+writes with `incrementCountLine` — but rapid mode does, and that is the
+reason to use it here: the barcode is re-resolved on the SERVER, so the pack
+level deciding case-vs-each is never taken from the client. Invariant 4
+holds without the client having an opinion.
 
-So this isn't a bug, it's an unused door: a rapid-fire "each scan is one
-more of this" mode for sealed backstock, where the quantity is always 1 and
-the entry screen is pure overhead. That could be a real speed win on the
-60–75% of units that are sealed. **Decide it against a timed count, not in
-the abstract** — and if the answer is no, delete the action rather than
-leaving a hardened write path that nothing exercises.
+**Rapid mode is offered only on quantity locations** (Walk-In, Storeroom).
+A tenths leg needs a fill reading per open bottle, and a blind +1 there would
+record a whole sealed bottle for a part-full one — the count reads high with
+nothing on screen looking wrong. The toggle is hidden rather than disabled,
+because the location chip already states the input mode; a greyed-out control
+would be asking a question the screen has answered.
+
+Three things this needed that were not visible from the item:
+
+1. **The scanner stopped after one hit** (`return; // parent closes us`).
+   Correct for one-shot use, inert in rapid mode where nothing closes it: the
+   camera would sit live and dead after the first bottle. It takes a
+   `continuous` prop now.
+2. **The frame guard is its own module**, `lib/rescan-guard.ts`, because a
+   detector reports a barcode on every frame it is visible and the rule that
+   decides which frames count is the part that can miscount an inventory. It
+   keys on frame *continuity*, not on the barcode value — "ignore a repeated
+   value" would be wrong on any shelf holding two of the same thing. Writing
+   its tests found two real bugs: a cooldown sized to bottle spacing rather
+   than detector flicker (which silently refused scans during a fast sweep),
+   and a `lastHitAt` of 0 that was indistinguishable from a real hit at t=0
+   (which silently ate the first bottle of every session).
+3. **Rapid writes are serialized through a ref.** `runWrite`'s rollback
+   captures a line's pre-write value and is only exact while writes do not
+   overlap; `busy` used to guarantee that because every entry screen gated its
+   submit on it. Rapid mode has no submit button, so the guarantee had to be
+   restored explicitly.
+
+A refusal has nowhere to land when the scanner never closes, so results —
+failures included — are shown over the camera. Unknown barcodes still drop
+into scan-to-enroll rather than being skipped, and the mode does not survive
+a leg change.
+
+Tests: `tests/rescan-guard.test.ts` (11 cases, covering both directions of
+failure since either is silent) and `tests/rapid-scan.test.ts`, which now
+also pins that mixed case/each scans land on ONE line as 2 cases + 3 eaches
+(invariants 3 and 4) and that another tenant's barcode is refused rather than
+resolved (invariant 9).
+
+**Still unproven: nobody has counted a real shelf with it.** The guard is
+tested against modelled frame sequences, not against an actual camera, an
+actual detector, or glossy labels in a dim bar. The numbers that matter —
+whether the sweep cadence and the 250ms flicker floor hold up in the hand —
+need the timed count this item originally asked for.
 
 ## 11. One location count mode was assigned without the owner — CONFIRMED 2026-07-31
 
