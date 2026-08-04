@@ -6,13 +6,32 @@
  * nothing on the site was interactive. So this drives a real browser and
  * asserts on behaviour that only exists if React actually attached.
  *
- * Run: node scripts/verify-browser.mjs
+ * Credentials come from the environment and have no default. A fallback
+ * password here would be a working credential committed to the repository,
+ * and it would keep working against whatever database the runner happens to
+ * point at. Failing with a usage message costs one line and leaks nothing.
+ *
+ * Run:
+ *   CHECK_EMAIL=you@bar.local CHECK_PASSWORD='...' node scripts/verify-browser.mjs
+ *
+ * Against a local dev database only — it signs in and changes a role.
  */
 import { chromium } from "playwright";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
-const EMAIL = process.env.CHECK_EMAIL ?? "rapidcheck@truestock.local";
-const PASSWORD = process.env.CHECK_PASSWORD ?? "RapidCheck-2026-xyz";
+const EMAIL = process.env.CHECK_EMAIL;
+const PASSWORD = process.env.CHECK_PASSWORD;
+
+if (!EMAIL || !PASSWORD) {
+  console.error(
+    "CHECK_EMAIL and CHECK_PASSWORD must be set.\n" +
+      "Create an account first:\n" +
+      "  bun run create-user -- --email you@bar.local --name You --org truestock --role owner\n" +
+      "Then:\n" +
+      "  CHECK_EMAIL=you@bar.local CHECK_PASSWORD='...' node scripts/verify-browser.mjs",
+  );
+  process.exit(2);
+}
 
 const results = [];
 function record(name, ok, detail = "") {
