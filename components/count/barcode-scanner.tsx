@@ -17,18 +17,56 @@ import { X, Zap, ZapOff } from "lucide-react";
  * support, and left off by default — a bartender pointing a torch at a guest
  * is worse than a slow scan.
  */
+/**
+ * Minimum gap between two accepted hits in continuous mode.
+ *
+ * 900ms is above the time it takes to move one bottle out of frame and the
+ * next one in, and well above the frame-drop gaps that would otherwise let a
+ * stationary bottle re-arm. It is a backstop to the `armed` flag, not the
+ * primary guard.
+ */
+const RESCAN_COOLDOWN_MS = 900;
+
 export function BarcodeScanner({
   onDetected,
   onClose,
+  overlay,
+  footer,
+  continuous = false,
 }: {
   onDetected: (barcode: string) => void;
   onClose: () => void;
+  /**
+   * Rendered over the camera, above the aiming frame. Rapid mode uses it to
+   * confirm each scan without closing the scanner — in that mode this is the
+   * only place a result, or a refusal, can be seen at all.
+   */
+  overlay?: React.ReactNode;
+  /** Replaces the default hint line. Rapid mode puts its toggle here. */
+  footer?: React.ReactNode;
+  /**
+   * Keep detecting after a hit instead of firing once and stopping.
+   *
+   * The one-shot default is not laziness: it relies on the parent closing the
+   * scanner, which is exactly what rapid mode does not do. Left at `false`
+   * with the scanner held open, the loop returns after the first barcode and
+   * the camera sits there live and inert.
+   */
+  continuous?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [torchOn, setTorchOn] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
+
+  // Read inside the detection loop, which is started once and must not be torn
+  // down when the mode is toggled — restarting it would drop the camera and
+  // re-prompt for permission mid-count.
+  const continuousRef = useRef(continuous);
+  useEffect(() => {
+    continuousRef.current = continuous;
+  }, [continuous]);
 
   // Latest-callback ref so the detection loop never restarts (and never tears
   // down the camera) just because the parent re-rendered with a new closure.
@@ -42,6 +80,9 @@ export function BarcodeScanner({
   useEffect(() => {
     let cancelled = false;
     let raf = 0;
+    /** False while a barcode is still in frame from the last accepted hit. */
+    let armed = true;
+    let lastHitAt = 0;
 
     async function start() {
       try {
@@ -110,9 +151,36 @@ export function BarcodeScanner({
           try {
             const results = await detector.detect(videoRef.current);
             const hit = results.find((r) => r.rawValue);
-            if (hit && !cancelled) {
-              onDetectedRef.current(hit.rawValue);
-              return; // parent closes us; stop scanning immediately
+
+            if (!hit) {
+              // A clear frame is what re-arms continuous mode: the bottle has
+              // left the view, so the next detection is a new bottle rather
+              // than the same one still sitting in front of the lens.
+              armed = true;
+            } else if (!cancelled) {
+              if (!continuousRef.current) {
+                onDetectedRef.current(hit.rawValue);
+                return; // one-shot: the parent closes us, stop scanning now
+              }
+              // Continuous (rapid) mode. Two conditions must BOTH hold before
+              // a frame counts, and each catches a different double-count:
+              //
+              //   `armed`  — the barcode left the frame since the last hit.
+              //              Without it a bottle held still is re-detected
+              //              every frame, so one bottle becomes twenty.
+              //   cooldown — a floor on the gap between hits, for when the
+              //              detector drops a frame mid-bottle and briefly
+              //              reports nothing while the bottle has not moved.
+              //
+              // Erring toward missing a scan is deliberate: a missed scan is
+              // visible (the counter sees no confirmation and scans again),
+              // whereas a phantom one is silent and inflates the count.
+              const now = Date.now();
+              if (armed && now - lastHitAt > RESCAN_COOLDOWN_MS) {
+                armed = false;
+                lastHitAt = now;
+                onDetectedRef.current(hit.rawValue);
+              }
             }
           } catch {
             // A single failed frame is not an error worth surfacing — the
@@ -196,17 +264,25 @@ export function BarcodeScanner({
         />
         {/* Aiming frame. Purely visual — detection runs on the whole frame. */}
         <div className="pointer-events-none absolute inset-x-8 top-1/2 h-40 -translate-y-1/2 rounded-lg border-2 border-white/70" />
+        {overlay ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 p-bar-pad">{overlay}</div>
+        ) : null}
       </div>
 
-      <div className="p-bar-pad">
+      <div
+        className="p-bar-pad"
+        style={{ paddingBottom: "max(var(--spacing-bar-pad), env(safe-area-inset-bottom))" }}
+      >
         {error ? (
           <p className="rounded-md bg-negative-bg px-3 py-2 text-caption text-negative" role="alert">
             {error}
           </p>
         ) : (
-          <p className="text-center text-caption text-white/70">
-            Point at the barcode. Damaged label? Close this and search instead.
-          </p>
+          (footer ?? (
+            <p className="text-center text-caption text-white/70">
+              Point at the barcode. Damaged label? Close this and search instead.
+            </p>
+          ))
         )}
       </div>
     </div>
