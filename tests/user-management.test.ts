@@ -16,7 +16,7 @@
  *   - role change is tenant-scoped; a cross-tenant target is refused
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db, closePool } from "@/db";
 import { user as userTable, session as sessionTable } from "@/db/schema";
 import { listUsers, updateUserRole, setUserActive } from "@/lib/domain/users";

@@ -1,10 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
+
+// Hydration detection without a setState-in-effect: useSyncExternalStore
+// returns the server snapshot (false) during SSR and the first render, then
+// the client snapshot (true) once React has attached — which is exactly the
+// "has this component hydrated yet" signal we want, with no effect and no
+// cascading render. The store never actually changes, so the subscribe
+// callback is a no-op.
+const noop = () => () => {};
+function useHydrated(): boolean {
+  return useSyncExternalStore(
+    noop,
+    () => true, // client: hydrated
+    () => false, // server / first paint: not yet
+  );
+}
 
 export function LoginForm({ className }: { className?: string }) {
   const router = useRouter();
@@ -16,8 +31,7 @@ export function LoginForm({ className }: { className?: string }) {
   // cannot work before React attaches. Tracking that explicitly lets the
   // submit stay inert until it can do the right thing — see the `method`
   // comment on the <form> for the failure this prevents.
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => setHydrated(true), []);
+  const hydrated = useHydrated();
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
