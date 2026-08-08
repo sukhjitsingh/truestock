@@ -177,25 +177,35 @@ column, or storing before/after arrays) and write the entry inside the existing
 transaction. Do not invent the convention silently — it changes what the audit
 export means.
 
-## 3. No user-management action exists
+## 3. ~~No user-management action exists~~ — CLOSED 2026-08-08
 
-**Trigger: the moment anyone needs to deactivate a user or change a role.**
+An owner-only screen now lives at `/office/users`: change a user's role, and
+activate/deactivate accounts. The domain logic is in `lib/domain/users.ts`
+(Actor-based, like `lib/domain/counts.ts`), the thin action wrapper in
+`app/actions/users.ts`.
 
-Today `user.role` and `user.active` are only ever written by
-`scripts/create-user.ts` (create-only). Deactivating a bartender means a manual
-`UPDATE` against the database.
+The load-bearing requirement is met and verified: **deactivation flips
+`active = false` and deletes every one of that user's `session` rows inside one
+`db.transaction`** (now invariant 11 in CLAUDE.md). `requireSession()` already
+re-reads `active` on every request and refuses an inactive account, so the
+transactional session delete is defence in depth — it closes the window where a
+session minted before deactivation is still a valid Better Auth credential.
 
-When the action is built it **must revoke the user's `session` rows in the same
-transaction** as flipping `active`. Authorization re-reads `active` from the
-database on every server action, so a deactivated user is already locked out of
-all app data on their very next request — but their Better Auth session row
-stays valid until natural expiry, and an account that is off should not leave a
-live session behind. `auth.api.revokeUserSessions` or a direct delete of the
-user's `session` rows, inside the same transaction.
+Verified by `tests/user-management.test.ts` — 7 tests against real MariaDB:
+atomic revocation, reactivation leaving sessions alone, an owner unable to
+deactivate themselves, a cross-tenant target returning `NotFound` with nothing
+mutated (invariant 9), and tenant-scoped role change / list. Mutation-checked:
+removing the session delete fails exactly the revocation test.
 
-Also note: there is no owner-facing "add user" screen. Accounts are created by
-CLI only, deliberately — no public signup path can hand out a role. A back-office
-user screen is a reasonable later addition; a public one is not.
+Still deliberately absent: an owner-facing **add-user** screen. Accounts are
+created by `scripts/create-user.ts` (CLI only) so no surface can hand out a role
+without a shell. A back-office add-user screen is a reasonable later addition; a
+public signup path is not.
+
+**Not yet browser-verified:** the table UI itself (confirm dialogs, per-user
+loading state, toasts, the hidden self-deactivate control) has not been clicked
+through in a real browser — the same "server-side green says nothing about the
+client" gap that item 13 is about. Fold it into the next browser pass.
 
 ## 4. Costs are not entered, so valuation is untested in anger
 

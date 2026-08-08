@@ -56,9 +56,11 @@ These do not stop a deploy. Each is a conscious "yes, launch without this."
       production count will be almost entirely unpriced, and the dashboard will
       say so in large type. Launching anyway is reasonable; being surprised by it
       is not.
-- [ ] **No user-management screen exists** (open-items #3). Deactivating someone
-      means a manual `UPDATE`. Acceptable at 3–5 users; know it before you need it
-      at 9pm on a Friday.
+- [ ] **User management exists but its UI is not browser-verified** (open-items
+      #3). The owner-only `/office/users` screen deactivates a user (revoking
+      their sessions in the same transaction) and changes roles — the domain
+      layer is verified against a real database. What has not happened is a
+      click-through in a browser; fold it into the §2.1 post-release pass.
 - [ ] **Nothing sweeps expired sessions** (open-items #1b). Years away from
       mattering at this scale.
 - [ ] **Walk-In's count mode is inferred, not confirmed** (open-items #11). One
@@ -87,8 +89,8 @@ Not with `curl`. See the rule at the top.
       `?email=...&password=...`, **stop and roll back**: hydration is broken and
       the app just wrote a plaintext password to the access log.
 - [ ] **The dashboard renders** with real tiles, not an error boundary.
-- [ ] **Navigate every office route** — dashboard, counts, catalog, reorder — and
-      confirm the console stays clean on each.
+- [ ] **Navigate every office route** — dashboard, counts, catalog, reorder,
+      users (owner only) — and confirm the console stays clean on each.
 - [ ] **Sign out, then request `/office` directly.** It must redirect to `/login`.
       Without this negative control, four working pages prove the pages render,
       not that anything is gated.
@@ -117,9 +119,11 @@ The invariant that cannot be tested by one tenant using the app normally.
 - [ ] **Confirm both orgs can enrol the same UPC.** This was a real pre-launch
       blocker: a globally unique barcode would let the first bar to scan a UPC own
       it for every tenant.
-- [ ] **Deactivate a user** (`user.active = 0`) while they hold a live session and
-      confirm their very next request is refused. Better Auth's own session stays
-      valid by design; `requireSession()`'s re-read is what stops them.
+- [ ] **Deactivate a user from `/office/users`** while they hold a live session
+      and confirm their very next request is refused. Better Auth's own session
+      stays valid by design; `requireSession()`'s re-read is what stops them, and
+      the screen additionally deletes their `session` rows in the same
+      transaction (invariant 11), so there is nothing left to re-check against.
 
 ### 2.4 The first real count — the part nothing has tested
 
@@ -177,7 +181,7 @@ Recorded so nobody rediscovers them as bugs. Full detail in `docs/open-items.md`
 | #4 | 88 of 97 products unpriced; valuation is thin until invoices are entered |
 | #2 | Fill corrections write no ledger row — an audit-trail gap, not a wrong number |
 | #10 | `scanCountLine` is built and unreachable; decide it against a timed count |
-| #3 | No user-management action; role and active changes are manual SQL |
+| #3 | User management screen exists (`/office/users`, owner only); its UI is not yet browser-verified |
 | #12 | Wine stays varietals, counted via the search picker — a scope decision |
 
 ---
