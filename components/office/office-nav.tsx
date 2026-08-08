@@ -10,10 +10,13 @@ import type { Role } from "@/lib/authz";
  * matching the design system's binding rule — there is no client-side role
  * state and nothing for a user to toggle.
  *
- * Today owner and manager see the same set: every screen behind these links
- * gates its own cost data server-side (a manager gets counts and reorder
- * without dollar figures), so hiding the link would remove a screen they are
- * entitled to use rather than protect anything.
+ * Most screens behind these links gate their own cost data server-side (a
+ * manager gets counts and reorder without dollar figures), so those links are
+ * shown to owner and manager alike — hiding them would remove a screen they are
+ * entitled to use rather than protect anything. The exception is Users, which
+ * is an owner-only surface (spec §4): the page itself calls `requireRole("owner")`,
+ * so a manager reaching it gets 403 — the link is omitted for managers so the
+ * nav never offers a door that only opens for someone else.
  */
 export function OfficeNav({ role }: { role: Role }) {
   const pathname = usePathname();
@@ -23,6 +26,8 @@ export function OfficeNav({ role }: { role: Role }) {
     { href: "/office/counts", label: "Counts" },
     { href: "/office/catalog", label: "Catalog" },
     { href: "/office/reorder", label: "Reorder" },
+    ...(role === "owner" ? [{ href: "/office/users", label: "Users" }] : []),
+    { href: "/office/account", label: "Account" },
   ];
 
   return (
@@ -51,7 +56,6 @@ export function OfficeNav({ role }: { role: Role }) {
       >
         Count
       </Link>
-      <span className="sr-only">Signed in as {role}</span>
     </nav>
   );
 }

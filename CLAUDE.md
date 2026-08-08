@@ -154,6 +154,15 @@ plausible and are wrong, which is the worst failure mode this app has.
    makes every keg look ~10% short and turns the variance report into false positives.
    Applies to *theoretical depletion only* — never to counted inventory, which is measured
    as it actually is.
+11. **Deactivating a user revokes their sessions in the same transaction.** Setting
+   `active = false` and deleting that user's `session` rows happen inside one
+   `db.transaction` — never one without the other. `lib/authz.ts` already re-reads
+   `active` on every request and refuses an inactive account, so this is defence in
+   depth: it closes the window where a session row minted before deactivation is still
+   a valid Better Auth credential. Enforced in `lib/domain/users.ts` and covered by
+   `tests/user-management.test.ts` against a real MariaDB (mutation-checked: removing
+   the session delete fails exactly the revocation test). The mirror of invariant 6 —
+   users, like products, are deactivated, never hard-deleted; history references them.
 
 ---
 

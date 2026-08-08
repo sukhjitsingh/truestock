@@ -28,7 +28,9 @@ three months. Driven by open-items, each with its own trigger.
 
 - **User management** (#3) — a screen to deactivate someone and change a role.
   Must revoke `session` rows in the same transaction as flipping `active`.
-  *Trigger: the first time anyone needs deactivating.*
+  **Domain layer done and verified** (`lib/domain/users.ts`,
+  `tests/user-management.test.ts`, invariant 11). The table UI is built but not yet
+  browser-verified.
 - **Real costs entered** (#4) — 88 unit costs and 16 case sizes. Valuation is thin
   until this happens. *Trigger: the owner working through supplier invoices.*
 - **Uncapped dashboard reads** (#14) — replace capped list reads with a dedicated

@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { Toaster } from "sonner";
 import { requireOfficeUser } from "@/lib/current-user";
 import { OfficeNav } from "@/components/office/office-nav";
+import { SignOutButton } from "@/components/office/sign-out-button";
 
 /**
  * The back office: desk use, full daylight, and therefore LIGHT — no `.dark`
@@ -26,12 +28,16 @@ export default async function OfficeLayout({
             Truestock
           </Link>
           <OfficeNav role={user.role} />
-          <div className="hidden text-caption text-muted-foreground sm:block">
-            {user.name} &middot; {user.role}
+          <div className="flex items-center gap-4">
+            <div className="hidden text-caption text-muted-foreground sm:block">
+              {user.name} &middot; {user.role}
+            </div>
+            <SignOutButton />
           </div>
         </div>
       </header>
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">{children}</main>
+      <Toaster richColors position="top-right" />
     </div>
   );
 }

@@ -29,6 +29,7 @@ Verified means *observed running*, not reviewed or typechecked.
 | Area | Evidence |
 |---|---|
 | **Schema + migrations** | Chain `0000 → 0001 → 0002` applied to MariaDB 11.8 in Docker. Composite tenant FKs reject cross-tenant ids (1452), `product_par` blocks a second overall par (1062), `DECIMAL(10,4)` exact, accented names round-trip |
+| **User management (domain)** | `tests/user-management.test.ts` — 7 tests against real MariaDB: deactivation flips `active` and deletes every session row in one transaction, reactivation leaves sessions alone, an owner can't deactivate themselves, cross-tenant target is `NotFound` with nothing mutated. Mutation-checked: removing the session delete fails exactly the revocation test |
 | **Auth path** | Better Auth under `generateId: "serial"` returns integer ids; sign-in returns a session; the inactive-user re-read gate refuses a *still-valid* session — **with a negative control** |
 | **Count write path** | `tests/count-write-path.test.ts` — 17 tests against real MariaDB, wired into CI as a service container |
 | **Invariants 1, 2, 3, 8, 9** | Covered by that suite: closed counts refuse writes, cost snapshots survive a price change, three scans make one row, a manager never receives cost fields, cross-tenant ids are refused |
@@ -45,6 +46,13 @@ change to the write path.
 ## What is built but unproven
 
 Written, reviewed, typechecked — never observed working.
+
+- **The user-management table UI** (`components/office/user-management-table.tsx`).
+  The domain layer under it is verified (see above) and typecheck is clean, but the
+  screen itself — the confirm dialogs, the per-user loading state, the toasts (a
+  `Toaster` is now mounted in the office layout), the hidden self-deactivate control —
+  has not been clicked through in a browser. Same failure class as the CSP incident:
+  server-side green says nothing about the client.
 
 - **The counting app on a phone.** Scan, tenths, sealed quantities, scan-to-enroll,
   the locked-location leg. This is the product, and it is the biggest unknown.
