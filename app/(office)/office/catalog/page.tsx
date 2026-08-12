@@ -54,6 +54,7 @@ export default async function CatalogPage({
           query={q ?? ""}
           view={needsAttention ? "attention" : "all"}
           canSeeCost={user.role === "owner"}
+          canEditCost={user.role === "owner"}
           vendors={vendors}
           userRole={user.role}
         />
