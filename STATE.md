@@ -1,6 +1,6 @@
 # Truestock — current state
 
-Where the project actually is. Updated 2026-07-31.
+Where the project actually is. Updated 2026-08-12.
 
 This file answers one question: **what is proven, what is merely built, and what
 is next.** The distinction matters more here than the feature list, because this
@@ -16,34 +16,62 @@ project has twice shipped something that looked finished and was not.
 
 ## One-line status
 
-**MVP is built and not deployed — and as of 2026-07-31 a human has counted
-with it.** The sentence that stood here since this file was written — *"the
-counting app, the actual product, has never been used by a human"* — is finally
-false. As of 2026-08-01, a full mobile UI pass has been applied and the LAN
-server is ready for the next phone test.
+**MVP is built and not deployed, and as of 2026-08-12 every part of the
+counting loop has now run on a real phone** — scan, enrol, tenths, sealed
+quantities, valuation, and the offline queue, the last three under the
+production CSP. The sentence that stood here since this file was written —
+*"the counting app, the actual product, has never been used by a human"* — is
+not just false now, it is comprehensively so.
 
-On 2026-07-31 the owner signed in on a phone over the LAN https origin, scanned
-a barcode the catalog did not have, created the product through scan-to-enroll,
-recorded a quantity, and closed the count. Confirmed in the database rather than
-reported: product 99 (`Smirnoff`, 200 ml, Spirits) created 19:01:30, barcode
-`08200802` enrolled `each`/primary, count line written 19:01:54 as **18 eaches,
-0 cases**, count `closed` 19:04:29. The `count_line_write` ledger holds 4 rows
-with 4 distinct `client_line_id`s — no duplicate write, idempotency intact.
+**What has NOT happened is a count.** Four sessions, 8 lines between them. Every
+mechanism is proven and nothing has been measured: no timed pass, no full
+five-location walk, 90 of 101 products unpriced. The project moved from "does it
+work at all" to "does it work at scale" in one day, and this file should not be
+read as saying more than that.
 
-**Three things proved themselves on real hardware in that one pass**, none of
+**Corrected 2026-08-11.** The paragraph that stood here described a 2026-07-31
+session against a volume that no longer exists — the database has been reset
+since, and that evidence is unrecoverable. What the current volume actually
+holds is a *second, larger* session on **2026-08-08**, which had never been
+recorded in this file. Queried rather than remembered:
+
+| | |
+|---|---|
+| Count 1 | type `full`, opened by user 1 at **05:05:13**, `closed` **05:08:15** — 3m 02s |
+| Product 98 | `Smirnoff`, 200 ml, Spirits, created 05:06:25 — barcode `08200802`, `each`, primary |
+| Product 99 | `Grey Goose`, 200 ml, Spirits, created 05:07:24 — barcode `080480280048`, `each`, primary |
+| Count lines | 2, both in location 5 — **18 eaches** and **9 eaches**, 0 cases, no partial fills |
+| Ledger | 2 rows, **2 distinct `client_line_id`s** — no duplicate write, idempotency intact |
+| `total_value` | **0.00** — both counted products are unpriced |
+
+So scan-to-enroll ran **twice**, end to end, on real hardware: two unknown
+barcodes became two catalog products and two count lines, and the count closed
+clean. That is more than the single enrolment this file used to claim. It is
+still not a count.
+
+**Three things proved themselves on real hardware in that pass**, none of
 which any test in this repo can exercise: the camera and decoder opened and read
 a real barcode (the "last inch" that had never happened on any device); 200 ml
 came from the size preset list rather than a typed number; and a spirit was
-recorded with no Cases stepper, which is the 2026-07-31 beer-only-cases rule
+recorded with no Cases stepper, which is the 2026-07-30 beer-only-cases rule
 behaving correctly outside a browser harness.
 
 **What this does NOT prove, and the distinction is the whole point of this
-file.** One product is not a count. Untested still: the sub-20-minute target
-(nothing was timed), the offline queue (WiFi never dropped, never went into the
-walk-in), open-bottle tenths (only sealed quantities were entered), the locked
-location leg across all five sections, and valuation — every line is unpriced,
-so the count closed at a `total_value` of 0.00. This is the first successful
-transaction, not a first real count.
+file.** Two products are not a count. Untested still: the sub-20-minute target
+(3m 02s for two enrolments measures the enroll budget, not the count one), the
+offline queue (WiFi never dropped, never went into the walk-in), open-bottle
+tenths (only sealed quantities were entered — `partial_fills` is `[]` on both
+lines), the locked location leg across all five sections (both lines landed in
+location 5), and valuation — both counted products are unpriced, so the count
+closed at a `total_value` of 0.00. This is a successful transaction, not a
+first real count.
+
+**Valuation produced a correct non-zero number for the first time on
+2026-08-12** — count 2 closed at **$170.90**, and that figure was recomputed
+independently in SQL and matched to the cent. See the 2026-08-12 entry in Recent
+history for what that does and does not prove. The sentence that stood here —
+that valuation had never left 0.00 — is now false, and the tenths path it
+depended on has run against a database.
 
 Phase 1's *code* gaps closed 2026-07-30 (`docs/mvp-gaps.md`) and the vendor
 write path closed 2026-07-31; what remains in Phase 1 is entering real costs and
@@ -74,6 +102,10 @@ Verified means *observed running*, not reviewed or typechecked.
 | **User management** | `tests/user-write-path.test.ts` — self-deactivation, self-demotion, last-active-owner lockout and cross-tenant refusal, plus the session rows being deleted in the same transaction as the deactivation. **Browser-verified 2026-08-04**: `scripts/verify-browser.mjs` drives it in a real Chromium and confirms a refused self-demotion both reports the refusal and snaps the select back to the role the user actually holds |
 | **Rapid-scan frame guard** | `tests/rescan-guard.test.ts` — 11 cases covering both directions, since both are silent: a bottle held in frame for 60 frames counts once, and three identical bottles presented in sequence count three times. Two modelled shelf sweeps at different cadences. Pure module, no camera or DOM |
 | **Rapid-scan write path** | `tests/rapid-scan.test.ts` — pack-level routing from the barcode (server-resolved, never client-supplied), mixed case/each scans landing on ONE line as 2 cases + 3 eaches (invariants 3 and 4), and another tenant's barcode refused rather than resolved (invariant 9) |
+| **Tenths → valuation, end to end on a device** | Count 2, 2026-08-12. Four fill readings written from a phone; `total_value` **$170.90**, recomputed independently in SQL and matched to the cent. Cost snapshots landed on the lines (invariant 2); the one unpriced line was **excluded rather than zeroed**. The only leg of the valuation path never before run outside a test |
+| **The camera, on a real device** | Counts 3 and 4, 2026-08-12. Two real barcodes decoded and enrolled — `X004YKHTYX` (Code 128) and `855553008153` (UPC-A) — by the **WASM polyfill**, since the handset has no native `BarcodeDetector`. The "last inch" open since 2026-07-28 |
+| **The offline write queue** | Count 4, 2026-08-12. Airplane mode → submit → chip **`1 pending`**; airplane mode off → chip **`Synced`** unaided, so the `online` listener fires and `flush()` drains. Database after: one line, one ledger row, **8 distinct `client_line_id`s across all four counts** — the queued write applied exactly once |
+| **The production CSP** | 2026-08-12, in a browser. `script-src 'self' 'nonce-…' 'wasm-unsafe-eval'` (no `'unsafe-eval'`), `connect-src 'self'` (no `ws:`); 16/16 scripts nonced, React hydrated, console clean, and a UPC decoded under it. The single highest-risk item on `docs/go-live.md` |
 
 **94 tests across 7 files**, all green, as of 2026-07-31 — `bun run
 test:docker` against MariaDB 11.8 in Docker, 381 assertions, 0 failures. The 16
@@ -89,7 +121,10 @@ Two new test files landed 2026-08-03 (`tests/user-write-path.test.ts`,
 MariaDB connection (`test:docker`) and will error with a clear message outside
 that context, consistent with all other DB-integration tests.
 
-**121 tests across 10 files**, all green, as of 2026-08-04. `tests/rescan-guard.test.ts`
+**121 tests across 10 files**, all green — **re-run 2026-08-11 against MariaDB
+11.8 in Docker: 121 pass, 0 fail, 427 assertions, 32.4s.** So this count is
+current, not inherited from the 2026-08-04 entry that first claimed it.
+`tests/rescan-guard.test.ts`
 is the tenth file and the only pure one of the recent batch — it models frame
 sequences rather than touching a database, which is the point of having pulled
 the guard out of the scanner's effect. The rapid-scan and user-write-path files
@@ -113,19 +148,26 @@ orphaning a real product.
 
 Written, reviewed, typechecked — never observed working.
 
-- **The counting app on a phone.** Scan, tenths, sealed quantities, scan-to-enroll,
-  the locked-location leg. This is the product, and it is the biggest unknown.
-  The environment around it is now built and largely verified (see below); what
-  has never happened is a human counting bottles with it. The 2026-08-01 UI pass
+- **The counting app on a phone, AT SCALE.** Scan, tenths, sealed quantities,
+  scan-to-enroll and the locked-location leg have each now run on a handset
+  (2026-08-12) — so this entry is no longer "does it work" but "does it hold
+  up". Nothing here has been done more than a few times in a row: the longest
+  session recorded **4 lines**, no pass has covered all five locations, and
+  nothing has been timed. Fatigue, a wrong tap at bottle 80, a leg switch made
+  in a hurry — none of that has been anywhere near this app. The 2026-08-01 UI pass
   (larger tap targets, safe-area insets, touch-manipulation, bigger fill and
-  quantity buttons) is built and typechecked but **not yet driven on a device**.
-- **The camera, on any real device.** The LAN HTTPS path was built precisely so
-  the camera can exist at all, and everything testable from a terminal passes —
-  certificate SAN, a 200 over TLS, client chunks served, Server Actions
-  surviving the proxy's `Host` rewrite, sign-in trusted from the https origin
-  and refused from a foreign one. **What is unverified is the last inch:**
-  accepting the certificate warning on the handset and `getUserMedia` actually
-  opening a lens. No camera has been opened by this project yet, on any device.
+  quantity buttons) is built and typechecked; **the fill pad has now been driven
+  on a device** (2026-08-12, four tenths readings), so the 80 px Empty/Half/Full
+  row and the tenths grid are no longer unpressed. The quantity stepper, the
+  scanner chrome and the safe-area insets still are.
+- ~~**The camera, on any real device.**~~ — **verified 2026-08-12**, and moved
+  to the table above. Two real barcodes decoded and enrolled on the handset, by
+  the WASM polyfill, one of them under the production CSP. The "last inch" that
+  had been open since 2026-07-28 is closed.
+  **What is still unproven about scanning** is narrower and now stands on its
+  own below: rapid mode against a camera, and resolving a barcode to a product
+  the catalog *already has* — both scans so far were enrolments of unknown
+  codes, which is a different branch of `onBarcode`.
 - **Everything added to the counting leg on 2026-07-30.** Four changes, all UI,
   none of them covered by a test and none of them driven on a device: the
   search-first barcode-link screen (which added a step to a path held to a
@@ -180,18 +222,190 @@ Written, reviewed, typechecked — never observed working.
   The dev-only Fast Refresh flash seen in an earlier session did not
   reproduce. **Every line of the vendor work has now been executed against a
   browser and a database.**
-- **The offline write queue** (`lib/count-queue.ts`). Reasoned about only. It was
-  already wrong once — the original had no drain path at all — and 2026-07-30
-  changed its rejection behaviour, so a permanently-refused write now leaves the
-  queue instead of jamming it. That makes exercising it more worthwhile, not less.
-- **The production CSP.** Dev proves the nonce mechanism; production is a
-  different, stricter policy that has never run.
+- ~~**The offline write queue**~~ and ~~**the production CSP**~~ — both
+  **verified 2026-08-12** and moved to the table above.
+  Two narrower gaps survive from the queue and are worth keeping visible: the
+  **mount-time flush** has never run (only the `online` listener was observed),
+  and the queue has never held **more than one write at a time**, so ordered
+  replay of several writes to the same line is still only reasoned about.
+- **The standalone server entrypoint.** The production-mode run used
+  `next start`, which printed `"next start" does not work with "output:
+  standalone" configuration`. It gave us what was needed — no HMR, the real CSP
+  — but Hostinger runs `node .next/standalone/server.js`, which has still never
+  been started. On the go-live list, not closed by 2026-08-12.
 - **Concurrency.** The gap-lock deadlock and `withLockRetry` were reproduced by
   hand against MySQL — never against MariaDB, never as a test.
-- **Valuation against real costs.** 88 of 97 products are unpriced.
+- **Valuation at catalog scale.** The *mechanism* is proven as of 2026-08-12 —
+  count 2 closed at $170.90 and the figure reconciles to the cent against an
+  independent SQL recompute. What is unproven is valuation of anything but kegs:
+  **90 of 99** products are unpriced (was 88 of 97 — the two scan-to-enroll
+  products added on 2026-08-08 are unpriced too), and the only priced products
+  are the 9 draft kegs, which came costed in the seed. **No product has a
+  `case_size`** — 0 of 99 — so the 16 bottled beers cannot be counted by the case
+  yet either, and the `missing_case_size` exclusion branch has never fired
+  against real data.
 - **The deploy pipeline.** Built, never run against a real host.
 
 ## Recent history
+
+- **2026-08-12** — **The camera, the offline queue and the production CSP all
+  ran for real. Counts 3 and 4.** Three of this file's four longest-standing
+  unknowns closed in one session, and none of them by reading code.
+
+  **Count 3 — the camera (1m 22s, 1 line).** Barcode `X004YKHTYX` (Code 128)
+  decoded on the handset and enrolled as product 100 at 02:59:33; one each
+  recorded in Storeroom. The handset has no native `BarcodeDetector`, so **the
+  WASM polyfill did that decode** — the "last inch" open since 2026-07-28. The
+  size came back as 740 ml, which looked wrong and is not: it is a real preset
+  on the beer list (`BEER_SIZES`), and NA resolves to that list.
+
+  **Count 4 — the offline queue (19m 33s, 1 line).** Airplane mode on, a
+  quantity submitted: chip read **`1 pending`**. Airplane mode off: chip
+  returned to **`Synced`** with no interaction, so the `online` listener fires
+  and `flush()` drains. The offline scan showed the new message rather than
+  doing nothing. Database after: **one line, one ledger row, and 8 distinct
+  `client_line_id`s across all four counts** — the queued write applied exactly
+  once, which is the failure this whole design exists to prevent. A second
+  barcode, `855553008153` (UPC-A), was decoded under the **production** CSP.
+
+  **The test was unrunnable until the runtime changed, and this is the part to
+  remember.** The first attempt died on the browser's offline error page a few
+  seconds after airplane mode. Not a Truestock bug: Next 16's HMR client
+  reconnects a dead websocket 12 times and then calls
+  `window.location.reload()` (`next/dist/client/dev/hot-reloader/app/
+  web-socket.js`; its own comment says "it indicates the dev server is no longer
+  running"). With no service worker that reload has nothing to load, and the
+  app — and the queue's only UI — is gone. **`next dev` cannot test offline
+  behaviour at all.** Hence `scripts/prod-lan.sh` + `docker-compose.prod.yml`
+  (`bun run docker:up:prod`).
+
+  **Production mode had its own trap, found before it cost anything.**
+  `lib/auth.ts` drops its entire `trustedOrigins` block when `NODE_ENV` is
+  production — deliberately, so `DEV_LAN_ORIGIN` can never widen a deployed
+  server. Switching naively would have made phone sign-in 403 behind the login
+  form's generic "check your email and password". Fixed by pointing
+  `BETTER_AUTH_URL` at the https LAN origin, which is what a real deploy does
+  anyway. One asymmetry to know: **in production mode only the https origin can
+  sign in** — verified, http 403 / https 401.
+
+  **The production CSP ran for the first time and is fine.**
+  `script-src 'self' 'nonce-…' 'wasm-unsafe-eval'`, `connect-src 'self'`;
+  16/16 scripts nonced, React hydrated, console clean. It was the single
+  highest-risk item on `docs/go-live.md`.
+
+  **Two things that check turned up are worth more than the pass.** First,
+  **go-live.md's own instructions for it were wrong and would have caused a
+  false rollback**: they said to confirm `typeof self.__next_r !== 'undefined'`,
+  but `self.__next_r` is set only by `next dev` — production had it undefined
+  with React fully hydrated. Corrected to check the sign-in button's hydration
+  gate, which needs no devtools. Second, **production hydrates later than dev**:
+  the first probe read "not hydrated" and three seconds later read hydrated. An
+  automated check without a wait would report exactly the failure it is hunting.
+
+  **Seven unguarded server-action calls fixed** (`count-leg.tsx` ×3,
+  `enroll-form.tsx` ×3, `catalog-search.tsx` ×1). Each was awaited with no
+  try/catch while `runWrite` beside them had always been guarded, so offline the
+  fetch threw out of an async handler: no error set, no phase change,
+  `busy`/`pending` never cleared. You scanned, the scanner closed, and nothing
+  happened. **Two of the seven were writes** in the enroll form that do not go
+  through the queue, leaving the form disabled and silent with typed details
+  unrecoverable. All now wrapped, flags cleared in `finally`, and the messages
+  say "not saved, try again in range" rather than implying a queue that does not
+  cover them. Confirmed on the phone in count 4. Typecheck, lint, `next build`
+  and 121 tests all green.
+
+  **Not proven by any of this:** rapid mode against a camera; resolving a
+  barcode to a product the catalog already has (both scans were enrolments of
+  unknown codes — a different branch); the mount-time queue flush; a queue
+  holding more than one write; and the standalone server entrypoint, since this
+  ran under `next start`.
+
+- **2026-08-12** — **Tenths and valuation both ran for real. Count 2 closed at
+  $170.90.** Driven on the phone by the owner; verified in the database rather
+  than reported. Opened 02:38:12, closed 02:44:51 — **6m 39s, 4 lines**.
+
+  | Line | Product | Location | Fill | Cost snapshot | Extended |
+  |---|---|---|---|---|---|
+  | 3 | Tower Station Sixtel | Tap 1 | `[0.6]` | 84.0000 | $50.40 |
+  | 4 | Coors Light Half Barrel | Tap 1 | `[0.5]` | 144.0000 | $72.00 |
+  | 5 | Modelo Quarter Barrel | Tap 1 | `[0.5]` | 97.0000 | $48.50 |
+  | 6 | Jose Cuervo Silver | Speed Rail | `[0.5]` | **NULL** | **excluded** |
+
+  **The stored `total_value` was recomputed independently in SQL and matched to
+  the cent (170.90 = 170.90).** So the figure is not merely non-zero, it is
+  arithmetically right — which is the claim worth making, since a wrong total
+  would look exactly as convincing.
+
+  **Four things ran for the first time in this project's life:** `partial_fills`
+  reached the database at all (every prior line was `[]`); valuation left 0.00;
+  invariant 2's cost *snapshot* was written onto the line rather than read from
+  the product; and **invariant 2's exclusion rule held under a real mixed count**
+  — the unpriced tequila has units (0.5) and no value, and $170.90 excludes it
+  rather than summing it as $0. That last one is the one most likely to have
+  been quietly wrong, because zeroing an unpriced line produces a total that
+  still looks plausible. The leg lock also crossed a boundary for the first time
+  (three kegs in Tap 1 → *Finish section* → Speed Rail), and the ledger holds
+  **6 rows with 6 distinct `client_line_id`s** — no duplicate write.
+
+  **Prep that had to happen first, and would otherwise have blocked this at the
+  bar:** there was **no tap-line location**. The entry screen is chosen
+  *entirely* by the location's `count_mode` — product `unit_type` does not enter
+  into it — so a keg counted anywhere but a `tenths` location gets a quantity
+  stepper and no fill pad. AGENTS.md has always said tap lines are modelled as
+  Locations, but the seed shipped five locations and none was a tap, and there is
+  **no locations screen in the office**, so it could not be fixed from the phone.
+  `Tap 1` (sort 6, `tenths`) was added to `docs/catalog/locations.csv` and to the
+  live database.
+
+  **What this does NOT prove, and two of these are worth being blunt about.**
+  *The camera was not exercised at all* — barcodes stayed at 2 and products at
+  99, so all four lines came from the search picker, including the tequila that
+  could have been scanned. *The offline queue shows no evidence of having run* —
+  all four writes applied immediately. And the per-write gaps were 29s, 102s,
+  101s, where the 29s and the first 102s were both keg-to-keg **within Tap 1** —
+  same screen, no leg switch, 3.5× spread. That is either ordinary human variance
+  (reading a keg level is genuinely hard) or friction worth finding; one data
+  point each way settles nothing.
+
+  **A modelling note, not a defect:** three kegs sit on one `Tap 1`, which
+  `UNIQUE (count_id, product_id, location_id)` permits but which cannot express
+  which keg is on which line. Harmless until the same beer runs on two taps.
+
+- **2026-08-11** — **This file reconciled against the live database, and the
+  LAN stack brought up and verified.** Two kinds of drift were found, and the
+  second is the one worth remembering.
+
+  *Ordinary drift:* the counts in "Picking this up cold" were a volume behind —
+  1 user not 4, 99 products not 98, 2 barcodes not 1, and no open count.
+
+  *The one that matters:* **this file's headline evidence described a session
+  whose data no longer exists.** The 2026-07-31 paragraph named product 99 as
+  `Smirnoff` created at 19:01:30 with a 4-row ledger. The live database has
+  `Smirnoff` as product **98** created **2026-08-08 05:06:25**, a 2-row ledger,
+  and a *second* enrolment (`Grey Goose`, product 99) that had never been
+  written down at all. The volume was reset between the two, so the original
+  evidence is unrecoverable — and a later, better pass went unrecorded while
+  this file kept citing the earlier one. **Evidence quoted from a database
+  outlives the database.** Re-query before trusting a number in here; that is
+  the whole reason this section prints values rather than adjectives.
+
+  Also corrected: the beer-only-cases rule is dated 2026-07-30, not 2026-07-31.
+  Unpriced products restated as 90 of 99. Test count re-run rather than
+  inherited — 121 pass, 427 assertions.
+
+  **LAN stack verified with negative controls**, because "Running" is not
+  "Recreated" and open item #24 is exactly that trap: `DEV_LAN_ORIGIN` is
+  correctly set in the app container; a client chunk returns **200** for the LAN
+  origin and **403** for a foreign one; `POST /api/auth/sign-in/email` returns
+  **401** for bad credentials from the LAN origin and **403** from a foreign
+  one; `/count/preflight` redirects to `/login` unauthenticated. And because a
+  200 has never been evidence in this project, the login page was opened in a
+  real browser: React fiber attached, `__next_f` present, submit button enabled
+  (so the hydration gate flipped), `method="post"` on the form, console clean of
+  app errors. The TLS certificate interstitial could not be clicked through
+  programmatically — Chrome's SSL warning is a privileged page no extension can
+  script — which is a per-device manual step and is step one of the phone
+  protocol anyway.
 
 - **2026-08-03** — **User management screen built, closing open-item #3.**
   `lib/domain/users.ts` provides `listUsers`, `setUserActive`, `setUserRole` with
@@ -426,7 +640,8 @@ actual library, the actual database, or the actual browser.
 
 ## Picking this up cold — the phone count
 
-Everything needed to run it is built and committed. Nothing has been run.
+Everything needed to run it is built and committed. **As of 2026-08-11 the
+stack is already up** — `docker compose ps` before re-running anything below.
 
 ```bash
 bun run docker:up:lan     # LAN bind + self-signed cert + TLS proxy; prints both URLs
@@ -465,12 +680,33 @@ hour:
 4. **Accounts do not survive `docker:reset`.** Recreate with `bun run
    create-user`. There is no public signup, deliberately.
 
-Local database state, queried 2026-07-31 rather than remembered: draft count #1
-open, 5 locations, 98 products, **1 barcode**, **0 par levels**, **0 vendors**,
-0 products carrying a vendor.
+Local database state, **queried 2026-08-11** rather than remembered. The volume
+has been reset since the 2026-07-31 numbers that stood here, so several of them
+moved:
 
-Three of those numbers are the ones that bite:
+| | 2026-07-31 | **now** |
+|---|---|---|
+| Users | owner, manager, + 2 throwaways | **1** — `owner@truestock.local` only |
+| Counts | draft #1 open | **4, all `closed`** — no open count |
+| Count lines | 0 | **8** — 4 sealed-quantity, **4 tenths** |
+| Ledger rows | 0 | **8**, all `client_line_id`s distinct |
+| Products | 98 | **101** |
+| Barcodes | 1 | **4** |
+| Locations | 5 | **6** — `Tap 1` added 2026-08-12 |
+| Par levels | 0 | **0** |
+| Vendors | 0 | **0** |
 
+Two of the three newest products are test artifacts, not stock: product 100
+`Testing A New Barcode Prod` and product 101 `Propane fuel`, both enrolled to
+exercise the scanner. 101 has **no count line at all** — the enroll flow does
+drop you on the entry screen (`count-leg.tsx:605`), so that is a test backing
+out, not a defect. Set `active = false` on both when you want them gone;
+invariant 6 says never hard-delete.
+
+Four of those are the ones that bite:
+
+- **No open count.** The next pass starts by opening one, which the 2026-07-31
+  notes did not have to account for.
 - **0 pars** — the reorder list is *able* to produce rows as of 2026-07-30 and
   still won't until a par is set on something. Nothing is broken; nothing is
   configured.
@@ -480,12 +716,14 @@ Three of those numbers are the ones that bite:
   catalog that drives real orders). Until the owner fills it in or adds one
   through the screen, every reorder row still groups under "No vendor set" — the
   same symptom as before #19 was closed, now with a cause that is one form away.
-- **1 barcode** — a single enrolment survives from a browser session. A first
-  phone pass is still essentially all-enroll.
+- **2 barcodes of 99 products** — a phone pass is still essentially all-enroll.
 
-Throwaway owner accounts left from browser checks: `tester@truestock.local` and
-`browsercheck@truestock.local`. Delete them or reset the volume. The real seeded
-accounts are `owner@truestock.local` and `manager@truestock.local`.
+**The throwaway accounts are gone with the volume, and so is the manager.**
+`tester@truestock.local`, `browsercheck@truestock.local` and
+`manager@truestock.local` no longer exist; **`owner@truestock.local` is the only
+account in the database.** If its password is not to hand, `bun run create-user`
+mints another — there is no public signup, deliberately, so a forgotten password
+is a hard stop at the login screen rather than a recoverable inconvenience.
 
 Note there is no `delete-user` script — removing an account means SQL against
 `session` then `account` then `user`, which is also why these accumulate. Same
@@ -494,22 +732,39 @@ references them).
 
 ## Next three things
 
-The 2026-08-01 mobile UI pass is done — larger tap targets, safe-area insets,
-touch-manipulation, bigger fill/quantity buttons. The LAN server is live.
-Protocol for 1 and 2: **`docs/phone-count-test.md`**. Start at
-`/count/preflight` on the phone.
+**The three items that stood here through 2026-08-11 are all done** — the
+camera, the offline queue, and the production CSP. What replaced them is
+narrower and, for the first time, mostly about *scale* rather than *existence*.
 
-1. **Drive a real count on a phone — now with the improved UI.** Time it against
-   the sub-20-minute target the whole design is justified by. A *first* pass
-   enrols rather than counts — every barcode is unknown — so it measures the
-   enroll flow's 20-second budget, not the 20-minute one. Fold in open-item
-   #20's six checks while you are in there. Pay specific attention to the new
-   fill-entry button sizes (Empty/Half/Full are now 80 px tall) and the
-   quantity stepper (56 px +/- buttons) — these are the most-touched controls
-   and they have never been pressed by a human.
-2. **Exercise the offline queue for real** — turn the WiFi off mid-scan, go into
-   the walk-in, then reconnect and confirm the queue drains.
-3. **Verify the production CSP** with `next build && next start` before any deploy.
+`owner@truestock.local` is the **only** account in the database — have its
+password or run `bun run create-user` before walking anywhere. The stack is
+currently in **production mode** (`bun run docker:up:prod`), which has no hot
+reload and accepts sign-in **only on the https origin**; `bun run docker:up:lan`
+returns to dev.
+
+1. **A full timed count** — the sub-20-minute target the whole design is
+   justified by, and still the one claim with no measurement behind it. The four
+   counts so far are 2, 4, 1 and 1 lines; none is a count. A first real pass is
+   still mostly *enrolment* (97 of 101 products have no barcode), so it measures
+   the 20-second enroll budget. Watch the per-line gaps: count 2 saw 29s and
+   102s between two kegs *on the same screen with no leg switch*, which is
+   either ordinary variance in reading a keg or friction a longer run will make
+   legible.
+2. **Rapid mode against a real camera** — the last untested part of scanning,
+   and the one whose failures are silent by construction. Its frame guard is
+   tested only against *modelled* frame sequences. **Count a real shelf in rapid
+   mode, then count it by hand, and compare.** Remember it is offered only on
+   quantity locations (Walk-In, Storeroom) and is *hidden*, not greyed out,
+   everywhere else.
+3. **Real costs and pars** (open item #4). 90 of 101 products are unpriced and
+   0 of 101 carry a `case_size`, so valuation is proven but nearly empty and the
+   reorder list still cannot produce a row. This is now the shortest path to the
+   app being *useful* rather than merely correct.
+
+Before any deploy, the remaining runtime gap: **start `node
+.next/standalone/server.js`**. The 2026-08-12 CSP verification ran under `next
+start`, which warned it does not work with `output: standalone` — so the policy
+and hydration are settled, and the entrypoint Hostinger actually uses is not.
 
 After those, the shortest path to a genuinely useful reorder list is real
 costs and pars (open item #4) — **#19 (vendors have no write path) is done**

@@ -64,6 +64,30 @@ interface RapidEvent {
 /** How many rapid scans stay on screen. Enough to see a mistake, not a wall of text. */
 const RAPID_LOG_LIMIT = 4;
 
+/**
+ * Shown when a READ-side server call cannot reach the server at all.
+ *
+ * The asymmetry this exists to fix: `runWrite` has always wrapped its server
+ * action in try/catch, because the offline case is the whole reason the write
+ * queue exists. The read-side calls beside it — `resolveBarcodeAction`,
+ * `searchProductsAction` — did not. Offline, the fetch threw straight out of an
+ * async event handler, so `setBusy(false)` never ran, `setError` was never
+ * reached, and `setPhase` never fired. You scanned, the scanner closed, and
+ * NOTHING happened: no entry screen, no error, no queued write. Silent, and the
+ * exact shape of every other bug this project has had to find the hard way.
+ *
+ * A read cannot be queued the way a write can, and the message must not imply
+ * otherwise. The barcode has to resolve to a product BEFORE there is an entry
+ * screen to collect a reading on, so there is nothing to replay later — and the
+ * search picker is no fallback here, being equally server-backed. The honest
+ * advice is: what you already entered is safe, this scan is not, come back into
+ * range and do it again.
+ */
+const OFFLINE_LOOKUP_MESSAGE =
+  "Offline — couldn't look that up, and nothing was recorded for it. " +
+  "Readings you already entered are saved and will sync when you are back in range. " +
+  "Move back into WiFi range and scan that one again.";
+
 function lineKey(productId: number, locationId: number) {
   return `${productId}:${locationId}`;
 }
@@ -381,8 +405,21 @@ export function CountLeg({
 
     setScannerOpen(false);
     setBusy(true);
-    const resolved = await resolveBarcodeAction({ barcode });
-    setBusy(false);
+    let resolved: Awaited<ReturnType<typeof resolveBarcodeAction>>;
+    try {
+      resolved = await resolveBarcodeAction({ barcode });
+    } catch {
+      // The fetch itself threw — offline. See OFFLINE_LOOKUP_MESSAGE for why
+      // this is not queued and must not claim to be.
+      setError(OFFLINE_LOOKUP_MESSAGE);
+      return;
+    } finally {
+      // In a `finally` so the flag clears on EVERY exit, including the throw.
+      // It used to be cleared on the line after the await, which is skipped
+      // entirely when the await rejects — leaving `busy` stuck true, which
+      // silently disables the submit button on the next entry screen reached.
+      setBusy(false);
+    }
 
     if (!resolved.ok) {
       setError(resolved.error.message);
@@ -445,7 +482,23 @@ export function CountLeg({
 
   async function rapidScanInner(barcode: string, locationId: number) {
     setBusy(true);
-    const resolved = await resolveBarcodeAction({ barcode });
+    let resolved: Awaited<ReturnType<typeof resolveBarcodeAction>>;
+    try {
+      resolved = await resolveBarcodeAction({ barcode });
+    } catch {
+      // Offline, in the one mode where the camera never closes — so this log
+      // line is the ONLY thing that can tell the counter the sweep stopped
+      // recording. Without it you keep sweeping a shelf into nothing, which is
+      // precisely the silent shortfall lib/rescan-guard.ts is written to avoid,
+      // arrived at from the network side instead of the frame side.
+      setBusy(false);
+      pushRapid({
+        ok: false,
+        title: "Offline — not recorded",
+        detail: "Can't reach the server. Come back into range and scan it again.",
+      });
+      return;
+    }
 
     if (!resolved.ok) {
       setBusy(false);
@@ -505,8 +558,16 @@ export function CountLeg({
       setResults([]);
       return;
     }
-    const found = await searchProductsAction({ query: value, limit: 20 });
-    if (found.ok) setResults(found.data);
+    try {
+      const found = await searchProductsAction({ query: value, limit: 20 });
+      if (found.ok) setResults(found.data);
+    } catch {
+      // Offline. Clear the list rather than leaving the PREVIOUS query's hits
+      // sitting under the current text — stale results that look like an answer
+      // are worse than none, because tapping one records the wrong bottle.
+      setResults([]);
+      setError(OFFLINE_LOOKUP_MESSAGE);
+    }
   }
 
   // ---- location picker -----------------------------------------------------

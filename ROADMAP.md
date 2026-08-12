@@ -16,6 +16,14 @@ multi-tenancy.
 
 **Remaining work is verification, not construction.** See `docs/go-live.md`.
 
+**As of 2026-08-12 most of that verification is done.** Every part of the
+counting loop has run on a real phone — scan and enrol via the camera, tenths,
+sealed quantities, valuation (count 2 closed at $170.90, reconciled to the cent
+in SQL), and the offline write queue draining on reconnect — the last of those
+under the production CSP, which also ran for the first time. What remains is
+not mechanism but **scale**: no timed pass, no full five-location walk, and 8
+count lines total across four sessions.
+
 That sentence was false when it was written and is true now. A code audit on
 2026-07-29 (`docs/mvp-gaps.md`) found that three items in the list above were
 named in scope but absent or broken in the code — the reorder list could never
@@ -40,14 +48,20 @@ three months. Driven by open-items, each with its own trigger.
   locked out on its very next request. Self-deactivation, self-demotion and
   last-active-owner lockout are all refused, and the control snaps back to the
   real value when the server says no.
-- **Real costs entered** (#4) — 88 unit costs and 16 case sizes. Valuation is thin
-  until this happens. *Trigger: the owner working through supplier invoices.*
+- **Real costs entered** (#4) — **90 unit costs and 16 case sizes** (re-counted
+  against the database 2026-08-11: 90 of 99 products unpriced, and 0 of 99 carry
+  a `case_size`). The only priced products are the 9 draft kegs, which came
+  costed in the seed — so valuation is not merely thin, it has never yet
+  produced a non-zero number. *Trigger: the owner working through supplier
+  invoices.*
 - ~~**Vendor write path** (#19)~~ — **DONE 2026-07-31.** `createVendor`,
   `updateVendor` and `assignVendorToProducts`, plus the `/office/vendors`
   screen and bulk catalog assignment. The reorder list can now group by
   vendor per spec §9.3 instead of dumping every row under "No vendor set".
-  One thing left unconfirmed: the `router.refresh()` fix on the vendors list
-  is typechecked and built but not yet browser-verified.
+  ~~One thing left unconfirmed: the `router.refresh()` fix on the vendors list.~~
+  **Browser-verified later the same day** — create and edit both reflect without
+  a reload and the post-reload state agrees with the database. Every line of the
+  vendor work has now been executed against a browser and a database.
 - **Par levels entered** — the mechanism exists as of 2026-07-30, but no product
   has one, so the list is still empty in practice. Pairs with real costs.
 - **Uncapped dashboard reads** (#14) — replace capped list reads with a dedicated
@@ -60,7 +74,16 @@ three months. Driven by open-items, each with its own trigger.
   full bottle for a part-full one. The frame guard lives in
   `lib/rescan-guard.ts` and is tested without a camera; writing those tests
   found two silent miscounts before anyone scanned anything.
-  *Still unproven: nobody has counted a real shelf with it.*
+  *Still unproven: nobody has counted a real shelf with it.* The camera itself
+  is proven as of 2026-08-12, so this is now the only untested part of scanning
+  — and the one whose failures are silent. Note it is offered only on quantity
+  locations and is **hidden**, not greyed out, elsewhere.
+- ~~**Offline write queue unexercised** (#9)~~ — **DONE 2026-08-12.** Verified
+  on a phone in count 4: `1 pending` while offline, `Synced` on reconnect with
+  no interaction, and exactly one ledger row afterwards. Required building
+  `scripts/prod-lan.sh` first — `next dev`'s HMR client reloads the page when
+  the network drops, which makes the test impossible in dev. Fixed seven
+  unguarded server-action calls found along the way, two of them writes.
 
 ---
 

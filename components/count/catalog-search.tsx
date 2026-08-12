@@ -11,18 +11,30 @@ export function CountCatalogSearch() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ProductSummary[]>([]);
   const [searched, setSearched] = useState(false);
+  const [offline, setOffline] = useState(false);
 
   async function run(value: string) {
     setQuery(value);
     if (value.trim().length < 2) {
       setResults([]);
       setSearched(false);
+      setOffline(false);
       return;
     }
-    const found = await searchProductsAction({ query: value, limit: 25 });
-    if (found.ok) {
-      setResults(found.data);
-      setSearched(true);
+    try {
+      const found = await searchProductsAction({ query: value, limit: 25 });
+      if (found.ok) {
+        setResults(found.data);
+        setSearched(true);
+        setOffline(false);
+      }
+    } catch {
+      // Offline. Clearing matters more than the message: leaving the previous
+      // query's hits under the current text reads as "no match for what you
+      // typed", which is a different and wrong answer.
+      setResults([]);
+      setSearched(false);
+      setOffline(true);
     }
   }
 
@@ -41,7 +53,15 @@ export function CountCatalogSearch() {
       </div>
 
       <div className="mt-4">
-        {searched && results.length === 0 ? (
+        {offline ? (
+          // Checked before the empty-results branch on purpose: "nothing
+          // matches" is an answer about the catalog, and saying it when the
+          // catalog was never actually consulted is the wrong answer, not a
+          // vaguer one.
+          <p className="text-row-subtitle text-warning" role="alert">
+            Offline — can&rsquo;t search the catalog from here. Move back into WiFi range.
+          </p>
+        ) : searched && results.length === 0 ? (
           <p className="text-row-subtitle text-muted-foreground">
             Nothing matches. It may not be in the catalog yet — scanning it during a count
             enrolls it.

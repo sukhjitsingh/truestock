@@ -4,3 +4,4 @@ Back Bar,2,tenths,"Open bottles, tenths"
 Wine Rack,3,tenths,"Wine by the glass is open - fill levels apply"
 Walk-In,4,quantity,Packaged beer. Test WiFi in here.
 Storeroom,5,quantity,"Sealed backstock - quantities only, no fill levels"
+Tap 1,6,tenths,"Draft line. A tapped keg records as a decimal in partial_fills, same as a bottle - so this is a tenths location. Add Tap 2..N as lines are added."

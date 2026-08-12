@@ -25,6 +25,27 @@ const INITIAL_CATEGORY = "Spirits";
 const INITIAL_UNIT_TYPE = "bottle" as const;
 
 /**
+ * Shown when any of this screen's three server calls cannot reach the server.
+ *
+ * Every one of them — the search, the barcode link, the product create — used
+ * to be awaited with no try/catch at all. Offline, the fetch threw out of an
+ * async handler, so `setPending(false)` never ran and no error was ever set:
+ * the form sat disabled and silent with the typed details still on screen and
+ * no way to submit them. Two of those calls are WRITES, and unlike a count-line
+ * write they do NOT go through the IndexedDB queue in lib/count-queue.ts —
+ * enrolling a product is not idempotent the way an increment keyed on
+ * `client_line_id` is, so replaying it blindly would risk the duplicate
+ * products this screen was rebuilt on 2026-07-30 to stop creating.
+ *
+ * So the honest message is "not saved, try again in range" — never "queued".
+ * Nothing here is retained but the text already typed, which is enough: coming
+ * back into range and pressing save again completes it.
+ */
+const OFFLINE_ENROLL_MESSAGE =
+  "Offline — nothing was saved. Your details are still here; " +
+  "move back into WiFi range and try again.";
+
+/**
  * What happens when a scanned barcode resolves to nothing.
  *
  * THIS SCREEN HAS A 20-SECOND BUDGET (CLAUDE.md, spec §12, risk #2 in spec
@@ -131,19 +152,38 @@ function LinkExisting({
       setResults([]);
       return;
     }
-    const found = await searchProductsAction({ query: value, limit: 20 });
-    if (found.ok) setResults(found.data);
+    try {
+      const found = await searchProductsAction({ query: value, limit: 20 });
+      if (found.ok) setResults(found.data);
+    } catch {
+      // Offline. Clear rather than leave the previous query's hits under the
+      // current text — tapping a stale hit here links the barcode to the WRONG
+      // product, which is a catalog error that outlives this count.
+      setResults([]);
+      setError(OFFLINE_ENROLL_MESSAGE);
+    }
   }
 
   async function link(product: ProductSummary, level: "each" | "case") {
     setPending(true);
     setError(null);
-    const result = await linkBarcodeToProductAction({
-      productId: product.id,
-      barcode,
-      packLevel: level,
-    });
-    setPending(false);
+    let result: Awaited<ReturnType<typeof linkBarcodeToProductAction>>;
+    try {
+      result = await linkBarcodeToProductAction({
+        productId: product.id,
+        barcode,
+        packLevel: level,
+      });
+    } catch {
+      // Offline. This is a WRITE, and unlike a count-line write it does not go
+      // through the queue — see OFFLINE_ENROLL_MESSAGE.
+      setError(OFFLINE_ENROLL_MESSAGE);
+      return;
+    } finally {
+      // `finally`, so a throw cannot leave the form permanently pending with
+      // its buttons disabled and no way back.
+      setPending(false);
+    }
     if (!result.ok) {
       setError(result.error.message);
       return;
@@ -370,19 +410,32 @@ function CreateNew({
     setNameCollision(false);
     setFieldErrors({});
 
-    const result = await createProductAction({
-      name,
-      category,
-      unitType,
-      sizeMl: Number(sizeMl),
-      // The barcode that triggered enrollment. `each` because a scan during a
-      // count is overwhelmingly a bottle in someone's hand; a case carton
-      // scanned in the storeroom can be re-pointed from the back office,
-      // which is a rarer correction than the delay of asking here every time.
-      barcode: { barcode, packLevel: "each", isPrimary: true },
-    });
+    let result: Awaited<ReturnType<typeof createProductAction>>;
+    try {
+      result = await createProductAction({
+        name,
+        category,
+        unitType,
+        sizeMl: Number(sizeMl),
+        // The barcode that triggered enrollment. `each` because a scan during a
+        // count is overwhelmingly a bottle in someone's hand; a case carton
+        // scanned in the storeroom can be re-pointed from the back office,
+        // which is a rarer correction than the delay of asking here every time.
+        barcode: { barcode, packLevel: "each", isPrimary: true },
+      });
+    } catch {
+      // Offline. Creating the product is a WRITE that does not go through the
+      // count-line queue, so nothing is retained — see OFFLINE_ENROLL_MESSAGE.
+      // The typed-in details stay on screen, so coming back into range and
+      // pressing save again is all that is needed.
+      setError(OFFLINE_ENROLL_MESSAGE);
+      return;
+    } finally {
+      // `finally`, so a throw cannot strand the form pending with its save
+      // button disabled and the typed details unrecoverable.
+      setPending(false);
+    }
 
-    setPending(false);
     if (!result.ok) {
       setError(result.error.message);
       setFieldErrors(result.error.fieldErrors ?? {});
