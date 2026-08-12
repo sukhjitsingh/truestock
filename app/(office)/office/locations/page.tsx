@@ -1,28 +1,25 @@
 import { requireOfficeUser } from "@/lib/current-user";
-import { listLocationsAction } from "@/app/actions/catalog";
+import { listAllLocationsAction } from "@/app/actions/catalog";
+import { LocationsTable } from "@/components/office/locations-table";
 
 export const metadata = { title: "Locations · Truestock" };
 
-const countModeLabel: Record<string, string> = {
-  tenths: "Tenths",
-  quantity: "Quantity",
-};
-
 /**
- * Slice 1 tracer bullet (docs/plans/phase-1-to-1.5/04-slices.md): the route
- * exists, is in the nav, and renders the five seeded locations read-only via
- * the *existing, unchanged* `listLocationsAction()`. No create, edit,
- * retire, or `active` column here — those land in slices 2 and 3.
+ * Slice 2 (docs/plans/phase-1-to-1.5/04-slices.md): locations CRUD. Swaps
+ * slice 1's read-only render for `listAllLocationsAction()` (active +
+ * retired — the management screen's own read, distinct from
+ * `listLocationsAction`, which the scan-picker keeps using unchanged) and
+ * `<LocationsTable>` for create/rename/re-mode.
  *
- * Authorization: `requireOfficeUser()` (called by the `(office)` layout,
- * called again here per CLAUDE.md invariant 7 — defence in depth, not only
- * middleware) sends staff to `/count` before this component ever renders.
- * `listLocationsAction` re-checks the role itself and scopes the query to
+ * Authorization: `requireOfficeUser()` (also called by the `(office)`
+ * layout — defence in depth, CLAUDE.md invariant 7) sends staff to
+ * `/count` before this component ever renders. `listAllLocationsAction`
+ * re-checks the role itself (owner/manager only) and scopes the query to
  * the caller's organization from `requireRole`, never from client input.
  */
 export default async function LocationsPage() {
   await requireOfficeUser();
-  const result = await listLocationsAction();
+  const result = await listAllLocationsAction();
 
   const locations = result.ok ? result.data : [];
 
@@ -39,38 +36,7 @@ export default async function LocationsPage() {
           {result.error.message}
         </p>
       ) : (
-        <div className="mt-6 overflow-x-auto">
-          <table className="w-full min-w-[36rem] border-collapse text-left">
-            <thead>
-              <tr className="border-b border-border">
-                <th scope="col" className="py-2 text-label uppercase text-muted-foreground">
-                  Name
-                </th>
-                <th scope="col" className="py-2 text-label uppercase text-muted-foreground">
-                  Counting mode
-                </th>
-                <th scope="col" className="py-2 text-right text-label uppercase text-muted-foreground">
-                  Sort order
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {locations.map((loc) => (
-                <tr key={loc.id} className="border-b border-border">
-                  <td className="py-3 text-row-subtitle font-semibold text-foreground">
-                    {loc.name}
-                  </td>
-                  <td className="py-3 text-row-subtitle text-muted-foreground">
-                    {countModeLabel[loc.countMode] ?? loc.countMode}
-                  </td>
-                  <td className="py-3 text-right text-row-subtitle tabular-nums text-muted-foreground">
-                    {loc.sortOrder}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <LocationsTable locations={locations} />
       )}
     </div>
   );

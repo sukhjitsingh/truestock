@@ -20,6 +20,8 @@ import {
   vendorCreateSchema,
   vendorUpdateSchema,
   assignVendorToProductsSchema,
+  locationCreateSchema,
+  locationUpdateSchema,
 } from "@/lib/validation/catalog";
 
 /**
@@ -122,11 +124,56 @@ export async function deactivateProductAction(
   });
 }
 
-/** Needed by every role to pick a location while counting. */
+/**
+ * Needed by every role to pick a location while counting. Active-only,
+ * UNCHANGED signature and behavior (Decision 5, 02-architecture.md) — the
+ * single highest risk in the locations bundle is a retired location
+ * leaking into this picker, where it would keep accepting real scans with
+ * zero errors anywhere. `listAllLocationsAction` below is the only caller
+ * that ever passes `includeInactive: true`.
+ */
 export async function listLocationsAction(): Promise<ActionResult<catalog.LocationSummary[]>> {
   return runAction(async () => {
     const actor = await requireRole("owner", "manager", "staff");
     return catalog.listLocations(actor);
+  });
+}
+
+/** Owner/manager only — the management screen; includes retired locations. */
+export async function listAllLocationsAction(): Promise<ActionResult<catalog.LocationSummary[]>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    return catalog.listLocations(actor, { includeInactive: true });
+  });
+}
+
+/**
+ * Create a location. Owner/manager only. Duplicate `(organization_id,
+ * name)` — active or retired — is refused with ConflictError in the domain
+ * layer.
+ */
+export async function createLocationAction(
+  input: unknown,
+): Promise<ActionResult<catalog.LocationSummary>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = locationCreateSchema.parse(input);
+    return catalog.createLocation(actor, parsed);
+  });
+}
+
+/**
+ * Rename / re-mode / re-order / re-note a location. Owner/manager only.
+ * Ownership of `locationId` and the count-mode-change guard (Gate 2
+ * Decision 3) are both checked in the domain layer.
+ */
+export async function updateLocationAction(
+  input: unknown,
+): Promise<ActionResult<catalog.LocationSummary>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = locationUpdateSchema.parse(input);
+    return catalog.updateLocation(actor, parsed);
   });
 }
 

@@ -9,12 +9,12 @@
  * fetches the column, so there is no code path where it could accidentally
  * end up in a response to them.
  */
-import { and, eq, inArray, isNull, like, or, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNull, like, ne, or, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { product, productBarcode, productPar, vendor, location } from "@/db/schema";
+import { product, productBarcode, productPar, vendor, location, count, countLine } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
 import { canSeeCost, canManageCost } from "@/lib/authz";
-import { ConflictError, NotFoundError } from "@/lib/domain/errors";
+import { ConflictError, DomainError, NotFoundError } from "@/lib/domain/errors";
 import { isDuplicateKeyError } from "@/lib/domain/db-errors";
 import { getOnHandSnapshot } from "@/lib/domain/on-hand";
 import { isCountedByCase } from "@/lib/pack-level";
@@ -26,6 +26,8 @@ import type {
   VendorCreateInput,
   VendorUpdateInput,
   AssignVendorToProductsInput,
+  LocationCreateInput,
+  LocationUpdateInput,
 } from "@/lib/validation/catalog";
 
 // ---------------------------------------------------------------------------
@@ -787,8 +789,12 @@ export async function deactivateProduct(actor: Actor, productId: number): Promis
 }
 
 // ---------------------------------------------------------------------------
-// Locations — read-only list (no CRUD surface in the MVP build list; the
-// seed already populates them, see db/README.md)
+// Locations — CRUD (rename/re-mode/create) from the management screen
+// (`/office/locations`), plus the read every counting role uses to populate
+// the scan-picker. See docs/plans/phase-1-to-1.5/02-architecture.md Decision
+// 5: `listLocationsAction` (the scan-picker consumer) must keep calling this
+// with its default, active-only behavior — a retired location that still
+// appears there would keep accepting real scans with zero errors anywhere.
 // ---------------------------------------------------------------------------
 
 export interface LocationSummary {
@@ -798,20 +804,206 @@ export interface LocationSummary {
   /** Which input the counting screen offers here — see `locationCountModeEnum`. */
   countMode: (typeof location.$inferSelect)["countMode"];
   notes: string | null;
+  /** Migration 0003. Never hard-deleted (invariant 6) — set false to retire. */
+  active: boolean;
 }
 
-export async function listLocations(actor: Actor): Promise<LocationSummary[]> {
+const LOCATION_SUMMARY_COLUMNS = {
+  id: location.id,
+  name: location.name,
+  sortOrder: location.sortOrder,
+  countMode: location.countMode,
+  notes: location.notes,
+  active: location.active,
+};
+
+/**
+ * `includeInactive` defaults to false. `listLocationsAction` (the
+ * scan-picker consumer, every role) always calls this with the default —
+ * Decision 5. `listAllLocationsAction` (owner/manager, the management
+ * screen) is the only caller that passes `true`.
+ */
+export async function listLocations(
+  actor: Actor,
+  options?: { includeInactive?: boolean },
+): Promise<LocationSummary[]> {
+  const includeInactive = options?.includeInactive ?? false;
   return db
-    .select({
-      id: location.id,
-      name: location.name,
-      sortOrder: location.sortOrder,
-      countMode: location.countMode,
-      notes: location.notes,
-    })
+    .select(LOCATION_SUMMARY_COLUMNS)
     .from(location)
-    .where(eq(location.organizationId, actor.organizationId))
+    .where(
+      and(
+        eq(location.organizationId, actor.organizationId),
+        includeInactive ? undefined : eq(location.active, true),
+      ),
+    )
     .orderBy(location.sortOrder, location.name);
+}
+
+/**
+ * Invariant 9: a cross-tenant id is answered as NotFound, never an answer
+ * that confirms the row is real. Returns the row (not just a boolean)
+ * because `updateLocation`'s count-mode guard needs `countMode` to detect a
+ * real change.
+ */
+async function assertLocationOwned(
+  runner: Runner,
+  organizationId: number,
+  locationId: number,
+): Promise<{ id: number; countMode: (typeof location.$inferSelect)["countMode"] }> {
+  const [owned] = await runner
+    .select({ id: location.id, countMode: location.countMode })
+    .from(location)
+    .where(and(eq(location.id, locationId), eq(location.organizationId, organizationId)))
+    .limit(1);
+  if (!owned) {
+    throw new NotFoundError("Location");
+  }
+  return owned;
+}
+
+/**
+ * True if this location has at least one `count_line` row on a count whose
+ * `status <> 'closed'`. Shared by `updateLocation`'s count-mode-change guard
+ * (Decision 3) and `deactivateLocation`'s guard (Decision 4, slice 3) — same
+ * predicate, applied unconditionally in one case and only on a `countMode`
+ * diff in the other.
+ *
+ * NOTE: `<> 'closed'` is intentionally tied to `countStatusEnum`
+ * (`db/schema.ts`). If that enum ever gains another terminal,
+ * effectively-immutable status, this predicate must widen to match — see
+ * Gate 3's "least confident decisions" item 4.
+ */
+async function hasOpenCountLines(
+  runner: Runner,
+  organizationId: number,
+  locationId: number,
+): Promise<boolean> {
+  const [row] = await runner
+    .select({ id: countLine.id })
+    .from(countLine)
+    .innerJoin(
+      count,
+      and(eq(count.id, countLine.countId), eq(count.organizationId, countLine.organizationId)),
+    )
+    .where(
+      and(
+        eq(countLine.organizationId, organizationId),
+        eq(countLine.locationId, locationId),
+        ne(count.status, "closed"),
+      ),
+    )
+    .limit(1);
+  return !!row;
+}
+
+/**
+ * Owner/manager only (enforced in the action). Always inserts `active:
+ * true`. Duplicate `(organization_id, name)` — active or retired — raises
+ * ConflictError (Decision 1: a retired location's name stays taken).
+ */
+export async function createLocation(
+  actor: Actor,
+  input: LocationCreateInput,
+): Promise<LocationSummary> {
+  let insertedId: number;
+  try {
+    const [inserted] = await db
+      .insert(location)
+      .values({
+        organizationId: actor.organizationId,
+        name: input.name,
+        countMode: input.countMode,
+        notes: input.notes ?? null,
+        active: true,
+        ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
+      })
+      .$returningId();
+    insertedId = inserted.id;
+  } catch (err) {
+    if (isDuplicateKeyError(err)) {
+      throw new ConflictError("A location with this name already exists.");
+    }
+    throw err;
+  }
+
+  const rows = await db
+    .select(LOCATION_SUMMARY_COLUMNS)
+    .from(location)
+    .where(eq(location.id, insertedId))
+    .limit(1);
+
+  const result = rows[0];
+  if (!result) {
+    throw new NotFoundError("Location");
+  }
+  return result;
+}
+
+/**
+ * Owner/manager only (enforced in the action). One transaction:
+ * `assertLocationOwned` first, then — only if `countMode` is present AND
+ * differs from the current row — run `hasOpenCountLines` and refuse with
+ * `DomainError("LOCATION_MODE_LOCKED", …)` if true (Decision 3). Then the
+ * patch write.
+ */
+export async function updateLocation(
+  actor: Actor,
+  input: LocationUpdateInput,
+): Promise<LocationSummary> {
+  await db.transaction(async (tx) => {
+    const current = await assertLocationOwned(tx, actor.organizationId, input.locationId);
+
+    // Decision 3: the guard fires only when count_mode is actually changing,
+    // and only when the location has count_line rows on a non-closed count.
+    // Closed counts are immutable (invariant 1), so a location used only by
+    // closed counts is safe to re-mode.
+    if (input.countMode !== undefined && input.countMode !== current.countMode) {
+      const openLines = await hasOpenCountLines(tx, actor.organizationId, input.locationId);
+      if (openLines) {
+        throw new DomainError(
+          "LOCATION_MODE_LOCKED",
+          "This location has counted lines on an open count. Finish or close that count before changing its counting mode.",
+        );
+      }
+    }
+
+    const patch: Partial<typeof location.$inferInsert> = {};
+    if (input.name !== undefined) patch.name = input.name;
+    if (input.countMode !== undefined) patch.countMode = input.countMode;
+    if (input.sortOrder !== undefined) patch.sortOrder = input.sortOrder;
+    if (input.notes !== undefined) patch.notes = input.notes;
+
+    if (Object.keys(patch).length > 0) {
+      try {
+        await tx
+          .update(location)
+          .set(patch)
+          .where(
+            and(eq(location.id, input.locationId), eq(location.organizationId, actor.organizationId)),
+          );
+      } catch (err) {
+        if (isDuplicateKeyError(err)) {
+          throw new ConflictError("A location with this name already exists.");
+        }
+        throw err;
+      }
+    }
+  });
+
+  const rows = await db
+    .select(LOCATION_SUMMARY_COLUMNS)
+    .from(location)
+    .where(
+      and(eq(location.id, input.locationId), eq(location.organizationId, actor.organizationId)),
+    )
+    .limit(1);
+
+  const result = rows[0];
+  if (!result) {
+    throw new NotFoundError("Location");
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------

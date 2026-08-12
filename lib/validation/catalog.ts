@@ -15,6 +15,7 @@ import { z } from "zod";
 import {
   productUnitTypeEnum,
   barcodePackLevelEnum,
+  locationCountModeEnum,
 } from "@/db/schema";
 
 export const barcodeStringSchema = z
@@ -235,3 +236,32 @@ export const assignVendorToProductsSchema = z.object({
   vendorId: z.number().int().positive().nullable(),
 });
 export type AssignVendorToProductsInput = z.infer<typeof assignVendorToProductsSchema>;
+
+// ---------------------------------------------------------------------------
+// Locations — CRUD from the management screen (`/office/locations`)
+// ---------------------------------------------------------------------------
+
+export const locationCountModeSchema = z.enum(locationCountModeEnum);
+
+/**
+ * Location creation. `countMode` is required — the add-location row always
+ * offers the select (Gate 2 Flow 1), so there is no ambiguous default to
+ * resolve here the way there is on the column itself.
+ */
+export const locationCreateSchema = z.object({
+  name: z.string().trim().min(1, "Name is required.").max(100),
+  countMode: locationCountModeSchema,
+  sortOrder: z.number().int().nonnegative().optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+});
+export type LocationCreateInput = z.infer<typeof locationCreateSchema>;
+
+/** `undefined` = don't touch; `notes: null` clears it. Same convention as `vendorUpdateSchema`. */
+export const locationUpdateSchema = z.object({
+  locationId: z.number().int().positive(),
+  name: z.string().trim().min(1).max(100).optional(),
+  countMode: locationCountModeSchema.optional(),
+  sortOrder: z.number().int().nonnegative().optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+});
+export type LocationUpdateInput = z.infer<typeof locationUpdateSchema>;

@@ -1,0 +1,285 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { createLocationAction, updateLocationAction } from "@/app/actions/catalog";
+import type { LocationSummary } from "@/lib/domain/catalog";
+import { Button } from "@/components/ui/button";
+import { Field, Input, Select } from "@/components/ui/field";
+
+const countModeLabel: Record<string, string> = {
+  tenths: "Tenths",
+  quantity: "Quantity",
+};
+
+/**
+ * Location create/edit form. Mirrors `VendorEditForm`: `location` undefined
+ * means create mode, populated means edit mode.
+ *
+ * `countMode` is a required select (no "leave blank" option) — every
+ * location must have one, and the row it drives (`components/count/count-leg.tsx`
+ * keying off `location.countMode === "tenths"`) has no sensible undefined
+ * state. `notes` follows the empty-string-clears-to-null convention already
+ * used on `VendorEditForm`'s `contact`/`orderMethod`.
+ */
+function LocationEditForm({
+  location,
+  onSuccess,
+}: {
+  location?: LocationSummary;
+  onSuccess?: () => void;
+}) {
+  const router = useRouter();
+  const [name, setName] = useState(location?.name ?? "");
+  const [countMode, setCountMode] = useState<string>(location?.countMode ?? "tenths");
+  const [sortOrder, setSortOrder] = useState(
+    location?.sortOrder != null ? String(location.sortOrder) : "",
+  );
+  const [notes, setNotes] = useState(location?.notes ?? "");
+
+  const [pending, setPending] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    setPending(true);
+    setError(null);
+    setSaved(false);
+    setFieldErrors({});
+
+    const input = {
+      ...(location ? { locationId: location.id } : {}),
+      name: name.trim(),
+      countMode,
+      ...(sortOrder.trim() === "" ? {} : { sortOrder: Number(sortOrder) }),
+      notes: notes.trim() === "" ? null : notes.trim(),
+    };
+
+    const action = location ? updateLocationAction : createLocationAction;
+    const result = await action(input);
+
+    setPending(false);
+    if (!result.ok) {
+      setError(result.error.message);
+      setFieldErrors(result.error.fieldErrors ?? {});
+      return;
+    }
+
+    setSaved(true);
+    if (onSuccess) {
+      onSuccess();
+    } else {
+      router.refresh();
+    }
+  }
+
+  const isCreate = !location;
+
+  return (
+    <form method="post" onSubmit={save} className="flex flex-col gap-section-gap" noValidate>
+      <section className="flex flex-col gap-4">
+        <h2 className="text-label uppercase text-muted-foreground">
+          {isCreate ? "New location" : "Edit location"}
+        </h2>
+
+        <Field label="Name" htmlFor="loc-name" error={fieldErrors.name}>
+          <Input
+            id="loc-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g., Patio Bar"
+            required
+          />
+        </Field>
+
+        <Field
+          label="Counting mode"
+          htmlFor="loc-count-mode"
+          error={fieldErrors.countMode}
+          hint="Tenths offers a fill pad for open bottles (and still accepts sealed quantities). Quantity is numbers only, for sealed backstock."
+        >
+          <Select
+            id="loc-count-mode"
+            value={countMode}
+            onChange={(e) => setCountMode(e.target.value)}
+          >
+            <option value="tenths">Tenths</option>
+            <option value="quantity">Quantity</option>
+          </Select>
+        </Field>
+
+        <Field
+          label="Sort order"
+          htmlFor="loc-sort-order"
+          error={fieldErrors.sortOrder}
+          hint="Lower numbers list first on the counting screen. Leave blank to default to 0."
+        >
+          <Input
+            id="loc-sort-order"
+            type="number"
+            inputMode="numeric"
+            min="0"
+            step="1"
+            value={sortOrder}
+            onChange={(e) => setSortOrder(e.target.value)}
+            placeholder="Optional"
+          />
+        </Field>
+
+        <Field label="Notes" htmlFor="loc-notes" error={fieldErrors.notes} hint="Optional operational notes.">
+          <Input
+            id="loc-notes"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Optional"
+          />
+        </Field>
+      </section>
+
+      {error ? (
+        <p className="rounded-md bg-negative-bg px-3 py-2 text-caption text-negative" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {saved ? (
+        <p className="rounded-md bg-success-bg px-3 py-2 text-caption text-success" role="status">
+          Saved.
+        </p>
+      ) : null}
+
+      <div className="flex flex-wrap gap-3">
+        <Button type="submit" size="primary" disabled={pending}>
+          {pending ? (isCreate ? "Creating…" : "Saving…") : isCreate ? "Create location" : "Save changes"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * Locations management screen: list + inline create/edit form, mirroring
+ * `VendorsList` + `VendorEditForm`'s combined shape.
+ *
+ * `locations` is `listAllLocationsAction`'s payload — active AND retired.
+ * There is no "Retire" control here yet (slice 3); a retired row is shown,
+ * marked, and still editable (renaming a retired location is harmless — its
+ * name still occupies the unique-name slot per Decision 1), but nothing on
+ * this screen can flip `active` yet.
+ */
+export function LocationsTable({ locations }: { locations: LocationSummary[] }) {
+  const router = useRouter();
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+
+  /**
+   * `locations` is a server-component prop — closing the form does not by
+   * itself re-read it. Force a refetch on every successful save, the same
+   * way `VendorsList.handleFormSuccess` does, so a save never leaves the
+   * screen showing stale pre-edit values.
+   */
+  function handleFormSuccess() {
+    setShowForm(false);
+    setEditingId(null);
+    router.refresh();
+  }
+
+  function handleEditClick(locationId: number) {
+    setEditingId(locationId);
+    setShowForm(true);
+  }
+
+  const activeCount = locations.filter((l) => l.active).length;
+
+  return (
+    <div className="mt-6 space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-row-subtitle text-muted-foreground">
+          {activeCount} active, {locations.length - activeCount} retired.
+        </p>
+        <Button
+          onClick={() => {
+            if (showForm) {
+              setShowForm(false);
+              setEditingId(null);
+            } else {
+              setEditingId(null);
+              setShowForm(true);
+            }
+          }}
+          size="primary"
+        >
+          {showForm ? "Cancel" : "Add location"}
+        </Button>
+      </div>
+
+      {showForm ? (
+        <div className="rounded-md border border-border bg-card p-6">
+          <LocationEditForm
+            location={editingId ? locations.find((l) => l.id === editingId) : undefined}
+            onSuccess={handleFormSuccess}
+          />
+        </div>
+      ) : null}
+
+      {locations.length === 0 ? (
+        <p className="max-w-prose text-row-subtitle text-muted-foreground">
+          No locations yet. Add one to give the counting screen a place to scan into.
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[48rem] border-collapse text-left">
+            <thead>
+              <tr className="border-b border-border">
+                <th scope="col" className="py-2 text-label uppercase text-muted-foreground">
+                  Name
+                </th>
+                <th scope="col" className="py-2 text-label uppercase text-muted-foreground">
+                  Counting mode
+                </th>
+                <th scope="col" className="py-2 text-right text-label uppercase text-muted-foreground">
+                  Sort order
+                </th>
+                <th scope="col" className="py-2 text-label uppercase text-muted-foreground">
+                  Status
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {locations.map((loc) => (
+                <tr
+                  key={loc.id}
+                  onClick={() => handleEditClick(loc.id)}
+                  className="border-b border-border align-top cursor-pointer hover:bg-muted transition-colors"
+                >
+                  <td className="py-3">
+                    <span className="block text-row-subtitle font-semibold text-foreground">
+                      {loc.name}
+                    </span>
+                    {loc.notes ? (
+                      <span className="block text-caption text-muted-foreground">{loc.notes}</span>
+                    ) : null}
+                  </td>
+                  <td className="py-3 text-row-subtitle text-muted-foreground">
+                    {countModeLabel[loc.countMode] ?? loc.countMode}
+                  </td>
+                  <td className="py-3 text-right text-row-subtitle tabular-nums text-muted-foreground">
+                    {loc.sortOrder}
+                  </td>
+                  <td className="py-3 text-row-subtitle">
+                    {loc.active ? (
+                      <span className="text-muted-foreground">Active</span>
+                    ) : (
+                      <span className="text-negative">Retired</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
