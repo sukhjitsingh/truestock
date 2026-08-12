@@ -125,17 +125,21 @@ Then run the suite, which needs no manual setup of its own:
 bun run test:docker    # 17 tests, against truestock_test on the same container
 ```
 
-**What remains is the UI**, not the domain. The write path is proven at the
-domain layer; nobody has yet driven a count through the actual screens on a
-phone, and item 9's offline queue is still entirely unexercised in a browser.
-Those are now the shortest path to a genuinely trustworthy first count.
+**What remains is the UI**, not the domain.
+
+**Largely addressed 2026-08-12.** Four sessions on a real phone drove the
+counting screens end to end — camera scan and enrol, tenths, sealed quantities,
+valuation, and item 9's offline queue draining on reconnect. What is left is
+**scale, not mechanism**: 8 count lines across those four sessions, no timed
+pass, no walk covering all five locations.
 
 **Partially addressed 2026-07-28.** The back office has now been driven in a
 real browser for the first time — signed in through the actual form, landed on
 the new dashboard, navigated the office routes, console clean. That is what
 surfaced item 13, which had made every client-side interaction in the app
-non-functional while every server-side check passed. The counting screens on a
-phone, and the offline queue, remain untouched.
+non-functional while every server-side check passed. ~~The counting screens on a
+phone, and the offline queue, remain untouched.~~ **Both driven 2026-08-12 —
+see the note above.**
 
 ## 1b. Nothing sweeps expired sessions
 
@@ -324,29 +328,44 @@ close them have been typechecked but, like everything else, never run.
   `closeCount` runs the same function inside its `FOR UPDATE` transaction.
   Confirm the two agree on a count with unpriced lines.
 
-## 9. The offline write queue has never been exercised in a browser
+## ~~9. The offline write queue has never been exercised in a browser~~ — **closed 2026-08-12**
 
-**Trigger: the first real count. Do this deliberately — turn the WiFi off
-mid-scan rather than waiting to find out in the walk-in.**
+**Exercised on a phone during count 4 and it works.** Airplane mode on, a
+quantity submitted, chip read **`1 pending`**; airplane mode off, chip returned
+to **`Synced`** with no interaction — so the `online` listener fires and
+`flush()` drains. Confirmed in the database afterwards: **one line, one ledger
+row, and 8 distinct `client_line_id`s across all four counts.** The queued
+write applied exactly once. That is the failure this design exists to prevent
+and it did not occur.
 
-`lib/count-queue.ts` + `flush()` in `components/count/count-leg.tsx` were
-written, reviewed, and corrected once already (the queue originally had no
-drain path at all), but the whole mechanism has only ever been reasoned
-about. What to verify, in one pass:
+**The test could not be run at all until the runtime changed, and that is the
+part worth remembering.** Under `next dev` the page reloads itself out from
+under you: Next 16's HMR client reconnects a dead websocket 12 times and then
+calls `window.location.reload()` (`next/dist/client/dev/hot-reloader/app/
+web-socket.js` — its own comment says "it indicates the dev server is no longer
+running"). There is no service worker, so that reload lands on the browser's
+offline error page and the app is gone, along with the queue's only UI. It
+reads exactly like a Truestock bug. `scripts/prod-lan.sh` exists because of
+this — production mode has no HMR, and the offline test is only meaningful
+there.
 
-- Turn WiFi off, count three bottles, confirm the chip reads "3 pending"
-  and the rows still appear.
-- Turn WiFi back on and confirm the `online` listener fires and drains them.
-- Kill the app with writes queued, reopen it, and confirm the mount-time
-  flush sends them.
-- The one that matters most: confirm a write that reached the server *just
-  before* the connection dropped does not apply twice when the queue
-  resends it. That is what the `client_line_id` on the queue record is for,
-  and it is the failure this whole design exists to prevent.
+**Found while fixing this, and bigger than the item itself:** seven server
+action calls on the counting path were awaited with **no try/catch**, while
+`runWrite` beside them had always been guarded. Offline, the fetch threw out of
+an async handler, so no error was set, no phase changed, and `busy`/`pending`
+were never cleared — you scanned, the scanner closed, and nothing happened at
+all. Two of the seven were *writes* in the enroll form
+(`linkBarcodeToProductAction`, `createProductAction`) that do not go through
+the queue, so the form sat disabled and silent with the typed details
+unrecoverable. All seven now wrapped, with the flag cleared in a `finally` and
+messages that say "not saved, try again in range" rather than implying a queue
+that does not cover them. The offline message was confirmed on the phone in the
+same pass.
 
-Walk-ins are metal boxes and routinely kill WiFi (spec §11 says to test
-this) — so this is the room where the queue either works or the count is
-wrong.
+**Still not exercised**, and neither is urgent enough to hold this item open:
+killing the app outright with writes queued to prove the *mount-time* flush
+(only the `online` path was observed), and a queue holding more than one write
+at a time.
 
 ## ~~10. `scanCountLine` is fully built and unreachable from the UI~~ — **closed 2026-08-04**
 
@@ -483,12 +502,35 @@ scoped by `NODE_ENV`), and removing it from `next.config.ts` — two CSP headers
 are intersected by the browser, so leaving both would have kept blocking.
 The login form now carries `method="post"` and a hydrated-gated submit.
 
-**Still open: the production CSP is unverified.** Development proves the nonce
-mechanism works (`'unsafe-eval'` does not permit inline `<script>`, and
-`'unsafe-inline'` is absent, so the nonce is what made it run). Production
-drops `'unsafe-eval'` and `ws:`. **Trigger: before the first deploy.** Run
-`next build && next start` and load a page in a real browser — a 200 is not
-evidence, which is the entire point of this item.
+**CLOSED 2026-08-12: the production CSP is verified.** Run via
+`bun run docker:up:prod` and opened in a real browser. Served policy:
+`script-src 'self' 'nonce-…' 'wasm-unsafe-eval'` (no `'unsafe-eval'`),
+`connect-src 'self'` (no `ws:`). All 16 scripts carried the nonce, React
+hydrated, the console was clean of violations, and the barcode scanner
+decoded a real UPC under it — which is precisely what `'wasm-unsafe-eval'`
+is in the policy for.
+
+**Two things this turned up that matter more than the pass itself.**
+
+1. **`docs/go-live.md`'s own check for this was wrong**, and would have caused
+   a false rollback. It said to confirm `typeof self.__next_r !== 'undefined'`.
+   `self.__next_r` is set **only by `next dev`** — it is the request id the HMR
+   client keys its websocket on, and
+   `next/dist/client/dev/hot-reloader/app/web-socket.js` throws the very
+   `InvariantError` that item told you to watch for when it is absent. In a
+   production build it is correctly undefined. Observed directly: production
+   had `self.__next_r === undefined` with React fully hydrated. Corrected there
+   to check the sign-in button's hydration gate instead.
+2. **Hydration is slower in production than dev**, enough that an immediate
+   probe reads as a failure. First check showed the submit disabled and no
+   React fiber; three seconds later both had flipped. Anything automating this
+   must wait, or it will report the exact failure it is looking for.
+
+**Still unproven:** this ran under `next start`, which printed
+`"next start" does not work with "output: standalone" configuration`. It is not
+byte-for-byte the runtime Hostinger uses (`node .next/standalone/server.js`).
+The CSP and hydration are settled; the standalone entrypoint is not, and stays
+on the go-live list.
 
 ## 14. The dashboard's stat tiles are computed from capped queries
 

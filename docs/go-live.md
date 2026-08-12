@@ -26,13 +26,17 @@ Blocking items. Each one is either done or the deploy waits.
 
 ### 1.1 Blocking — must be true before deploying
 
-- [ ] **The production CSP is verified in a browser.** Open-items #13. Development
-      proves the nonce mechanism, but production drops `'unsafe-eval'` and `ws:`,
-      so it is a *different policy* and has never run. Locally:
-      `next build && next start`, then load a page and confirm
-      `typeof self.__next_r !== 'undefined'` and that a form submit works.
-      **This is the single highest-risk item on the list** — it is the exact
-      failure that already happened once, and the pipeline cannot see it.
+- [x] **The production CSP is verified in a browser.** Open-items #13.
+      **Done 2026-08-12.** Production mode was run on the LAN
+      (`bun run docker:up:prod`) and the login page opened in a real browser:
+      the served policy is `script-src 'self' 'nonce-…' 'wasm-unsafe-eval'`
+      with no `'unsafe-eval'` and `connect-src 'self'` with no `ws:`, all 16
+      scripts carry the nonce, React hydrates, and the console is clean of
+      violations. The barcode scanner also decoded a real UPC under it, which
+      is what `'wasm-unsafe-eval'` is there for.
+      **The check this item used to prescribe was wrong — see 2.1.** Re-verify
+      after the first real deploy anyway: this ran under `next start`, not the
+      standalone server production actually uses.
 - [ ] **A production database exists and migrations have applied to it.**
       The chain `0000 → 0001 → 0002` has only ever run against Docker.
       `docs/deploy.md` §4 covers bootstrap order.
@@ -78,11 +82,26 @@ Not with `curl`. See the rule at the top.
 
 - [ ] **Load the sign-in page on a real phone over the bar's WiFi.** Not a desktop
       browser, not localhost.
-- [ ] **DevTools console is clean on first load.** Specifically: no
-      `InvariantError ... self.__next_r`. That single line means the CSP is
-      blocking inline scripts and nothing on the site is interactive.
-      Confirm directly if unsure — `typeof self.__next_r` must not be
-      `"undefined"`.
+- [ ] **The Sign in button is ENABLED.** This is the hydration check, and it
+      needs no devtools: the button is gated on a hydrated flag, so if the CSP
+      is blocking inline scripts it stays disabled forever. Enabled means React
+      ran. Allow a couple of seconds — a production bundle hydrates later than
+      dev, and checking too early reads as a failure. (Observed 2026-08-12:
+      disabled at first probe, enabled ~3s later.)
+      **Corrected 2026-08-12 — the previous check here was wrong and would
+      have caused a false rollback.** It said to confirm
+      `typeof self.__next_r !== 'undefined'` and to watch for
+      `InvariantError ... self.__next_r`. **`self.__next_r` is set only by
+      `next dev`** — it is the request id Next's HMR client keys its websocket
+      on (`next/dist/client/dev/hot-reloader/app/web-socket.js`, which throws
+      that very InvariantError when it is missing). In a production build it is
+      *correctly* undefined and that error can never appear. Verified directly:
+      production had `self.__next_r === undefined` while React was fully
+      hydrated. Following the old instruction would have rolled back a working
+      deploy.
+- [ ] **DevTools console is clean on first load** — no CSP violation reports,
+      no uncaught exceptions from the app itself. Browser extensions produce
+      their own noise; read the source of each line before believing it.
 - [ ] **Sign in through the form.** If the URL afterwards contains
       `?email=...&password=...`, **stop and roll back**: hydration is broken and
       the app just wrote a plaintext password to the access log.
