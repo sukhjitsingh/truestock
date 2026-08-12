@@ -28,14 +28,21 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, mock } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { db, closePool } from "@/db";
-import { location, count, countLine } from "@/db/schema";
+import { location, count, countLine, productBarcode } from "@/db/schema";
 import {
   createLocation,
   updateLocation,
   deactivateLocation,
   listLocations,
 } from "@/lib/domain/catalog";
-import { openCount, incrementCountLine, submitCount, reviewCount, closeCount } from "@/lib/domain/counts";
+import {
+  openCount,
+  incrementCountLine,
+  scanCountLine,
+  submitCount,
+  reviewCount,
+  closeCount,
+} from "@/lib/domain/counts";
 import { NotFoundError, DomainError } from "@/lib/domain/errors";
 import { migrateTestDatabase, resetDatabase, createFixtures, newClientLineId, type Fixtures } from "./helpers/test-db";
 
@@ -424,5 +431,139 @@ describe("role gating on the location actions", () => {
     expect(deactivated.ok).toBe(true);
     const [row] = await db.select().from(location).where(eq(location.id, fx.locationId));
     expect(row.active).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Write-path guard against a RETIRED location — the gap the review found:
+// `listLocationsAction` (Decision 5) keeps a retired location out of a
+// FRESH fetch, but the scan screen fetches `locations` once per leg and
+// never refetches, so a client can still be holding a now-retired location
+// as its active leg. `upsertCountLineRow` (lib/domain/counts.ts, shared by
+// `incrementCountLine` and `scanCountLine`) must itself refuse a write into
+// a retired location — the read-side exclusion is not a substitute for a
+// write-side check.
+//
+// `deactivateLocation` is exercised for real (not by flipping `active`
+// directly) so this proves the exact "own tab retires it, other tab keeps
+// scanning" scenario from the finding, using a second location so the
+// last-active-location guard (Decision 6) doesn't interfere.
+// ---------------------------------------------------------------------------
+
+describe("write-path guard: a retired location refuses count-line writes", () => {
+  test(
+    "incrementCountLine into a just-retired location is refused with DomainError, and no row is written — MUTATION-CHECKED: removing the active check lets the write through",
+    async () => {
+      // A second active location so deactivating fx.locationId isn't
+      // blocked by the last-active-location guard.
+      await createLocation(fx.owner, { name: "Storeroom", countMode: "quantity" });
+
+      const c = await openCount(fx.owner, { type: "full" });
+
+      // Simulates the finding's scenario: no lines have been scanned into
+      // fx.locationId yet, so deactivateLocation's hasOpenCountLines guard
+      // does not block the retirement — exactly why the write path, not
+      // just the deactivate guard, must refuse the write.
+      await deactivateLocation(fx.owner, fx.locationId);
+      const [retired] = await db.select().from(location).where(eq(location.id, fx.locationId));
+      expect(retired.active).toBe(false);
+
+      const attempt = incrementCountLine(fx.owner, {
+        clientLineId: newClientLineId(),
+        countId: c.id,
+        productId: fx.pricedProductId,
+        locationId: fx.locationId,
+        sealedCaseQtyDelta: 0,
+        sealedEachQtyDelta: 3,
+        newPartialFills: [],
+      });
+      await expect(attempt).rejects.toBeInstanceOf(DomainError);
+
+      const lines = await db.select().from(countLine).where(eq(countLine.countId, c.id));
+      expect(lines).toHaveLength(0);
+    },
+  );
+
+  test("scanCountLine into a just-retired location is refused too — same guard, the barcode-driven caller", async () => {
+    await createLocation(fx.owner, { name: "Storeroom", countMode: "quantity" });
+    const barcode = "012345678905";
+    await db.insert(productBarcode).values({
+      productId: fx.pricedProductId,
+      barcode,
+      packLevel: "each",
+      organizationId: fx.organizationId,
+    });
+
+    const c = await openCount(fx.owner, { type: "full" });
+    await deactivateLocation(fx.owner, fx.locationId);
+
+    const attempt = scanCountLine(fx.owner, {
+      clientLineId: newClientLineId(),
+      countId: c.id,
+      locationId: fx.locationId,
+      barcode,
+      qty: 1,
+    });
+    await expect(attempt).rejects.toBeInstanceOf(DomainError);
+
+    const lines = await db.select().from(countLine).where(eq(countLine.countId, c.id));
+    expect(lines).toHaveLength(0);
+  });
+
+  test(
+    "a SECOND write into a location retired after the FIRST write is also refused — proves the check runs unconditionally, not only on the insert-only branch",
+    async () => {
+      await createLocation(fx.owner, { name: "Storeroom", countMode: "quantity" });
+      const c = await openCount(fx.owner, { type: "full" });
+
+      // First write lands while the location is still active.
+      await incrementCountLine(fx.owner, {
+        clientLineId: newClientLineId(),
+        countId: c.id,
+        productId: fx.pricedProductId,
+        locationId: fx.locationId,
+        sealedCaseQtyDelta: 0,
+        sealedEachQtyDelta: 3,
+        newPartialFills: [],
+      });
+
+      // deactivateLocation's hasOpenCountLines guard now correctly refuses
+      // to retire a location with a line on an open count (Decision 4) —
+      // so simulate the location being retired by a route that already
+      // exists for other reasons (a direct flip), which is the only way to
+      // reach "existing line, now-retired location" without contradicting
+      // that separate guard.
+      await db.update(location).set({ active: false }).where(eq(location.id, fx.locationId));
+
+      const attempt = incrementCountLine(fx.owner, {
+        clientLineId: newClientLineId(),
+        countId: c.id,
+        productId: fx.pricedProductId,
+        locationId: fx.locationId,
+        sealedCaseQtyDelta: 0,
+        sealedEachQtyDelta: 1,
+        newPartialFills: [],
+      });
+      await expect(attempt).rejects.toBeInstanceOf(DomainError);
+
+      // The delta from the refused second write must not have landed —
+      // the line stays exactly where the first write left it.
+      const [line] = await db.select().from(countLine).where(eq(countLine.countId, c.id));
+      expect(line.sealedEachQty).toBe(3);
+    },
+  );
+
+  test("incrementCountLine into a STILL-active location succeeds — negative control proving the guard checks active, not just existence", async () => {
+    const c = await openCount(fx.owner, { type: "full" });
+    const written = await incrementCountLine(fx.owner, {
+      clientLineId: newClientLineId(),
+      countId: c.id,
+      productId: fx.pricedProductId,
+      locationId: fx.locationId,
+      sealedCaseQtyDelta: 0,
+      sealedEachQtyDelta: 2,
+      newPartialFills: [],
+    });
+    expect(written.sealedEachQty).toBe(2);
   });
 });
