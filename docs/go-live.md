@@ -4,6 +4,20 @@ What must be true before the first production deploy, and what must be verified
 **after** it. `docs/deploy.md` is the runbook — the mechanics of how a deploy
 happens. This is the decision: whether it should.
 
+**This is Phase 3, re-sequenced 2026-08-12.** Deploy used to follow the MVP
+immediately; it now sits behind Phase 1 (locations screen, bulk cost entry),
+Phase 1.5 (survive-daily-use items), Phase 1.9 (the deferred field
+measurements), Phase 2 (UI redesign) and Phase 2.5 (OCR invoice automation).
+See `ROADMAP.md`. Nothing in this file changed because of that — a gate is a
+gate whenever it is reached — but two things follow from the new position:
+
+- **Phase 1.9 should close the standalone-entrypoint item below** before this
+  gate is ever opened, which removes the last deploy-day unknown.
+- **Part 2.4's counting checks are no longer entirely unobserved.** Most of
+  them now have a local result to compare against, which makes them stronger
+  rather than redundant — a check that has passed once locally and fails here
+  is telling you something specific about production.
+
 Two rules govern this document.
 
 **A 200 is not evidence.** This project has already shipped a change where every
@@ -49,24 +63,46 @@ Blocking items. Each one is either done or the deploy waits.
 - [ ] **A rollback has been rehearsed**, not just documented. `docs/deploy.md` §8.
 - [ ] **The dev owner password is not reused.** `LocalDevOwner123` sat in a
       plaintext container log and must be treated as public.
+- [ ] **`node .next/standalone/server.js` has been started at least once.**
+      The 2026-08-12 CSP verification ran under `next start`, which printed
+      `"next start" does not work with "output: standalone" configuration`. It
+      gave us what was needed — no HMR, the real CSP — but it is not the
+      runtime Hostinger uses. The policy and hydration are settled; the
+      entrypoint is not. **Phase 1.9 should close this locally**, so that a
+      failure here is a hosting problem rather than an unknown.
 
 ### 1.2 Non-blocking but decide deliberately
 
 These do not stop a deploy. Each is a conscious "yes, launch without this."
 
-- [ ] **Costs are not entered** (open-items #4). 88 of 97 products have no
-      `current_unit_cost`. Unpriced lines are excluded from valuation and reported
-      as excluded rather than valued at zero, so this is *correct* — but the first
-      production count will be almost entirely unpriced, and the dashboard will
-      say so in large type. Launching anyway is reasonable; being surprised by it
-      is not.
-- [ ] **No user-management screen exists** (open-items #3). Deactivating someone
-      means a manual `UPDATE`. Acceptable at 3–5 users; know it before you need it
-      at 9pm on a Friday.
+- [ ] **Costs are entered — or deliberately are not** (open-items #4).
+      **Queried 2026-08-12: 90 of 99 active products have no
+      `current_unit_cost`, and 0 of 99 carry a `case_size`.** The only priced
+      products are the 9 draft kegs, which came costed in the seed. Unpriced
+      lines are excluded from valuation and reported as excluded rather than
+      valued at zero, so this is *correct* — but a production count taken today
+      would be almost entirely unpriced, and the dashboard will say so in large
+      type. **Phase 1 is meant to close this** (bulk cost entry, then the data
+      itself); if it has not, launching anyway is reasonable and being surprised
+      by it is not.
 - [ ] **Nothing sweeps expired sessions** (open-items #1b). Years away from
-      mattering at this scale.
-- [ ] **Walk-In's count mode is inferred, not confirmed** (open-items #11). One
-      question to the owner. Getting it wrong is visible, not silent.
+      mattering at this scale. **The query is Phase 1.5 work and the Hostinger
+      cron is created here** — this is the phase where it stops being a plan.
+- [x] ~~**No user-management screen exists**~~ — **done 2026-08-03,
+      browser-verified 2026-08-04.** `/office/users` with `listUsers`,
+      `setUserActive`, `setUserRole`; deactivation deletes the user's `session`
+      rows in the same transaction, so the account is refused on its very next
+      request. Role and active changes are no longer manual SQL.
+- [x] ~~**Walk-In's count mode is inferred, not confirmed**~~ — **confirmed
+      2026-07-31.** The owner answered: Walk-In holds sealed packaged beer only,
+      no open kegs, so `count_mode` stays `quantity` as seeded. No code change —
+      what the item waited on was the confirmation, not the value.
+- [ ] **Locations are manageable from the app** (Phase 1). If Phase 1's
+      `/office/locations` screen has not shipped, a production tenant cannot add
+      a tap line, rename a location, or set a `count_mode` without SQL — and
+      `count_mode` is what decides whether a keg gets a fill pad at all. This is
+      not a blocker for *your* bar, whose locations are seeded. It is a blocker
+      for the second tenant.
 
 ---
 
@@ -140,19 +176,35 @@ The invariant that cannot be tested by one tenant using the app normally.
       confirm their very next request is refused. Better Auth's own session stays
       valid by design; `requireSession()`'s re-read is what stops them.
 
-### 2.4 The first real count — the part nothing has tested
+### 2.4 The first real count — the part with the least evidence
 
-**This is the largest untested surface in the product.** Everything below has
-been reasoned about and never observed (open-items #1, #9).
+**Updated 2026-08-12.** This section used to say everything below had been
+reasoned about and never observed. That is no longer true: four phone sessions
+drove the counting loop end to end against the LAN stack, and Phase 1.9 is
+where the rest gets measured. What remains true is that **none of it has run
+against production** — a different database, real TLS, a real phone on the
+bar's WiFi rather than the office's.
+
+So read each box below as "confirm this still holds *here*", not as "find out
+whether it works". Where there is a local result to compare against, it is
+named — a check that passed locally and fails here is telling you something
+specific about production rather than about the code.
 
 - [ ] **Drive a full count on a phone, one-handed**, in actual bar lighting.
-      Time it. The design is justified by a sub-20-minute target that has never
-      been measured.
+      Time it against the sub-20-minute target. *Phase 1.9 measures this first;
+      if it has not run, this is the first measurement and should be treated as
+      such rather than as a confirmation.*
 - [ ] **Turn WiFi off mid-scan.** Count three bottles. The chip must read
-      "3 pending" and the rows must still appear.
-- [ ] **Turn WiFi back on** and confirm the queue drains.
+      "3 pending" and the rows must still appear. *Locally: `1 pending` on
+      airplane mode, count 4, 2026-08-12.*
+- [ ] **Turn WiFi back on** and confirm the queue drains. *Locally: returned to
+      `Synced` with no interaction, so the `online` listener fires and `flush()`
+      drains.*
 - [ ] **Kill the app with writes queued**, reopen, confirm the mount-time flush
-      sends them.
+      sends them. *Never observed anywhere — only the `online` path has run.
+      Deferred to Phase 1.9; if that has not happened, this is the first time.*
+- [ ] **Queue more than one write at a time** and confirm ordered replay. The
+      queue has only ever held a single write.
 - [ ] **The one that matters most:** confirm a write that reached the server *just
       before* the connection dropped does not apply twice when the queue resends
       it. That is what `client_line_id` exists for, and it is the failure the
@@ -161,8 +213,16 @@ been reasoned about and never observed (open-items #1, #9).
       routinely kill WiFi. Either the queue holds or that section gets counted
       outside the box.
 - [ ] **Scan the same bottle twice in one location.** It must increment one line,
-      never create a second (invariant 3).
-- [ ] **Close a count, then confirm it refuses edits** (invariant 1).
+      never create a second (invariant 3). *Covered by
+      `tests/count-write-path.test.ts` and mutation-checked, but never done by
+      hand on a device — both real scans so far were enrolments of unknown
+      codes, which is a different branch of `onBarcode`.*
+- [ ] **Close a count, then confirm it refuses edits** (invariant 1). *Locally:
+      four counts closed; valuation reconciled to the cent in SQL on count 2.*
+- [ ] **Rapid-scan a shelf, then count it by hand, and compare.** Its frame
+      guard is tested only against modelled frame sequences, and both of its
+      failure modes are silent. Quantity locations only. *Deferred to Phase 1.9;
+      do not let production be where this is first tried.*
 
 ### 2.5 Numbers, once a count is closed
 
@@ -190,14 +250,24 @@ been reasoned about and never observed (open-items #1, #9).
 
 Recorded so nobody rediscovers them as bugs. Full detail in `docs/open-items.md`.
 
+Re-checked against the database and the code on 2026-08-12 — three rows here
+had gone stale and said the opposite of the truth.
+
 | Item | What it means at launch |
 |---|---|
-| #14 | Dashboard stat tiles come from capped reads — correct at 97 products, quietly wrong past 100 |
-| #4 | 88 of 97 products unpriced; valuation is thin until invoices are entered |
-| #2 | Fill corrections write no ledger row — an audit-trail gap, not a wrong number |
-| #10 | `scanCountLine` is built and unreachable; decide it against a timed count |
-| #3 | No user-management action; role and active changes are manual SQL |
+| #14 | Dashboard stat tiles come from capped reads (`limit: 100` products, `limit: 50` counts). **The catalog now holds 101 products, 99 active** — two more active products and the tile silently understates. Phase 1.5 replaces it with a dedicated aggregate |
+| #4 | **90 of 99 active products unpriced, 0 carry a `case_size`**; valuation is proven but thin until invoices are entered |
+| #2 | Fill corrections write no ledger row — an audit-trail gap, not a wrong number. Its trigger is the compliance packet, deliberately not before |
 | #12 | Wine stays varietals, counted via the search picker — a scope decision |
+| #21 | Case entry for spirits is deliberately absent — only bottled beer gets the field. A scope decision, not a gap |
+| #24 | A plain `docker:up` silently reverts a live LAN session. Dev-only, but it is how the phone loses its allowlisted origin with everything still returning 200 |
+
+**Three rows were removed as no longer true**, rather than left to be trusted:
+#3 (user management shipped 2026-08-03 and is browser-verified — role and
+active changes are no longer manual SQL), #10 (`scanCountLine` was wired
+2026-08-04 and rapid mode is reachable; what is unproven is the camera, which
+is now a Phase 1.9 item), and #11 (Walk-In's count mode was confirmed by the
+owner on 2026-07-31).
 
 ---
 
