@@ -732,7 +732,7 @@ references them).
 
 ## Next three things
 
-**Re-sequenced 2026-08-11 by owner decision — see `ROADMAP.md`.** The three
+**Re-sequenced 2026-08-12 by owner decision — see `ROADMAP.md`.** The three
 items that stood here (a timed count, rapid mode against a camera, and the
 standalone entrypoint) are all **measurement**, and all three were deliberately
 deferred to the new **Phase 1.9**. They are not abandoned and nothing about
@@ -750,7 +750,7 @@ returns to dev.
 
 1. **A locations management screen** (`/office/locations`). `lib/domain/catalog.ts`
    has `listLocations` and nothing else — no create, no update, no route. This
-   already cost real time on 2026-08-11: adding `Tap 1` so kegs could be counted
+   already cost real time on 2026-08-12: adding `Tap 1` so kegs could be counted
    at all took a CSV edit plus SQL against the live database. `location.count_mode`
    is what decides whether a product gets the fill pad or a quantity stepper, and
    it is unreachable from the app.

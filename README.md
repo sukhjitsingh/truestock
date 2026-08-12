@@ -15,7 +15,7 @@ deployed — no production database has been migrated.
 The schema, the auth path and the count write path are verified against a real
 MariaDB 11.8 in Docker by a 121-test suite wired into CI, and the back office has
 been driven in a browser. **The counting loop has now run on a real phone too**
-(2026-08-11) — a barcode decoded by the WASM polyfill and enrolled, fill levels
+(2026-08-12) — a barcode decoded by the WASM polyfill and enrolled, fill levels
 tapped in tenths, sealed quantities entered, a count closed at a valuation that
 reconciles to the cent in SQL, and the offline write queue draining on reconnect,
 the last of those under the production CSP.

@@ -2,7 +2,7 @@
 
 Where this goes after the MVP. `STATE.md` is where it is now.
 
-**Re-sequenced 2026-08-11 by owner decision.** The previous order put the first
+**Re-sequenced 2026-08-12 by owner decision.** The previous order put the first
 production deploy immediately after the MVP and pushed invoice capture to a
 conditional Phase 4. Both moved: **field validation is deferred to Phase 1.9**,
 the **UI redesign and OCR invoice automation now come before go-live**, and
@@ -32,7 +32,7 @@ than left to be discovered.
 
 Catalog, locations, barcode scan, fill level in tenths, quantity input, count
 sessions with the Draft → Closed lifecycle, valuation, reorder list, three roles,
-multi-tenancy — **all built**, and as of 2026-08-11 every part of the counting
+multi-tenancy — **all built**, and as of 2026-08-12 every part of the counting
 loop has run on a real phone: camera scan and enrol, tenths, sealed quantities,
 valuation (count 2 closed at $170.90, reconciled to the cent in SQL), and the
 offline write queue draining on reconnect, the last under the production CSP.
@@ -143,7 +143,7 @@ three months. Driven by open-items, each with its own trigger.
   `lib/rescan-guard.ts`, tested without a camera; writing those tests found two
   silent miscounts before anyone scanned anything. *Camera validation moved to
   Phase 1.9.*
-- ~~**Offline write queue** (#9)~~ — **DONE 2026-08-11.** Verified on a phone:
+- ~~**Offline write queue** (#9)~~ — **DONE 2026-08-12.** Verified on a phone:
   `1 pending` while offline, `Synced` on reconnect with no interaction, exactly
   one ledger row afterwards. Required building `scripts/prod-lan.sh` first —
   `next dev`'s HMR client reloads the page when the network drops, which makes
@@ -159,7 +159,7 @@ audit export means. Leave it.
 ## Phase 1.9 — Field validation · *deferred measurements*
 
 **Everything here is measurement, not construction.** None of it is blocked on
-code; all of it was deferred on 2026-08-11 by owner decision. It is written down
+code; all of it was deferred on 2026-08-12 by owner decision. It is written down
 as a phase rather than dropped because these are the only claims in the project
 with no evidence behind them, and the project's own history is that unmeasured
 claims fail silently.
@@ -190,7 +190,7 @@ session log, because a run that is not written down is an anecdote.
 - **The two remaining queue gaps (#9).** The **mount-time flush** has never run —
   only the `online` listener was observed — and the queue has never held **more
   than one write at a time**, so ordered replay is still only reasoned about.
-- **The standalone server entrypoint.** The 2026-08-11 CSP verification ran under
+- **The standalone server entrypoint.** The 2026-08-12 CSP verification ran under
   `next start`, which printed `"next start" does not work with "output:
   standalone" configuration`. Hostinger runs `node .next/standalone/server.js`,
   which has never been started. Cheap to close locally and it is a Phase 3
@@ -390,7 +390,7 @@ Phase 3, so by Phase 5 there is history.
 
 ## Phase 6 — Compliance packet · *the differentiator, unscheduled*
 
-**Not in the owner's 2026-08-11 sequence and kept deliberately** — it was
+**Not in the owner's 2026-08-12 sequence and kept deliberately** — it was
 previously Phase 3, and it is the thing no off-the-shelf product produces, which
 is a large part of why building rather than buying was the right call. Slot it
 when the retention obligation becomes real, which is the moment invoices start
