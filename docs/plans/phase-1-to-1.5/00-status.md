@@ -11,15 +11,62 @@ ROADMAP item.
 - Gate 4 — Slice plan: APPROVED 2026-08-12
 
 ## Slices
-- [ ] Slice 1 — tracer bullet: `/office/locations` renders the seeded locations read-only, nav link included
-- [ ] Slice 2 — locations create/rename/`count_mode`, with migration `0003` adding `location.active`
-- [ ] Slice 3 — locations deactivate + the guards (last-active-location, in-use-by-open-count)
-- [ ] Slice 4 — inline cost + case-size editing in the catalog table (Phase 1.2)
-- [ ] Slice 5 — dashboard aggregate reads (#14)
-- [ ] Slice 6 — reorder output: copy + print per vendor
-- [ ] Slice 7 — the two script/dev-env guards (#23, #24) and the session-sweep query (#1b)
+- [x] Slice 1 — tracer bullet: `/office/locations` renders the seeded locations read-only, nav link included — `00bfb8f`
+- [x] Slice 2 — locations create/rename/`count_mode`, with migration `0003` adding `location.active` — `ae9d7d5` (migration) + `d27ef2e`
+- [x] Slice 3 — locations deactivate + the guards (last-active-location, in-use-by-open-count) — `891cbce`
+- [x] Slice 4 — inline cost + case-size editing in the catalog table (Phase 1.2) — `1e756ce`
+- [x] Slice 5 — dashboard aggregate reads (#14) — `3d8a347`
+- [x] Slice 6 — reorder output: copy + print per vendor — `a8c5e50`
+- [x] Slice 7 — the two script/dev-env guards (#23, #24) and the session-sweep query (#1b) — `9f81967`
+- [x] Post-review fix — refuse count-line writes into a retired location — `ed5580b`
+
+**Built and machine-verified 2026-08-12**: `bun run lint`, `bun run typecheck`,
+`bun run build` and `bun run test:docker` (163 pass / 0 fail, 533 assertions,
+15 files) all confirmed by the orchestrator independently, not only by the
+agents that wrote the code. **Browser proof is still owed** — see below.
 
 ## Notes for a fresh session
+
+**The security review found one real high-severity gap, and it is the exact
+risk Gate 2 named — approached from the side nobody planned for.** Decision 5
+protected the *read* side: `listLocationsAction` excludes retired locations, so
+a retired location vanishes from the picker on a fresh fetch. But the scan
+screen fetches locations **once**, at page load, and `CountLeg` holds them as a
+static prop — which is correct, because AGENTS.md deliberately locks the active
+location per leg. So a counter who had already loaded a location and not yet
+scanned into it kept a live, writable handle on it. `deactivateLocation`'s
+open-count guard structurally cannot see that client: there are no
+`count_line` rows yet, so retirement succeeds and every subsequent scan lands
+in a retired location with no error anywhere. Fixed in `ed5580b`:
+`upsertCountLineRow` now checks `location.active`, and the check sits **above**
+the existing-line lookup so it runs on every write, not only on the insert
+branch. Four tests cover it, one mutation-checked, plus a still-active negative
+control.
+
+The durable lesson, worth remembering beyond this feature: **excluding a row
+from a list is not the same as refusing a write to it.** Any future
+"deactivate" affordance needs both halves.
+
+**Browser proof is still owed and no agent can supply it.** Every slice
+returned its own list of browser checks; the ones that matter most:
+- Slice 3: retire a location, confirm it disappears from `/count`'s picker
+  while staying visible (marked retired) on `/office/locations`, and that
+  `app/(count)/count/[countId]/scan/page.tsx` was never edited to make that
+  happen.
+- Slice 4: edit ≥10 cost cells in a row and watch the network tab — only
+  `updateProductAction` POSTs, **no navigation entries**. Then sign in as a
+  manager and confirm the cost column is *absent from the DOM*, not disabled.
+- Slice 6: click Copy, paste into a text field, confirm vendor name + as-of
+  date + one line per item.
+- Every route: check for CSP/hydration errors. `next build` passing proves the
+  server renders and nothing more.
+
+**One pre-existing bug found while proving `#24`, not caused by this bundle.**
+On Docker Compose v2.23.0, `bun run docker:down` does **not** stop the
+`truestock-tls` container that `--profile tls up` starts, so a LAN session is
+not fully torn down and the new `docker:up` guard keeps (correctly) refusing.
+Clearing it today needs `docker compose --profile tls down`. That is a gap in
+`docker:down`/`dev-lan.sh`'s own teardown, and belongs in `docs/open-items.md`.
 
 **All four gates were approved on 2026-08-12.** Gate 2's approval explicitly
 covers its three amendments; they were not deferred, because each one *removes*
