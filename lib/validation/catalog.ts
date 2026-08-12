@@ -265,3 +265,9 @@ export const locationUpdateSchema = z.object({
   notes: z.string().trim().max(2000).nullable().optional(),
 });
 export type LocationUpdateInput = z.infer<typeof locationUpdateSchema>;
+
+/** Retire a location (Slice 3). `active = false` only — never a DELETE (invariant 6). */
+export const locationDeactivateSchema = z.object({
+  locationId: z.number().int().positive(),
+});
+export type LocationDeactivateInput = z.infer<typeof locationDeactivateSchema>;

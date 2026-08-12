@@ -9,7 +9,7 @@
  * fetches the column, so there is no code path where it could accidentally
  * end up in a response to them.
  */
-import { and, eq, inArray, isNull, like, ne, or, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNull, like, ne, or, count as countRows, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { product, productBarcode, productPar, vendor, location, count, countLine } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
@@ -1004,6 +1004,80 @@ export async function updateLocation(
     throw new NotFoundError("Location");
   }
   return result;
+}
+
+/**
+ * Count of the org's other ACTIVE locations, excluding `excludingLocationId`.
+ * Mirrors `countActiveOwners` (`lib/domain/users.ts:81-97`) — same shape,
+ * same reason: `deactivateLocation`'s last-active-location guard (Decision
+ * 6) needs "how many would be left," not just a boolean.
+ */
+async function countActiveLocationsExcluding(
+  runner: Runner,
+  organizationId: number,
+  excludingLocationId: number,
+): Promise<number> {
+  const [row] = await runner
+    .select({ n: countRows() })
+    .from(location)
+    .where(
+      and(
+        eq(location.organizationId, organizationId),
+        eq(location.active, true),
+        ne(location.id, excludingLocationId),
+      ),
+    );
+  return row?.n ?? 0;
+}
+
+/**
+ * Retire a location. Owner/manager only (enforced in the action). Never a
+ * DELETE — invariant 6, and the mirror of `setUserActive`
+ * (`lib/domain/users.ts:110-155`) that this function's shape follows: one
+ * transaction, ownership first, then two independent refusals, then the
+ * write.
+ *
+ *   1. `assertLocationOwned` — cross-tenant id -> NotFoundError.
+ *   2. Count the org's other active locations; refuse with
+ *      `DomainError("LAST_ACTIVE_LOCATION", …)` if zero remain (Decision 6).
+ *      The counting screen must always have at least one place to scan into.
+ *   3. `hasOpenCountLines`, applied UNCONDITIONALLY (unlike
+ *      `updateLocation`'s count-mode guard, which only fires on a diff) —
+ *      refuse with `DomainError("LOCATION_IN_USE", …)` if true (Decision 4).
+ *      A location whose only lines are on a closed count is safe to retire;
+ *      closed counts are immutable regardless of what the location is
+ *      configured to do today (invariant 1).
+ *   4. `UPDATE location SET active = false WHERE id = ? AND organization_id = ?`.
+ */
+export async function deactivateLocation(actor: Actor, locationId: number): Promise<void> {
+  await db.transaction(async (tx) => {
+    await assertLocationOwned(tx, actor.organizationId, locationId);
+
+    const remainingActive = await countActiveLocationsExcluding(
+      tx,
+      actor.organizationId,
+      locationId,
+    );
+    if (remainingActive === 0) {
+      throw new DomainError(
+        "LAST_ACTIVE_LOCATION",
+        "Cannot retire the last active location. The counting screen needs at least one place to scan into.",
+      );
+    }
+
+    const openLines = await hasOpenCountLines(tx, actor.organizationId, locationId);
+    if (openLines) {
+      throw new DomainError(
+        "LOCATION_IN_USE",
+        "This location has counted lines on an open count. Finish or close that count before retiring it.",
+      );
+    }
+
+    await tx
+      .update(location)
+      .set({ active: false })
+      .where(and(eq(location.id, locationId), eq(location.organizationId, actor.organizationId)));
+  });
 }
 
 // ---------------------------------------------------------------------------

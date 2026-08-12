@@ -1,37 +1,40 @@
 /**
- * Location write path — Slice 2 (docs/plans/phase-1-to-1.5/04-slices.md).
+ * Location write path — Slices 2 and 3 (docs/plans/phase-1-to-1.5/04-slices.md).
  *
- * `location.active` (migration 0003) exists; a location can now be created
- * and renamed/re-moded from the app. The management screen
- * (`listAllLocationsAction`) sees active and retired rows; the scan-picker
- * consumer (`listLocationsAction`) must keep seeing active-only rows with
- * its EXACT current behavior — Gate 2 Decision 5, and the single highest
- * risk in this bundle (a retired location that still accepts real scans
- * with zero errors anywhere).
+ * `location.active` (migration 0003) exists; a location can be created,
+ * renamed/re-moded, and (Slice 3) retired from the app. The management
+ * screen (`listAllLocationsAction`) sees active and retired rows; the
+ * scan-picker consumer (`listLocationsAction`) must keep seeing active-only
+ * rows with its EXACT current behavior — Gate 2 Decision 5, and the single
+ * highest risk in this bundle (a retired location that still accepts real
+ * scans with zero errors anywhere).
  *
- * `deactivateLocation` itself does not exist yet — that is slice 3. But the
- * count-mode-change guard (Gate 2 Decision 3) ships with `updateLocation`
- * in THIS slice and is unexercised by any UI path yet, so it is tested
- * directly against the domain function here, per 03-program-design.md's
- * test plan and slice 2's own scope note. Where a test needs a RETIRED row
- * to exist (no `deactivateLocation` to make one with), it flips
- * `location.active` directly via `db.update` — that is setup for a
- * different function's test, not a claim that `deactivateLocation` works.
+ * The `describe("createLocation"|"listLocations"|"updateLocation")` blocks
+ * below predate `deactivateLocation` (Slice 2) and, where a test needed a
+ * RETIRED row to exist, flipped `location.active` directly via `db.update`
+ * rather than waiting on it — that is setup for a different function's
+ * test, not a claim that `deactivateLocation` works. `deactivateLocation`
+ * itself is exercised directly, below, in `describe("deactivateLocation")`
+ * (Slice 3).
  *
- * Role gating for the two location actions built in this slice
- * (create/update) follows `tests/vendor-write-path.test.ts`'s convention:
- * `next/headers` and `@/lib/auth` are mocked at module scope (below, before
- * any describe that needs them) so `requireSession`'s own DB lookup (role,
- * active, organizationId) still runs for real, and `@/app/actions/catalog`
- * is imported dynamically — inside each test that needs it — so the mocks
- * are in place before that module (or anything importing it transitively,
- * i.e. `@/lib/authz`) is ever resolved.
+ * Role gating for the location actions follows `tests/vendor-write-path.test.ts`'s
+ * convention: `next/headers` and `@/lib/auth` are mocked at module scope
+ * (below, before any describe that needs them) so `requireSession`'s own DB
+ * lookup (role, active, organizationId) still runs for real, and
+ * `@/app/actions/catalog` is imported dynamically — inside each test that
+ * needs it — so the mocks are in place before that module (or anything
+ * importing it transitively, i.e. `@/lib/authz`) is ever resolved.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach, mock } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { db, closePool } from "@/db";
 import { location, count, countLine } from "@/db/schema";
-import { createLocation, updateLocation, listLocations } from "@/lib/domain/catalog";
+import {
+  createLocation,
+  updateLocation,
+  deactivateLocation,
+  listLocations,
+} from "@/lib/domain/catalog";
 import { openCount, incrementCountLine, submitCount, reviewCount, closeCount } from "@/lib/domain/counts";
 import { NotFoundError, DomainError } from "@/lib/domain/errors";
 import { migrateTestDatabase, resetDatabase, createFixtures, newClientLineId, type Fixtures } from "./helpers/test-db";
@@ -264,14 +267,120 @@ describe("updateLocation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Role gating (action layer) — createLocationAction / updateLocationAction
-// both require requireRole("owner", "manager"). Retire (deactivate) is not
-// built until slice 3, so it has no action to gate-test here.
+// deactivateLocation — Slice 3 (docs/plans/phase-1-to-1.5/04-slices.md).
+//
+// Mirrors `setUserActive` (`lib/domain/users.ts:110-155`): one transaction,
+// `assertLocationOwned` first, then two independent refusals (last-active-
+// location, Decision 6; in-use-by-open-count, Decision 4 — applied
+// UNCONDITIONALLY, unlike `updateLocation`'s count-mode guard which only
+// fires on a diff), then the `active = false` write. Never a DELETE
+// (invariant 6).
+// ---------------------------------------------------------------------------
+
+describe("deactivateLocation", () => {
+  test("sets active = false", async () => {
+    // fx.locationId ("Back Bar") is seeded active with no other active
+    // location in the org — add a second so retiring it isn't refused by
+    // the last-active-location guard, which is a separate test below.
+    await createLocation(fx.owner, { name: "Storeroom", countMode: "quantity" });
+
+    await deactivateLocation(fx.owner, fx.locationId);
+
+    const [row] = await db.select().from(location).where(eq(location.id, fx.locationId));
+    expect(row.active).toBe(false);
+  });
+
+  test(
+    "refuses to deactivate the LAST active location in the org — MUTATION-CHECKED: removing the guard lets the deactivation through",
+    async () => {
+      // fx.locationId is the ONLY active location in its org at this point
+      // (createFixtures seeds exactly one).
+      const attempt = deactivateLocation(fx.owner, fx.locationId);
+      await expect(attempt).rejects.toBeInstanceOf(DomainError);
+
+      const [row] = await db.select().from(location).where(eq(location.id, fx.locationId));
+      expect(row.active).toBe(true);
+    },
+  );
+
+  test("deactivating a non-last active location succeeds when at least one other stays active — negative control", async () => {
+    const second = await createLocation(fx.owner, { name: "Storeroom", countMode: "quantity" });
+
+    await deactivateLocation(fx.owner, fx.locationId);
+
+    const [retired] = await db.select().from(location).where(eq(location.id, fx.locationId));
+    expect(retired.active).toBe(false);
+    const [stillActive] = await db.select().from(location).where(eq(location.id, second.id));
+    expect(stillActive.active).toBe(true);
+  });
+
+  test(
+    "refuses to deactivate a location with a line on a non-closed count — MUTATION-CHECKED: removing the guard lets the deactivation through",
+    async () => {
+      await createLocation(fx.owner, { name: "Storeroom", countMode: "quantity" });
+
+      const c = await openCount(fx.owner, { type: "full" });
+      await incrementCountLine(fx.owner, {
+        clientLineId: newClientLineId(),
+        countId: c.id,
+        productId: fx.pricedProductId,
+        locationId: fx.locationId,
+        sealedCaseQtyDelta: 0,
+        sealedEachQtyDelta: 3,
+        newPartialFills: [],
+      });
+
+      const attempt = deactivateLocation(fx.owner, fx.locationId);
+      await expect(attempt).rejects.toBeInstanceOf(DomainError);
+
+      const [row] = await db.select().from(location).where(eq(location.id, fx.locationId));
+      expect(row.active).toBe(true);
+    },
+  );
+
+  test("deactivating a location whose only lines are on a CLOSED count succeeds — negative control, Decision 4", async () => {
+    await createLocation(fx.owner, { name: "Storeroom", countMode: "quantity" });
+
+    const c = await openCount(fx.owner, { type: "full" });
+    await incrementCountLine(fx.owner, {
+      clientLineId: newClientLineId(),
+      countId: c.id,
+      productId: fx.pricedProductId,
+      locationId: fx.locationId,
+      sealedCaseQtyDelta: 0,
+      sealedEachQtyDelta: 3,
+      newPartialFills: [],
+    });
+    await submitCount(fx.owner, c.id);
+    await reviewCount(fx.owner, c.id);
+    await closeCount(fx.owner, c.id);
+
+    await deactivateLocation(fx.owner, fx.locationId);
+
+    const [row] = await db.select().from(location).where(eq(location.id, fx.locationId));
+    expect(row.active).toBe(false);
+  });
+
+  test("a cross-tenant locationId is refused with NotFoundError", async () => {
+    const attempt = deactivateLocation(fx.owner, fx.otherLocationId);
+    await expect(attempt).rejects.toBeInstanceOf(NotFoundError);
+
+    const [row] = await db.select().from(location).where(eq(location.id, fx.otherLocationId));
+    expect(row.active).toBe(true);
+    expect(row.organizationId).toBe(fx.otherOrganizationId);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Role gating (action layer) — createLocationAction / updateLocationAction /
+// deactivateLocationAction all require requireRole("owner", "manager").
 // ---------------------------------------------------------------------------
 
 describe("role gating on the location actions", () => {
-  test("staff is refused on create and update — and nothing is written", async () => {
-    const { createLocationAction, updateLocationAction } = await import("@/app/actions/catalog");
+  test("staff is refused on create, update, and deactivate — and nothing is written", async () => {
+    const { createLocationAction, updateLocationAction, deactivateLocationAction } = await import(
+      "@/app/actions/catalog"
+    );
 
     sessionUserId = fx.staff.userId;
 
@@ -284,10 +393,17 @@ describe("role gating on the location actions", () => {
     expect(updated.ok).toBe(false);
     const [unchanged] = await db.select().from(location).where(eq(location.id, fx.locationId));
     expect(unchanged.name).toBe("Back Bar");
+
+    const deactivated = await deactivateLocationAction({ locationId: fx.locationId });
+    expect(deactivated.ok).toBe(false);
+    const [stillActive] = await db.select().from(location).where(eq(location.id, fx.locationId));
+    expect(stillActive.active).toBe(true);
   });
 
-  test("manager is permitted on create and update — the positive control", async () => {
-    const { createLocationAction, updateLocationAction } = await import("@/app/actions/catalog");
+  test("manager is permitted on create, update, and deactivate — the positive control", async () => {
+    const { createLocationAction, updateLocationAction, deactivateLocationAction } = await import(
+      "@/app/actions/catalog"
+    );
 
     sessionUserId = fx.manager.userId;
 
@@ -299,5 +415,14 @@ describe("role gating on the location actions", () => {
     expect(updated.ok).toBe(true);
     if (!updated.ok) throw new Error("unreachable");
     expect(updated.data.name).toBe("Manager Renamed");
+
+    // fx.locationId ("Back Bar") is still active and the created location is
+    // still active too, so deactivating "Back Bar" is not refused by the
+    // last-active-location guard — it is a role-gating positive control,
+    // not a guard test.
+    const deactivated = await deactivateLocationAction({ locationId: fx.locationId });
+    expect(deactivated.ok).toBe(true);
+    const [row] = await db.select().from(location).where(eq(location.id, fx.locationId));
+    expect(row.active).toBe(false);
   });
 });

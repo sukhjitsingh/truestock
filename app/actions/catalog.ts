@@ -22,6 +22,7 @@ import {
   assignVendorToProductsSchema,
   locationCreateSchema,
   locationUpdateSchema,
+  locationDeactivateSchema,
 } from "@/lib/validation/catalog";
 
 /**
@@ -174,6 +175,24 @@ export async function updateLocationAction(
     const actor = await requireRole("owner", "manager");
     const parsed = locationUpdateSchema.parse(input);
     return catalog.updateLocation(actor, parsed);
+  });
+}
+
+/**
+ * Retire a location. Owner/manager only. Invariant 6: never a hard delete —
+ * sets `active = false`. Refused with a `DomainError` (surfaced via
+ * `result.error.message`) when it is the org's last active location, or
+ * when it has count lines on a non-closed count — both checked in the
+ * domain layer (Gate 2 Decisions 4 and 6).
+ */
+export async function deactivateLocationAction(
+  input: unknown,
+): Promise<ActionResult<{ locationId: number }>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = locationDeactivateSchema.parse(input);
+    await catalog.deactivateLocation(actor, parsed.locationId);
+    return { locationId: parsed.locationId };
   });
 }
 
