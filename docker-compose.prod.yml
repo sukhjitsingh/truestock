@@ -1,0 +1,50 @@
+# Production-mode override, for LAN testing only.
+#
+# This exists for ONE reason: `next dev` cannot be used to test offline
+# behaviour. Next 16's HMR client (node_modules/next/dist/client/dev/
+# hot-reloader/app/web-socket.js) reconnects a dropped websocket 12 times and
+# then calls `window.location.reload()` — its own comment says "it indicates
+# the dev server is no longer running". With no service worker, that reload
+# lands on the browser's offline error page and the app is gone, taking the
+# IndexedDB write queue's only UI with it. The walk-in test is unrunnable in
+# dev, and the failure looks like a Truestock bug rather than a dev-server one.
+#
+# It is ALSO the only way to exercise the production CSP, which is a stricter
+# policy than dev's and has never run (STATE.md). Dev adds 'unsafe-eval' and
+# `ws: wss:`; production drops both. It keeps 'wasm-unsafe-eval', which the
+# barcode polyfill needs, so scanning still works here.
+#
+# Usage:  bash scripts/prod-lan.sh      (never `docker compose up` by hand —
+#                                        that reverts to dev with no warning)
+#
+# NOT the real production image. Hostinger gets the `output: 'standalone'`
+# build via .github/workflows/deploy.yml and never builds docker/app/Dockerfile.
+# This runs a production BUILD in the dev image, which is enough to reproduce
+# the runtime behaviour that matters here: no HMR, and the real CSP.
+services:
+  app:
+    environment:
+      # The switch that removes HMR and hardens the CSP.
+      NODE_ENV: production
+      # REQUIRED, and the trap this file exists to document.
+      #
+      # lib/auth.ts drops its entire `trustedOrigins` block when NODE_ENV is
+      # production — deliberately, so DEV_LAN_ORIGIN can never widen anything
+      # on a deployed server. That means the phone's LAN origin is NOT trusted
+      # here by that path, and sign-in would 403 while the login form says
+      # "check your email and password". You would retype a correct password
+      # on a small keyboard and conclude the phone is broken; that exact
+      # failure is written up in lib/auth.ts.
+      #
+      # Better Auth trusts its own baseURL, so pointing BETTER_AUTH_URL at the
+      # https LAN origin is what makes sign-in work — and it is faithful
+      # rather than a workaround, because a real deploy sets this to its real
+      # origin too. scripts/prod-lan.sh computes it.
+      BETTER_AUTH_URL: "${PROD_LAN_ORIGIN:?run scripts/prod-lan.sh, which sets this}"
+    # Build then serve. `npm run`, not `bun run`, for the same reason as the
+    # Dockerfile's CMD: bun would run the server on its own runtime and defeat
+    # the point of a Node-based image.
+    command:
+      - sh
+      - -c
+      - npm run build && npm run start -- -H 0.0.0.0
