@@ -126,6 +126,18 @@ export async function deactivateProductAction(
 }
 
 /**
+ * Dashboard "Catalog health" tile (#14). Owner/manager only, matching the
+ * rest of the dashboard's aggregate reads — `catalog.getCatalogHealth`
+ * further gates `unpricedCount` to owner only (invariant 8).
+ */
+export async function catalogHealthAction(): Promise<ActionResult<catalog.CatalogHealth>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    return catalog.getCatalogHealth(actor);
+  });
+}
+
+/**
  * Needed by every role to pick a location while counting. Active-only,
  * UNCHANGED signature and behavior (Decision 5, 02-architecture.md) — the
  * single highest risk in the locations bundle is a retired location

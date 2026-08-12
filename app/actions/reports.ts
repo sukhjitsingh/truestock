@@ -26,3 +26,13 @@ export async function reorderListAction(): Promise<ActionResult<reports.ReorderL
     return reports.reorderList(actor);
   });
 }
+
+/** Dashboard "Last closed count" tile (#14). Owner/manager only. */
+export async function lastClosedCountAction(): Promise<
+  ActionResult<reports.LastClosedCount | null>
+> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    return reports.getLastClosedCount(actor);
+  });
+}

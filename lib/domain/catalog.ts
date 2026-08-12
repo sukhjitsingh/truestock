@@ -789,6 +789,62 @@ export async function deactivateProduct(actor: Actor, productId: number): Promis
 }
 
 // ---------------------------------------------------------------------------
+// Dashboard aggregate read (#14, docs/open-items.md) — Slice 5.
+//
+// The dashboard's old "Catalog health" tile counted `products.length` off a
+// capped `searchProducts({ limit: 100 })` read, so it silently read 100 with
+// 101 rows in the catalog — a plausible-but-wrong number, AGENTS.md's worst
+// failure mode. The fix is a dedicated `COUNT(*)` with no row cap, not a
+// bigger limit (02-architecture.md Decision 10).
+//
+// Amendment 1 (2026-08-12): this returns ONLY `activeCount` and an
+// owner-gated `unpricedCount` — no `incompleteCount`. The dashboard has no
+// "incomplete" tile to back one, and hand-writing a SQL predicate here would
+// duplicate `incompleteReasons` above and drift from it silently. The
+// catalog table's own "needs attention" view keeps calling `incompleteReasons`
+// directly on a real row read, unchanged.
+// ---------------------------------------------------------------------------
+
+export interface CatalogHealth {
+  activeCount: number;
+  /** Null — and never queried — for a non-owner caller (invariant 8, Decision 12). */
+  unpricedCount: number | null;
+}
+
+/**
+ * No role restriction of its own — the action layer gates owner/manager
+ * (invariant 7 defence in depth); this function further gates
+ * `unpricedCount` on `canSeeCost(actor.role)` by skipping the query
+ * entirely for a caller who can't see cost, not by computing it and
+ * withholding the field afterward.
+ */
+export async function getCatalogHealth(actor: Actor): Promise<CatalogHealth> {
+  const [[activeRow], unpricedRow] = await Promise.all([
+    db
+      .select({ n: countRows() })
+      .from(product)
+      .where(and(eq(product.organizationId, actor.organizationId), eq(product.active, true))),
+    canSeeCost(actor.role)
+      ? db
+          .select({ n: countRows() })
+          .from(product)
+          .where(
+            and(
+              eq(product.organizationId, actor.organizationId),
+              eq(product.active, true),
+              isNull(product.currentUnitCost),
+            ),
+          )
+      : Promise.resolve(null),
+  ]);
+
+  return {
+    activeCount: activeRow?.n ?? 0,
+    unpricedCount: unpricedRow ? unpricedRow[0]?.n ?? 0 : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Locations — CRUD (rename/re-mode/create) from the management screen
 // (`/office/locations`), plus the read every counting role uses to populate
 // the scan-picker. See docs/plans/phase-1-to-1.5/02-architecture.md Decision

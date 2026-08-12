@@ -13,8 +13,9 @@
  * query/response shape here, not left to the UI to hide.
  */
 import { and, desc, eq, inArray, isNull, lt, ne } from "drizzle-orm";
+import { alias } from "drizzle-orm/mysql-core";
 import { db } from "@/db";
-import { count, countLine, location, product, productPar, vendor } from "@/db/schema";
+import { count, countLine, location, product, productPar, user, vendor } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
 import { canSeeCost } from "@/lib/authz";
 import { NotFoundError } from "@/lib/domain/errors";
@@ -289,6 +290,64 @@ async function previousCountComparison(
   }
 
   return comparison;
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard: last closed count (#14, Slice 5). A direct query for exactly
+// one row, replacing the dashboard's old "fetch 50 via listCounts, filter to
+// closed, sort client-side" pattern — which was also a capped read subject
+// to the same #14 bug once an org has more than 50 counts.
+// ---------------------------------------------------------------------------
+
+export interface LastClosedCount {
+  id: number;
+  type: (typeof count.$inferSelect)["type"];
+  closedAt: Date;
+  notes: string | null;
+  openedByName: string | null;
+  closedByName: string | null;
+  /** Owner only — invariant 8, same pattern as `CountSummary.totalValue`. */
+  totalValue?: string;
+}
+
+/** Owner/manager only (enforced in the action). Null if nothing has ever closed. */
+export async function getLastClosedCount(actor: Actor): Promise<LastClosedCount | null> {
+  const opener = alias(user, "opener");
+  const closer = alias(user, "closer");
+
+  const [row] = await db
+    .select({
+      id: count.id,
+      type: count.type,
+      closedAt: count.closedAt,
+      notes: count.notes,
+      totalValue: count.totalValue,
+      openedByName: opener.name,
+      closedByName: closer.name,
+    })
+    .from(count)
+    .leftJoin(opener, eq(opener.id, count.openedBy))
+    .leftJoin(closer, eq(closer.id, count.closedBy))
+    .where(and(eq(count.organizationId, actor.organizationId), eq(count.status, "closed")))
+    .orderBy(desc(count.closedAt))
+    .limit(1);
+
+  if (!row || row.closedAt == null) {
+    return null;
+  }
+
+  const result: LastClosedCount = {
+    id: row.id,
+    type: row.type,
+    closedAt: row.closedAt,
+    notes: row.notes,
+    openedByName: row.openedByName,
+    closedByName: row.closedByName,
+  };
+  if (canSeeCost(actor.role) && row.totalValue != null) {
+    result.totalValue = row.totalValue;
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
