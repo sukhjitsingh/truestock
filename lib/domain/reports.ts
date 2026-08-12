@@ -372,6 +372,13 @@ export interface ReorderItem {
 export interface ReorderList {
   /** The closed count on-hand figures are computed from; null if none exist yet. */
   asOfCountId: number | null;
+  /**
+   * When that count closed — sourced from `getOnHandSnapshot`'s already-computed
+   * field, no new query. A copy/print of this list carries this date (Risk 8,
+   * Gate 3 Amendment 4a) so a tab left open since before the day's count closed
+   * doesn't hand a vendor a stale order with nothing marking it as such.
+   */
+  asOfClosedAt: Date | null;
   items: ReorderItem[];
   /**
    * How many active products have an overall par at all.
@@ -391,12 +398,12 @@ export async function reorderList(actor: Actor): Promise<ReorderList> {
   // the back-office catalog's stock cell also reads. Two screens showing two
   // different on-hand numbers for the same bottle is the kind of quiet
   // disagreement this codebase spends most of its comments avoiding.
-  const { asOfCountId, byProduct: onHandByProduct } = await getOnHandSnapshot(
+  const { asOfCountId, asOfClosedAt, byProduct: onHandByProduct } = await getOnHandSnapshot(
     actor.organizationId,
   );
 
   if (asOfCountId == null) {
-    return { asOfCountId: null, items: [], productsWithPar: 0 };
+    return { asOfCountId: null, asOfClosedAt: null, items: [], productsWithPar: 0 };
   }
 
   // MVP only ever writes overall par rows (location_id IS NULL) — spec §8.
@@ -417,7 +424,7 @@ export async function reorderList(actor: Actor): Promise<ReorderList> {
     );
 
   if (parRows.length === 0) {
-    return { asOfCountId, items: [], productsWithPar: 0 };
+    return { asOfCountId, asOfClosedAt, items: [], productsWithPar: 0 };
   }
 
   const productIds = parRows.map((p) => p.productId);
@@ -476,5 +483,5 @@ export async function reorderList(actor: Actor): Promise<ReorderList> {
     return a.productName.localeCompare(b.productName);
   });
 
-  return { asOfCountId, items, productsWithPar: parRows.length };
+  return { asOfCountId, asOfClosedAt, items, productsWithPar: parRows.length };
 }

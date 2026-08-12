@@ -291,3 +291,28 @@
     outline-offset: 2px;
   }
 }
+
+/* Print scoping (Gate 4 slice 6, `/office/reorder`'s per-vendor Print).
+   Generic and reusable by name — not "reorder-" prefixed — so any future
+   print-one-block need can reuse it: while `.print-scope-active` is on
+   <body>, every descendant is hidden EXCEPT the element(s) carrying
+   `.print-target` and their own descendants, which stay visible and are
+   pulled to the top of the page. `visibility` (not `display: none`) is
+   deliberate — it hides content without collapsing the layout, so the
+   target's own ancestors don't lose the box that positions it, and toggling
+   it back off after printing (`afterprint`) needs no re-render. */
+@media print {
+  body.print-scope-active * {
+    visibility: hidden;
+  }
+  body.print-scope-active .print-target,
+  body.print-scope-active .print-target * {
+    visibility: visible;
+  }
+  body.print-scope-active .print-target {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+}

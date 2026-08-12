@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { requireOfficeUser } from "@/lib/current-user";
 import { reorderListAction } from "@/app/actions/reports";
-import { formatUnits } from "@/lib/utils";
+import { formatDate } from "@/lib/utils";
+import { ReorderVendorBlock } from "@/components/office/reorder-vendor-block";
 
 export const metadata = { title: "Reorder · Truestock" };
 
@@ -25,7 +26,8 @@ export default async function ReorderPage() {
     );
   }
 
-  const { asOfCountId, items, productsWithPar } = result.data;
+  const { asOfCountId, asOfClosedAt, items, productsWithPar } = result.data;
+  const asOfClosedAtLabel = asOfClosedAt == null ? null : formatDate(asOfClosedAt);
 
   // Group by vendor. `reorderList` already sorts so same-vendor items are
   // adjacent, so this is a walk, not a re-sort.
@@ -85,52 +87,19 @@ export default async function ReorderPage() {
         )
       ) : null}
 
-      <div className="mt-8 flex flex-col gap-section-gap">
-        {groups.map((group) => (
-          <section key={group.vendor}>
-            <h2 className="mb-3 text-label uppercase text-muted-foreground">{group.vendor}</h2>
-            <table className="w-full border-collapse text-left">
-              <thead>
-                <tr className="border-b border-border">
-                  <th scope="col" className="py-2 text-label uppercase text-muted-foreground">
-                    Product
-                  </th>
-                  <th scope="col" className="py-2 text-right text-label uppercase text-muted-foreground">
-                    On hand
-                  </th>
-                  <th scope="col" className="py-2 text-right text-label uppercase text-muted-foreground">
-                    Par
-                  </th>
-                  <th scope="col" className="py-2 text-right text-label uppercase text-muted-foreground">
-                    Order
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {group.items.map((item) => (
-                  <tr key={item.productId} className="border-b border-border">
-                    <td className="py-3 text-row-subtitle text-foreground">
-                      {item.productName}
-                      <span className="ml-2 text-caption text-muted-foreground">
-                        {item.category}
-                      </span>
-                    </td>
-                    <td className="py-3 text-right text-row-subtitle tabular-nums text-muted-foreground">
-                      {formatUnits(item.onHand)}
-                    </td>
-                    <td className="py-3 text-right text-row-subtitle tabular-nums text-muted-foreground">
-                      {formatUnits(item.parLevel)}
-                    </td>
-                    <td className="py-3 text-right text-numeral-sm tabular-nums text-foreground">
-                      {formatUnits(item.suggestedOrderQty)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
-        ))}
-      </div>
+      {asOfCountId != null ? (
+        <div className="mt-8 flex flex-col gap-section-gap">
+          {groups.map((group) => (
+            <ReorderVendorBlock
+              key={group.vendor}
+              vendorName={group.vendor}
+              items={group.items}
+              asOfCountId={asOfCountId}
+              asOfClosedAt={asOfClosedAtLabel}
+            />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
