@@ -9,14 +9,22 @@ record.
 ## Status
 
 MVP foundation built: schema and migrations, auth, the counting app, the back office
-(dashboard, counts, catalog, reorder), and a deploy pipeline. Not yet deployed — no
-production database has been migrated.
+(dashboard, counts, catalog, vendors, users, reorder), and a deploy pipeline. Not yet
+deployed — no production database has been migrated.
 
 The schema, the auth path and the count write path are verified against a real
-MariaDB 11.8 in Docker, the last of those by a 17-test suite wired into CI. The
-back office has been driven in a browser; **the counting screens have not** —
-nobody has taken a phone through a real count, and the offline write queue is
-still unexercised. That is the shortest path to a trustworthy first count.
+MariaDB 11.8 in Docker by a 121-test suite wired into CI, and the back office has
+been driven in a browser. **The counting loop has now run on a real phone too**
+(2026-08-11) — a barcode decoded by the WASM polyfill and enrolled, fill levels
+tapped in tenths, sealed quantities entered, a count closed at a valuation that
+reconciles to the cent in SQL, and the offline write queue draining on reconnect,
+the last of those under the production CSP.
+
+**What is unproven is scale, not mechanism.** Four sessions produced 8 count lines
+between them. Nothing has been timed against the sub-20-minute target the design is
+justified by, no pass has covered all five locations, rapid-scan mode has never
+faced a real camera, and 90 of 99 active products are unpriced. Those measurements
+are deferred to Phase 1.9 by a deliberate decision — see `ROADMAP.md`.
 
 - [`STATE.md`](STATE.md) — what is proven, what is merely built, what is next
 - [`ROADMAP.md`](ROADMAP.md) — the phases after the MVP
@@ -98,6 +106,11 @@ protocol is in [`docs/phone-count-test.md`](docs/phone-count-test.md).
 
 `bun run docker:down && bun run docker:up` stops the proxy and restores the
 loopback-only binding.
+
+**To test offline behaviour, use `bun run docker:up:prod` instead.** `next dev`'s
+HMR client reloads the page when the network drops, so the write queue's own UI
+disappears before you can look at it. Production mode has no HMR — and accepts
+sign-in only on the https origin, by design.
 
 ## Working on this
 
