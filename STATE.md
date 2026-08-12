@@ -732,9 +732,15 @@ references them).
 
 ## Next three things
 
-**The three items that stood here through 2026-08-11 are all done** — the
-camera, the offline queue, and the production CSP. What replaced them is
-narrower and, for the first time, mostly about *scale* rather than *existence*.
+**Re-sequenced 2026-08-12 by owner decision — see `ROADMAP.md`.** The three
+items that stood here (a timed count, rapid mode against a camera, and the
+standalone entrypoint) are all **measurement**, and all three were deliberately
+deferred to the new **Phase 1.9**. They are not abandoned and nothing about
+their risk has changed; they are simply not next. The new order also moves
+go-live to **Phase 3**, behind a UI redesign (Phase 2) and OCR invoice
+automation (Phase 2.5).
+
+What is next is the only remaining **construction** in Phase 1.
 
 `owner@truestock.local` is the **only** account in the database — have its
 password or run `bun run create-user` before walking anywhere. The stack is
@@ -742,35 +748,25 @@ currently in **production mode** (`bun run docker:up:prod`), which has no hot
 reload and accepts sign-in **only on the https origin**; `bun run docker:up:lan`
 returns to dev.
 
-1. **A full timed count** — the sub-20-minute target the whole design is
-   justified by, and still the one claim with no measurement behind it. The four
-   counts so far are 2, 4, 1 and 1 lines; none is a count. A first real pass is
-   still mostly *enrolment* (97 of 101 products have no barcode), so it measures
-   the 20-second enroll budget. Watch the per-line gaps: count 2 saw 29s and
-   102s between two kegs *on the same screen with no leg switch*, which is
-   either ordinary variance in reading a keg or friction a longer run will make
-   legible.
-2. **Rapid mode against a real camera** — the last untested part of scanning,
-   and the one whose failures are silent by construction. Its frame guard is
-   tested only against *modelled* frame sequences. **Count a real shelf in rapid
-   mode, then count it by hand, and compare.** Remember it is offered only on
-   quantity locations (Walk-In, Storeroom) and is *hidden*, not greyed out,
-   everywhere else.
-3. **Real costs and pars** (open item #4). 90 of 101 products are unpriced and
-   0 of 101 carry a `case_size`, so valuation is proven but nearly empty and the
-   reorder list still cannot produce a row. This is now the shortest path to the
-   app being *useful* rather than merely correct.
+1. **A locations management screen** (`/office/locations`). `lib/domain/catalog.ts`
+   has `listLocations` and nothing else — no create, no update, no route. This
+   already cost real time on 2026-08-12: adding `Tap 1` so kegs could be counted
+   at all took a CSV edit plus SQL against the live database. `location.count_mode`
+   is what decides whether a product gets the fill pad or a quantity stepper, and
+   it is unreachable from the app.
+2. **Bulk cost and case-size entry.** The fields already exist on
+   `product-edit-form.tsx` and are correctly role-gated; what is missing is
+   throughput. 90 unit costs today means 90 separate page loads. Inline-editable
+   columns in `catalog-table.tsx`, reusing the bulk-bar machinery the vendor work
+   already built.
+3. **Then the data itself** (open item #4). 90 of 99 active products are unpriced
+   and 0 carry a `case_size`, so valuation is proven but nearly empty and the
+   reorder list still cannot produce a row. Item 2 exists to make this survivable.
 
-Before any deploy, the remaining runtime gap: **start `node
-.next/standalone/server.js`**. The 2026-08-12 CSP verification ran under `next
-start`, which warned it does not work with `output: standalone` — so the policy
-and hydration are settled, and the entrypoint Hostinger actually uses is not.
-
-After those, the shortest path to a genuinely useful reorder list is real
-costs and pars (open item #4) — **#19 (vendors have no write path) is done**
-as of 2026-07-31, so the list can now group by vendor instead of dumping
-everything under "No vendor set". What is still missing is the par levels and
-costs to make the rows worth ordering from.
+**#19 (vendors have no write path) is done** as of 2026-07-31, so the reorder
+list can group by vendor rather than dumping everything under "No vendor set" —
+what it still lacks is par levels and costs to make the rows worth ordering from,
+and any way to *send* the list, which is now a Phase 1.5 item.
 
 ## Scope reminders
 

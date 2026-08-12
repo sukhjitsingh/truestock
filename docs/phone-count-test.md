@@ -296,9 +296,12 @@ reset the volume.
 
 ---
 
-## 6. When Phase 1 is done
+## 6. When Phase 1.9 is done
 
-From `ROADMAP.md`, and none of it is a code question:
+**This file is Phase 1.9's protocol.** Re-sequenced 2026-08-12: these runs used
+to be Phase 1's exit criteria, and were deferred to a phase of their own so
+Phase 1 could close on construction. Nothing about the runs changed — only when
+they happen. From `ROADMAP.md`, and none of it is a code question:
 
 - A full count runs on a phone in **under 20 minutes** (Run B).
 - Weekly counts happen without anyone being nagged.
