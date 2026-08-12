@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Locations — Truestock back office (Gate 1 mockup)</title>
+<!--
+  Gate 1 mockup, throwaway by design. Plain HTML, no build step, no network.
+  Tokens copied verbatim from docs/design-system.md §2 (light theme) — the
+  back office always renders light, so there is no .dark toggle here.
+  Every state named in docs/plans/phase-1-to-1.5/01-product.md's Screens
+  table is rendered at once, each labelled, rather than hidden behind a click.
+-->
+<style>
+  :root {
+    --radius: 1rem;
+    --background: #f7f7f5;
+    --foreground: #111111;
+    --card: #ffffff;
+    --card-foreground: #111111;
+    --muted: #efefec;
+    --muted-foreground: #6b6b6b;
+    --primary: #0a0a0a;
+    --primary-foreground: #ffffff;
+    --secondary: #efefec;
+    --secondary-foreground: #111111;
+    --accent: #2563eb;
+    --accent-foreground: #ffffff;
+    --destructive: #c4304f;
+    --destructive-foreground: #ffffff;
+    --border: #e4e4e1;
+    --input: #8c8c8c;
+    --ring: #2563eb;
+    --negative: #b8305a;
+    --negative-bg: #fde8ec;
+    --warning: #92600a;
+    --warning-bg: #fdf0dc;
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3, p, ol, ul { margin: 0; padding: 0; }
+  button, input, select { font: inherit; color: inherit; }
+  a, button, input, select, [tabindex] { outline-offset: 2px; }
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  .shell { max-width: 1100px; margin: 0 auto; padding: 2rem 1.25rem 5rem; }
+  .page-head { margin-bottom: 2rem; }
+  .text-header-title { font-size: 1.75rem; line-height: 1.15; font-weight: 600; }
+  .text-row-subtitle { font-size: 0.9375rem; line-height: 1.4; font-weight: 400; }
+  .text-row-title { font-size: 1.125rem; line-height: 1.3; font-weight: 600; }
+  .text-body { font-size: 1rem; line-height: 1.5; }
+  .text-caption { font-size: 0.8125rem; line-height: 1.4; }
+  .text-label { font-size: 0.6875rem; line-height: 1.2; font-weight: 600; letter-spacing: 0.06em; }
+  .text-numeral-sm { font-size: 1.0625rem; line-height: 1.2; font-weight: 600; }
+  .uppercase { text-transform: uppercase; }
+  .muted { color: var(--muted-foreground); }
+  .mono { font-family: var(--font-mono); }
+
+  .section-note {
+    max-width: 68ch;
+    color: var(--muted-foreground);
+    font-size: 0.9375rem;
+    margin-top: 0.5rem;
+  }
+  .demo-heading {
+    margin-top: 3rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.8125rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted-foreground);
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .table-wrap { overflow-x: auto; border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--card); }
+  table { width: 100%; min-width: 42rem; border-collapse: collapse; text-align: left; }
+  thead tr { border-bottom: 1px solid var(--border); }
+  th { padding: 0.75rem 1rem; font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted-foreground); white-space: nowrap; }
+  td { padding: 0.9rem 1rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  .state-row td { background: var(--muted); padding: 0.5rem 1rem; }
+  .state-row .state-tag { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--foreground); }
+  .state-row .state-desc { color: var(--muted-foreground); font-size: 0.8125rem; margin-left: 0.6rem; }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    border: 1px solid var(--input); border-radius: 9999px;
+    padding: 0.25rem 0.7rem; font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--foreground); background: transparent; white-space: nowrap;
+  }
+  .badge-muted { border-color: var(--border); color: var(--muted-foreground); }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+    min-height: 2.75rem; padding: 0 1rem;
+    border-radius: var(--radius-md); font-size: 0.8125rem; font-weight: 600;
+    border: 1px solid transparent; cursor: pointer; white-space: nowrap;
+  }
+  .btn-outline { background: var(--card); border-color: var(--input); color: var(--foreground); }
+  .btn-primary { background: var(--primary); color: var(--primary-foreground); }
+  .btn-destructive { background: var(--destructive); color: var(--destructive-foreground); }
+  .btn-ghost { background: transparent; border-color: var(--border); color: var(--foreground); }
+  .btn-sm { min-height: 2.75rem; padding: 0 0.85rem; font-size: 0.75rem; }
+
+  .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  input[type="text"], input[type="number"], select {
+    min-height: 2.75rem;
+    border: 1px solid var(--input);
+    border-radius: var(--radius-md);
+    background: var(--card);
+    padding: 0 0.75rem;
+    font-size: 1rem;
+    color: var(--foreground);
+    width: 100%;
+  }
+  input::placeholder { color: var(--muted-foreground); }
+
+  .field-grid { display: grid; grid-template-columns: 1.4fr 1fr 0.7fr auto; gap: 0.6rem; align-items: end; }
+  .field-grid label { display: block; font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--foreground); margin-bottom: 0.35rem; }
+
+  .retired-row td { color: var(--muted-foreground); }
+  .retired-row .text-row-title-like { color: var(--muted-foreground); text-decoration: line-through; text-decoration-color: var(--border); }
+
+  .confirm-box {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem;
+    background: var(--negative-bg);
+    border: 1px solid var(--negative);
+    border-radius: var(--radius-md);
+    padding: 0.75rem 1rem;
+  }
+  .confirm-box p { color: var(--negative); font-size: 0.875rem; font-weight: 600; margin: 0; }
+
+  .refusal-box {
+    display: flex; align-items: flex-start; gap: 0.6rem;
+    background: var(--negative-bg);
+    border: 1px solid var(--negative);
+    border-radius: var(--radius-md);
+    padding: 0.9rem 1rem;
+    max-width: 640px;
+  }
+  .refusal-box p { color: var(--negative); font-size: 0.875rem; margin: 0; line-height: 1.5; }
+  .refusal-box strong { font-weight: 700; }
+
+  .icon { width: 1.1rem; height: 1.1rem; flex-shrink: 0; }
+
+  @media (max-width: 640px) {
+    .field-grid { grid-template-columns: 1fr 1fr; }
+    .field-grid > .field-actions { grid-column: 1 / -1; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <div class="page-head">
+    <h1 class="text-header-title">Locations</h1>
+    <p class="section-note">
+      Add, rename, change counting mode, and retire locations — no SQL, no CSV.
+      Every state below is rendered at once for review; nothing is hidden behind a click.
+    </p>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Name</th>
+          <th scope="col">Counting mode</th>
+          <th scope="col">Sort order</th>
+          <th scope="col">Status</th>
+          <th scope="col">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+
+        <!-- Normal, at-rest rows -->
+        <tr>
+          <td class="text-row-title">Speed Rail</td>
+          <td><span class="badge">Tenths</span></td>
+          <td class="text-numeral-sm">1</td>
+          <td><span class="badge badge-muted">Active</span></td>
+          <td class="actions">
+            <button class="btn btn-outline btn-sm" type="button">Edit</button>
+            <button class="btn btn-outline btn-sm" type="button">Retire</button>
+          </td>
+        </tr>
+
+        <!-- STATE: inline edit -->
+        <tr class="state-row"><td colspan="5"><span class="state-tag">State — inline edit</span><span class="state-desc">tapping Edit turns the row's static cells into form fields, in place</span></td></tr>
+        <tr>
+          <td colspan="5" style="padding: 0.9rem 1rem;">
+            <div class="field-grid">
+              <div>
+                <label for="edit-name">Name</label>
+                <input id="edit-name" type="text" value="Back Bar" aria-label="Location name" />
+              </div>
+              <div>
+                <label for="edit-mode">Counting mode</label>
+                <select id="edit-mode" aria-label="Counting mode">
+                  <option selected>Tenths</option>
+                  <option>Quantity</option>
+                </select>
+              </div>
+              <div>
+                <label for="edit-sort">Sort order</label>
+                <input id="edit-sort" type="number" value="2" aria-label="Sort order" />
+              </div>
+              <div class="field-actions actions">
+                <button class="btn btn-primary btn-sm" type="button">Save</button>
+                <button class="btn btn-ghost btn-sm" type="button">Cancel</button>
+              </div>
+            </div>
+          </td>
+        </tr>
+
+        <!-- STATE: inline add -->
+        <tr class="state-row"><td colspan="5"><span class="state-tag">State — inline add</span><span class="state-desc">a blank row at the bottom of the list, same fields as edit</span></td></tr>
+        <tr>
+          <td colspan="5" style="padding: 0.9rem 1rem;">
+            <div class="field-grid">
+              <div>
+                <label for="add-name">Name</label>
+                <input id="add-name" type="text" placeholder="e.g. Patio Bar" aria-label="New location name" />
+              </div>
+              <div>
+                <label for="add-mode">Counting mode</label>
+                <select id="add-mode" aria-label="Counting mode for new location">
+                  <option selected disabled>Select&hellip;</option>
+                  <option>Tenths</option>
+                  <option>Quantity</option>
+                </select>
+              </div>
+              <div>
+                <label for="add-sort">Sort order</label>
+                <input id="add-sort" type="number" placeholder="6" aria-label="Sort order for new location" />
+              </div>
+              <div class="field-actions actions">
+                <button class="btn btn-primary btn-sm" type="button">Add location</button>
+                <button class="btn btn-ghost btn-sm" type="button">Cancel</button>
+              </div>
+            </div>
+          </td>
+        </tr>
+
+        <!-- STATE: retire confirmation -->
+        <tr class="state-row"><td colspan="5"><span class="state-tag">State — retire confirmation</span><span class="state-desc">tapping Retire replaces the row's actions with an explicit confirm, no silent retire</span></td></tr>
+        <tr>
+          <td class="text-row-title">Walk-in Cooler</td>
+          <td><span class="badge">Quantity</span></td>
+          <td class="text-numeral-sm">4</td>
+          <td><span class="badge badge-muted">Active</span></td>
+          <td>
+            <div class="confirm-box">
+              <p>Retire Walk-in Cooler? It stays on past counts.</p>
+              <div class="actions">
+                <button class="btn btn-destructive btn-sm" type="button">Confirm retire</button>
+                <button class="btn btn-ghost btn-sm" type="button">Cancel</button>
+              </div>
+            </div>
+          </td>
+        </tr>
+
+        <!-- STATE: retired / inactive -->
+        <tr class="state-row"><td colspan="5"><span class="state-tag">State — retired</span><span class="state-desc">stays visible so old counts still resolve; counted mode is disabled going forward</span></td></tr>
+        <tr class="retired-row">
+          <td class="text-row-title-like">Rooftop Bar</td>
+          <td class="muted"><span class="badge badge-muted">Tenths</span></td>
+          <td class="muted">6</td>
+          <td><span class="badge badge-muted">Retired</span></td>
+          <td class="actions">
+            <button class="btn btn-outline btn-sm" type="button">Reactivate</button>
+          </td>
+        </tr>
+
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Refusal 1: last active location -->
+  <h2 class="demo-heading">Refusal — last active location</h2>
+  <p class="section-note" style="margin-top: -0.25rem; margin-bottom: 1rem;">
+    Storeroom is the only remaining active location. Retiring it would leave nothing to
+    count into, so the app refuses before the confirm step ever offers a destructive action.
+  </p>
+  <div class="table-wrap" style="margin-bottom: 0;">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Name</th>
+          <th scope="col">Counting mode</th>
+          <th scope="col">Sort order</th>
+          <th scope="col">Status</th>
+          <th scope="col">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="text-row-title">Storeroom</td>
+          <td><span class="badge">Quantity</span></td>
+          <td class="text-numeral-sm">3</td>
+          <td><span class="badge badge-muted">Active</span></td>
+          <td>
+            <div class="refusal-box">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="color: var(--negative);"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01" stroke-linecap="round"/></svg>
+              <p><strong>Can't retire Storeroom.</strong> It's the last active location — every
+              count needs at least one place to record into. Add another location first.</p>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Refusal 2: location an open count is using -->
+  <h2 class="demo-heading">Refusal — a location an open count is using</h2>
+  <p class="section-note" style="margin-top: -0.25rem; margin-bottom: 1rem;">
+    Count #1246799 is currently in progress and has lines recorded against Back Bar.
+    Retiring it mid-count would strand those lines, so the refusal names the open count.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Name</th>
+          <th scope="col">Counting mode</th>
+          <th scope="col">Sort order</th>
+          <th scope="col">Status</th>
+          <th scope="col">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="text-row-title">Back Bar</td>
+          <td><span class="badge">Tenths</span></td>
+          <td class="text-numeral-sm">2</td>
+          <td><span class="badge badge-muted">Active</span></td>
+          <td>
+            <div class="refusal-box">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="color: var(--negative);"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01" stroke-linecap="round"/></svg>
+              <p><strong>Can't retire Back Bar.</strong> Count #1246799 is in progress and using
+              it. Finish or close that count before retiring this location.</p>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>
