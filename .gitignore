@@ -37,4 +37,6 @@ next-env.d.ts
 # Jcode / Codex agent config — local tooling, not part of the project
 .agents/
 .codex/
-AGENTS.md
+
+# codegraph
+.codegraph/

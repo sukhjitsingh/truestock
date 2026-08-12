@@ -101,8 +101,12 @@ loopback-only binding.
 
 ## Working on this
 
-`CLAUDE.md` holds the project conventions and the ten non-negotiable data invariants.
-Read it before changing anything that touches counts or valuation.
+`AGENTS.md` holds the project conventions and the eleven non-negotiable data
+invariants (imported into `CLAUDE.md` for Claude Code). Read it before
+changing anything that touches counts or valuation.
+
+Non-trivial features go through the 4-gate planning workflow — see
+[`docs/plans/README.md`](docs/plans/README.md).
 
 Specialist agents live in `.claude/agents/`. Slash commands in `.claude/commands/`:
 
