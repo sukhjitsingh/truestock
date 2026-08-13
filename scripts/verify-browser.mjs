@@ -459,6 +459,94 @@ try {
     );
   }
 
+  // ======================================================================
+  // Role gating in a browser (invariant 8 / invariant 7)
+  //
+  // The test suite already proves the ACTION layer strips cost for a manager
+  // and refuses staff. What only a browser can show is what actually reaches
+  // the page: a cost column that is rendered-then-hidden is a leak the action
+  // tests cannot see, because the value was in the payload all along.
+  //
+  // Each account is optional. Missing credentials SKIP rather than pass —
+  // these are the two checks most likely to be quietly assumed done.
+  // ======================================================================
+  for (const role of ["manager", "staff"]) {
+    const email = process.env[`CHECK_${role.toUpperCase()}_EMAIL`];
+    const password = process.env[`CHECK_${role.toUpperCase()}_PASSWORD`];
+    if (!email || !password) {
+      record(`${role} role gating in a browser`, true, `SKIPPED — CHECK_${role.toUpperCase()}_EMAIL/_PASSWORD not set. Not a pass.`);
+      skipped.push(
+        `${role} browser role gating — create the account, then add CHECK_${role.toUpperCase()}_EMAIL and CHECK_${role.toUpperCase()}_PASSWORD to .env.local`,
+      );
+      continue;
+    }
+
+    // A separate context, so the owner's session is not disturbed and no
+    // cookie leaks between roles.
+    const roleContext = await browser.newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
+    const rolePage = await roleContext.newPage();
+    try {
+      await rolePage.goto(`${BASE}/login`, { waitUntil: "domcontentloaded" });
+      await rolePage.waitForFunction(
+        () => {
+          const el = document.querySelector("form");
+          return Boolean(el) && Object.keys(el).some((k) => k.startsWith("__react"));
+        },
+        undefined,
+        { timeout: 20000 },
+      );
+      await rolePage.fill('input[type="email"]', email);
+      await rolePage.fill('input[type="password"]', password);
+      const ok = await Promise.all([
+        rolePage.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 20000 }).then(
+          () => true,
+          () => false,
+        ),
+        rolePage.click('button[type="submit"]'),
+      ]).then(([signed]) => signed);
+      if (!ok) {
+        record(`${role} signs in`, false, "credentials rejected — check the account exists with this password");
+        await roleContext.close();
+        continue;
+      }
+
+      if (role === "manager") {
+        await rolePage.goto(`${BASE}/office/catalog`, { waitUntil: "networkidle" });
+
+        // Absent from the DOM, not disabled and not display:none. Search the
+        // served HTML, which is what a manager could read with devtools.
+        const html = await rolePage.content();
+        const costInputs = await rolePage.locator('input[aria-label^="Unit cost for"]').count();
+        const costHeader = await rolePage.getByRole("columnheader", { name: /cost/i }).count();
+        record(
+          "a manager's catalog has no cost column anywhere in the DOM",
+          costInputs === 0 && costHeader === 0 && !/Unit cost for/.test(html),
+          `cost inputs=${costInputs} cost headers=${costHeader}`,
+        );
+
+        // The positive control. Without it, the check above would also pass
+        // against a page that failed to render a table at all.
+        const caseInputs = await rolePage.locator('input[aria-label^="Case size for"]').count();
+        record(
+          "a manager CAN still edit case size — positive control",
+          caseInputs > 0,
+          `${caseInputs} case-size inputs (0 would mean the page simply did not render)`,
+        );
+      } else {
+        await rolePage.goto(`${BASE}/office/locations`, { waitUntil: "networkidle" });
+        record(
+          "staff are redirected away from /office/locations",
+          !rolePage.url().includes("/office"),
+          `landed on ${rolePage.url()}`,
+        );
+        const navLinks = await rolePage.locator('a[href="/office/locations"]').count();
+        record("staff see no Locations link", navLinks === 0, `${navLinks} links to /office/locations`);
+      }
+    } finally {
+      await roleContext.close();
+    }
+  }
+
   // Collected in the page, so it must be read out before the browser closes.
   cspViolations.push(...(await page.evaluate(() => window.__csp ?? [])));
 
@@ -505,14 +593,5 @@ if (skipped.length) {
   console.log("\nNOT VERIFIED (absence of a failure here is not evidence):");
   for (const s of skipped) console.log(`  - ${s}`);
 }
-
-/**
- * Checks no browser can make, listed every run so they are not quietly
- * forgotten. Each is covered against real MariaDB in the test suite; what is
- * missing is only the browser half.
- */
-console.log("\nNEEDS A SECOND ACCOUNT (no manager or staff user exists in this database):");
-console.log("  - the cost column is ABSENT from a manager's DOM, not merely disabled");
-console.log("  - staff get redirected away from /office/locations and see no nav link");
 
 process.exitCode = failed.length === 0 ? 0 : 1;

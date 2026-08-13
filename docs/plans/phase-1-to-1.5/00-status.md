@@ -90,12 +90,27 @@ vendor, a product→vendor link) because the dev catalog has none, and all of
 them were removed afterwards. Verified back to the original state: 0 par rows,
 0 vendors, 9 costed products, 6 locations all active.
 
-**Still not verified, and not verifiable here:** a manager's DOM must not
-contain the cost column, and staff must be redirected off
-`/office/locations`. This database has exactly one user, an owner. Both are
-covered at the action layer in `tests/location-write-path.test.ts` and
-`tests/catalog-write-path.test.ts`; only the browser half is missing. The
-harness prints both as NOT VERIFIED on every run so they cannot pass silently.
+**Still not verified: the two role-gating checks, because this database has
+exactly one user.** The checks themselves are written and will run as soon as
+the accounts exist — create a manager and a staff user with
+`bun run create-user`, then add to `.env.local`:
+
+```
+CHECK_MANAGER_EMAIL=…      CHECK_MANAGER_PASSWORD=…
+CHECK_STAFF_EMAIL=…        CHECK_STAFF_PASSWORD=…
+```
+
+Each role signs in in its own browser context so no cookie leaks between
+roles. The manager check searches the **served HTML** for `Unit cost for`, not
+just the rendered widgets — a cost column that is rendered and then hidden is
+a leak the action-layer tests structurally cannot see, because the value was in
+the payload all along. It carries a positive control (a manager *can* still
+edit case size), without which the check would also pass against a page that
+failed to render a table at all.
+
+Both are covered at the action layer in `tests/catalog-write-path.test.ts` and
+`tests/location-write-path.test.ts`. Until the accounts exist the harness
+prints both under NOT VERIFIED on every run, so they cannot pass silently.
 
 Two harness bugs were fixed along the way, both worth remembering because both
 reported the wrong cause: it filled the login form before React attached, so
