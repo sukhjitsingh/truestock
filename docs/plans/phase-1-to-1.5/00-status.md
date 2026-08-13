@@ -47,31 +47,61 @@ The durable lesson, worth remembering beyond this feature: **excluding a row
 from a list is not the same as refusing a write to it.** Any future
 "deactivate" affordance needs both halves.
 
-## Browser verification, 2026-08-12 — partial
+## Browser verification, 2026-08-12 — 28/28, complete
 
-Run against a real Chrome with a real owner session, `next dev` in Docker.
+`bun run verify:browser` against a real Chrome with a real owner session,
+`next dev` in Docker. Every check below failed at least once during
+development, so none of them is vacuous.
 
-**Verified:**
-- **Slice 1.** `/office/locations` server-renders all six seeded locations with
-  name, mode, sort order and status; React attaches (`__reactFiber$` on the
-  table); the nav link is present.
-- **Slice 2.** Creating a location shows it immediately with **no document
-  navigation** — measured, via a `window` marker that a hard load would destroy
-  plus an `_rsc` request count: exactly one soft `router.refresh()`, zero hard
-  loads. Renaming it and changing its `count_mode` persisted, confirmed in
-  MariaDB rather than from the screen.
-- The login form is `method="post"` and hydrates; no CSP violations on
-  `/login`. (`securitypolicyviolation` is watched, not just the console —
-  Chrome does not report CSP breaks through the console API.)
+| What | Result |
+|---|---|
+| Locations server-rendered, React attached, nav link | pass |
+| Create a location → visible immediately | **0 document loads** |
+| The edit form is editing the row that was clicked | pass (see the finding below) |
+| Rename + `count_mode` survive a reload | pass |
+| Retire → row stays listed, marked Retired | pass |
+| `scan/page.tsx` untouched in `main...HEAD` (Decision 5) | pass |
+| Catalog health tile vs `SELECT COUNT(*)` | **tile 99 = db 99** |
+| 4 cost cells saved (Amendment 2) | **0 document loads** |
+| Cell settles on the server's value | typed `007.5` → `7.5000` |
+| Clipboard is dated and itemised | `Count #4 · Aug 12, 2026`, qty 5 |
+| Print applies the scope classes before printing | pass |
+| Print CSS shows only the target block | target visible, **sibling hidden** |
+| CSP violations / console errors | none |
 
-**Not yet verified** (the Chrome extension dropped its connection mid-run):
-retire → disappears from `/count`'s picker; the dashboard tile against
-`SELECT COUNT(*)` (the truth it must match is **99 active of 101**); per-cell
-cost editing with navigation measured at zero; clipboard contents; print
-scoping. `bun run verify:browser` performs all of these unattended — it needs
-a working `CHECK_PASSWORD` in `.env.local`. The value there now is rejected by
-the auth API directly (`401 INVALID_EMAIL_OR_PASSWORD`, verified outside the
-browser, so it is not a harness fault).
+Three of those deserve a note on *why* they are worth trusting:
+
+- **"0 document loads" is measured, not eyeballed.** A `window` marker that a
+  hard navigation would destroy, plus a count of Next's `_rsc` requests. The
+  create path does exactly one soft `router.refresh()`; the cost cells do
+  none, which is Amendment 2's whole claim.
+- **The dashboard is compared against a direct SQL count.** Comparing it to a
+  number the page produced would be circular — `#14` *was* a page counting its
+  own truncated array.
+- **The print-scoping check was hollow at first** and was fixed rather than
+  accepted. With only one vendor group on screen, "shows *only* the target"
+  passed with `sibling=n/a` — an assertion that could not fail. A second
+  vendor group was fixtured in, and the sibling then computed to
+  `visibility: hidden` under print media. Same rule as the test suite: a check
+  that cannot fail proves nothing.
+
+Fixtures were created for the two data-dependent checks (a par level, a
+vendor, a product→vendor link) because the dev catalog has none, and all of
+them were removed afterwards. Verified back to the original state: 0 par rows,
+0 vendors, 9 costed products, 6 locations all active.
+
+**Still not verified, and not verifiable here:** a manager's DOM must not
+contain the cost column, and staff must be redirected off
+`/office/locations`. This database has exactly one user, an owner. Both are
+covered at the action layer in `tests/location-write-path.test.ts` and
+`tests/catalog-write-path.test.ts`; only the browser half is missing. The
+harness prints both as NOT VERIFIED on every run so they cannot pass silently.
+
+Two harness bugs were fixed along the way, both worth remembering because both
+reported the wrong cause: it filled the login form before React attached, so
+Better Auth answered `INVALID_EMAIL` for a valid address; and a
+`.catch(() => {})` around a click on a button whose label had been guessed
+turned that miss into a `page.fill` timeout 40 lines later.
 
 ### Finding: the locations edit affordance is invisible and unlabelled
 
@@ -100,19 +130,18 @@ consequences:
 Smallest fix that closes all three: a real `<button>` labelled Edit in the row,
 and the location's name in the form heading so the form states its own subject.
 
-**Browser proof is still owed and no agent can supply it.** Every slice
-returned its own list of browser checks; the ones that matter most:
-- Slice 3: retire a location, confirm it disappears from `/count`'s picker
-  while staying visible (marked retired) on `/office/locations`, and that
-  `app/(count)/count/[countId]/scan/page.tsx` was never edited to make that
-  happen.
-- Slice 4: edit ≥10 cost cells in a row and watch the network tab — only
-  `updateProductAction` POSTs, **no navigation entries**. Then sign in as a
-  manager and confirm the cost column is *absent from the DOM*, not disabled.
-- Slice 6: click Copy, paste into a text field, confirm vendor name + as-of
-  date + one line per item.
-- Every route: check for CSP/hydration errors. `next build` passing proves the
-  server renders and nothing more.
+**Browser proof is now automated: `bun run verify:browser`.** It reads
+`CHECK_EMAIL` / `CHECK_PASSWORD` from the gitignored `.env.local` via Node's
+own `--env-file`, and drives the Chrome already installed on the machine
+(`channel: "chrome"` — Playwright's own browser is deliberately not
+downloaded). It restores every value it overwrites and deletes every row it
+creates. Results above.
+
+Two limits to keep in mind when reading a green run:
+- It runs against `next dev`. The CSP failure that shipped in this project was
+  a *production* config problem, so a clean CSP result here is not a
+  production result. `bun run docker:up:prod` is the path that tests it.
+- A green run does not cover the manager and staff DOM checks; see above.
 
 **One pre-existing bug found while proving `#24`, not caused by this bundle.**
 On Docker Compose v2.23.0, `bun run docker:down` does **not** stop the

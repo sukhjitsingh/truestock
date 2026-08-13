@@ -259,7 +259,10 @@ try {
     if (r.resourceType() === "document") documentLoads++;
   });
 
-  await page.getByRole("button", { name: /new location/i }).click().catch(() => {});
+  // No `.catch(() => {})` here. Swallowing a failed click turned a wrong button
+  // name into a 30s `page.fill` timeout 40 lines later, which named the wrong
+  // thing entirely. Let the click throw and say what it could not find.
+  await page.getByRole("button", { name: /add location/i }).click();
   await page.fill('input[placeholder="e.g., Patio Bar"]', created);
   const navsBeforeCreate = documentLoads;
   await page.getByRole("button", { name: /create location/i }).click();
@@ -272,9 +275,26 @@ try {
 
   // Rename + re-mode, then prove it survived a reload rather than only
   // living in local state.
+  /**
+   * Editing is a click on the row itself — there is no Edit button. See
+   * 00-status.md's finding: the row is a <tr> with an onClick, tabIndex -1 and
+   * no role, and the form it opens is headed only "EDIT LOCATION" without
+   * naming its subject. So assert the form's prefilled name before typing.
+   * A click aimed at one row landed on Speed Rail during manual verification,
+   * one click away from renaming a real location with nothing looking wrong.
+   */
   const row = page.locator("tbody tr", { hasText: created });
-  await row.getByRole("button", { name: /^edit$/i }).click();
-  await page.fill('input[placeholder="e.g., Patio Bar"]', renamed);
+  await row.click();
+  const nameField = page.locator('input[placeholder="e.g., Patio Bar"]');
+  const editingWhich = await nameField.inputValue();
+  record(
+    "the edit form is editing the row that was clicked",
+    editingWhich === created,
+    `form prefilled with "${editingWhich}", expected "${created}"`,
+  );
+  if (editingWhich !== created) throw new Error("refusing to type into the wrong location's edit form");
+
+  await nameField.fill(renamed);
   const modeSelect = page.locator("select").first();
   const originalMode = await modeSelect.inputValue();
   await modeSelect.selectOption(originalMode === "tenths" ? "quantity" : "tenths");
