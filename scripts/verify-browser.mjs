@@ -276,15 +276,17 @@ try {
   // Rename + re-mode, then prove it survived a reload rather than only
   // living in local state.
   /**
-   * Editing is a click on the row itself — there is no Edit button. See
-   * 00-status.md's finding: the row is a <tr> with an onClick, tabIndex -1 and
-   * no role, and the form it opens is headed only "EDIT LOCATION" without
-   * naming its subject. So assert the form's prefilled name before typing.
-   * A click aimed at one row landed on Speed Rail during manual verification,
-   * one click away from renaming a real location with nothing looking wrong.
+   * Editing is a click on the row's own Edit button (00-status.md's finding
+   * fixed this: editing used to be a click on the bare row, with no button,
+   * role, or keyboard access, and the form it opened was headed only "Edit
+   * location" without naming its subject). Still assert the form's prefilled
+   * name before typing — that assertion is what would have caught the near
+   * miss where a click aimed at one row landed on Speed Rail during manual
+   * verification, one click away from renaming a real location with nothing
+   * looking wrong.
    */
   const row = page.locator("tbody tr", { hasText: created });
-  await row.click();
+  await row.getByRole("button", { name: /^edit$/i }).click();
   const nameField = page.locator('input[placeholder="e.g., Patio Bar"]');
   const editingWhich = await nameField.inputValue();
   record(

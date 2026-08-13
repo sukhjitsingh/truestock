@@ -85,7 +85,7 @@ function LocationEditForm({
     <form method="post" onSubmit={save} className="flex flex-col gap-section-gap" noValidate>
       <section className="flex flex-col gap-4">
         <h2 className="text-label uppercase text-muted-foreground">
-          {isCreate ? "New location" : "Edit location"}
+          {location ? `Edit ${location.name}` : "New location"}
         </h2>
 
         <Field label="Name" htmlFor="loc-name" error={fieldErrors.name}>
@@ -303,10 +303,7 @@ export function LocationsTable({ locations }: { locations: LocationSummary[] }) 
             <tbody>
               {locations.map((loc) => (
                 <Fragment key={loc.id}>
-                  <tr
-                    onClick={() => handleEditClick(loc.id)}
-                    className="border-b border-border align-top cursor-pointer hover:bg-muted transition-colors"
-                  >
+                  <tr className="border-b border-border align-top">
                     <td className="py-3">
                       <span className="block text-row-subtitle font-semibold text-foreground">
                         {loc.name}
@@ -329,32 +326,41 @@ export function LocationsTable({ locations }: { locations: LocationSummary[] }) 
                       )}
                     </td>
                     <td className="py-3 text-right">
-                      {loc.active ? (
-                        retireCandidateId === loc.id ? (
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              variant="outline"
-                              size="tap"
-                              onClick={(e) => handleCancelRetire(e)}
-                              disabled={retirePendingId === loc.id}
-                            >
-                              Cancel
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          variant="outline"
+                          size="tap"
+                          onClick={() => handleEditClick(loc.id)}
+                        >
+                          Edit
+                        </Button>
+                        {loc.active ? (
+                          retireCandidateId === loc.id ? (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="tap"
+                                onClick={(e) => handleCancelRetire(e)}
+                                disabled={retirePendingId === loc.id}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                variant="destructive"
+                                size="tap"
+                                onClick={(e) => handleConfirmRetire(e, loc.id)}
+                                disabled={retirePendingId === loc.id}
+                              >
+                                {retirePendingId === loc.id ? "Retiring…" : "Confirm retire?"}
+                              </Button>
+                            </>
+                          ) : (
+                            <Button variant="outline" size="tap" onClick={(e) => handleRetireClick(e, loc.id)}>
+                              Retire
                             </Button>
-                            <Button
-                              variant="destructive"
-                              size="tap"
-                              onClick={(e) => handleConfirmRetire(e, loc.id)}
-                              disabled={retirePendingId === loc.id}
-                            >
-                              {retirePendingId === loc.id ? "Retiring…" : "Confirm retire?"}
-                            </Button>
-                          </div>
-                        ) : (
-                          <Button variant="outline" size="tap" onClick={(e) => handleRetireClick(e, loc.id)}>
-                            Retire
-                          </Button>
-                        )
-                      ) : null}
+                          )
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                   {retireErrors[loc.id] ? (
