@@ -1065,3 +1065,35 @@ outcome rather than the config value — it already runs client-side, so it can
 simply confirm a `/_next/*` fetch succeeds — and treat `localhost` and
 `127.0.0.1` as allowed by construction. The LAN case it was built for (item 24)
 is the one where the warning is real and must stay.
+
+## 27. `/office/vendors` still has the row-click edit affordance that was just removed from locations
+
+**Trigger: now, or the next time anyone edits a vendor. This is the original of
+the pattern — `locations-table.tsx` was modelled on `vendors-list.tsx`, so the
+finding below was inherited, not invented.**
+
+Found 2026-08-12 while fixing the locations screen (`957bfeb`). All three legs
+of that finding are still present here:
+
+- `components/office/vendors-list.tsx:148-149` — the `<tr>` carries
+  `onClick={() => handleEditClick(vendor.id)}` plus
+  `cursor-pointer hover:bg-muted`, with no `role`, no `tabIndex` and no visible
+  Edit control. Keyboard and screen-reader users cannot edit a vendor at all.
+- `components/office/vendor-edit-form.tsx:99` — the heading is the generic
+  `"Edit vendor"` and never names the vendor being edited.
+
+Why it matters even though a vendor is less dangerous than a location: on the
+locations screen this combination put a click on **Speed Rail** when another row
+was aimed at, one confirm away from renaming a real location and flipping its
+`count_mode`. The mechanism is the row reflowing as the inline form opens, and
+it is identical here. A mis-renamed vendor is quieter — it silently regroups the
+reorder list, which nobody notices until an order goes to the wrong rep.
+
+**How to close it:** the same three changes `957bfeb` made — an explicit `Edit`
+`<Button variant="outline" size="tap">` in the actions cell, the `<tr>`'s
+`onClick` and `cursor-pointer` removed so the hazard is gone by construction,
+and the vendor's name in the form heading so the form states its own subject.
+`components/office/locations-table.tsx` is now the reference implementation.
+
+`users-list.tsx` and `catalog-table.tsx` were checked and do **not** have this
+pattern — both use explicit controls.
