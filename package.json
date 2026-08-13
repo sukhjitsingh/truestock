@@ -28,7 +28,8 @@
     "docker:reset": "docker compose down -v && docker compose up -d --wait && docker compose exec -T app bun run db:migrate && docker compose exec -T app bun run db:seed",
     "db:shell": "docker compose exec db mariadb -utruestock -ptruestock truestock",
     "db:logs": "docker compose logs -f db",
-    "test:docker": "docker compose exec -T -e DATABASE_URL=mysql://truestock:truestock@db:3306/truestock_test app bun test"
+    "test:docker": "docker compose exec -T -e DATABASE_URL=mysql://truestock:truestock@db:3306/truestock_test app bun test",
+    "verify:browser": "node --env-file=.env.local scripts/verify-browser.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.2",

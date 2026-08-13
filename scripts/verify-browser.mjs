@@ -12,15 +12,32 @@
  * point at. Failing with a usage message costs one line and leaks nothing.
  *
  * Run:
- *   CHECK_EMAIL=you@bar.local CHECK_PASSWORD='...' node scripts/verify-browser.mjs
+ *   bun run verify:browser
  *
- * Against a local dev database only — it signs in and changes a role.
+ * which is `node --env-file=.env.local scripts/verify-browser.mjs` — the
+ * credentials come from the gitignored env file rather than the argv, so they
+ * stay out of the shell history and the process list. `--env-file` is Node's
+ * own flag; there is no dotenv dependency.
+ *
+ * Against a local dev database only — it signs in, changes a role, and
+ * creates/renames/retires its own throwaway locations. Everything it mutates
+ * it either created itself or restores; see restoreLog at the end of the run.
  */
+import { execSync } from "node:child_process";
+import mysql from "mysql2/promise";
 import { chromium } from "playwright";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const EMAIL = process.env.CHECK_EMAIL;
 const PASSWORD = process.env.CHECK_PASSWORD;
+
+/**
+ * Values this run overwrote and must put back, and checks it could not perform.
+ * Both are printed at the end. A skipped check that reads as a pass is worse
+ * than a failure, because nobody goes looking for it again.
+ */
+const restoreLog = [];
+const skipped = [];
 
 if (!EMAIL || !PASSWORD) {
   console.error(
@@ -39,10 +56,38 @@ function record(name, ok, detail = "") {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
 }
 
-const browser = await chromium.launch();
+/**
+ * Wait until React has actually attached to `selector` before typing into it.
+ *
+ * This is not defensive padding. Filling a controlled input before hydration
+ * sets the DOM value while React's state stays empty, so the submit posts
+ * empty fields — which is how this script used to fail: Better Auth answered
+ * INVALID_EMAIL for an email that is perfectly valid, because the browser sent
+ * "". The signal is React's own fiber key on the node, which exists only once
+ * hydration has run; `domcontentloaded` and even `networkidle` can both be
+ * reached before it.
+ */
+async function waitForHydration(page, selector = "form") {
+  await page.waitForFunction(
+    (sel) => {
+      const el = document.querySelector(sel);
+      return Boolean(el) && Object.keys(el).some((k) => k.startsWith("__react"));
+    },
+    selector,
+    { timeout: 20000 },
+  );
+}
+
+/**
+ * `channel: "chrome"` drives the Chrome already installed on this machine.
+ * Playwright's own chromium is not downloaded here, and a ~150 MB download is
+ * not worth adding to make a local verification script run.
+ */
+const browser = await chromium.launch({ channel: "chrome" });
 const context = await browser.newContext({
   viewport: { width: 390, height: 844 }, // a phone, which is where counting happens
   ignoreHTTPSErrors: true,
+  permissions: ["clipboard-read", "clipboard-write"],
 });
 const page = await context.newPage();
 
@@ -61,7 +106,30 @@ await page.addInitScript(() => {
   document.addEventListener("securitypolicyviolation", (e) => {
     (window.__csp ??= []).push(`${e.violatedDirective} blocked ${e.blockedURI}`);
   });
+
+  /**
+   * Stub `window.print` before any page script runs. A real print dialog is a
+   * browser-level modal: it blocks every subsequent automation command, so one
+   * click on Print would hang the whole run with no useful error. The stub also
+   * captures the DOM state at the moment printing was requested, which is the
+   * assertion that matters — that the scope classes were applied first.
+   */
+  window.print = () => {
+    window.__printState = {
+      called: true,
+      bodyClass: document.body.className,
+      targets: document.querySelectorAll(".print-target").length,
+    };
+  };
 });
+
+/**
+ * A direct connection is used for exactly one thing: the count the dashboard
+ * tile is *supposed* to equal. Asserting the tile against a number the page
+ * itself produced would be circular — the #14 bug was precisely a page
+ * counting its own truncated array.
+ */
+const sql = await mysql.createConnection(process.env.DATABASE_URL);
 
 try {
   // ---- sign in ------------------------------------------------------------
@@ -72,12 +140,42 @@ try {
   const method = await page.locator("form").first().getAttribute("method");
   record("login form is method=post", (method ?? "").toLowerCase() === "post", `method=${method}`);
 
+  await waitForHydration(page, "form");
+  record("login form hydrates (React attached to the form)", true);
+
   await page.fill('input[type="email"]', EMAIL);
   await page.fill('input[type="password"]', PASSWORD);
-  await Promise.all([
-    page.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 20000 }),
+
+  /**
+   * A rejected sign-in used to surface as a bare `waitForURL` timeout, which
+   * says nothing about the cause — a wrong password and a broken form look
+   * identical. Capture the auth response so the failure names itself. The body
+   * is Better Auth's own error JSON and contains no credential.
+   */
+  const authFailure = [];
+  page.on("response", async (res) => {
+    if (!res.url().includes("/api/auth/") || res.status() < 400) return;
+    authFailure.push(`${res.status()} ${new URL(res.url()).pathname}: ${await res.text().catch(() => "(no body)")}`);
+  });
+
+  const signedIn = await Promise.all([
+    page.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 20000 }).then(
+      () => true,
+      () => false,
+    ),
     page.click('button[type="submit"]'),
-  ]);
+  ]).then(([ok]) => ok);
+
+  if (!signedIn) {
+    record(
+      "sign-in succeeds",
+      false,
+      authFailure.length
+        ? `${authFailure.join(" | ")} — set a working CHECK_PASSWORD in .env.local`
+        : "no auth error response; the form may not be submitting at all",
+    );
+    throw new Error("cannot verify anything else without a session");
+  }
   record("sign-in navigates away from /login", true, page.url());
 
   // Hydration: if React never attached, the submit above would have done a
@@ -125,6 +223,191 @@ try {
   await page.goto(`${BASE}/count`, { waitUntil: "networkidle" });
   record("count screen loads", page.url().includes("/count"), page.url());
 
+  // ======================================================================
+  // Phase 1 + 1.5 (docs/plans/phase-1-to-1.5/04-slices.md)
+  //
+  // Only what a browser can prove. Role gating, tenant scoping and both
+  // retire guards are already covered against real MariaDB by
+  // tests/location-write-path.test.ts — repeating them here would add no
+  // information. What is *only* visible here: whether React attached, whether
+  // a save navigates, what actually lands on the clipboard, and what the
+  // print stylesheet really hides.
+  // ======================================================================
+
+  // ---- slice 1: the locations screen exists and is server-rendered --------
+  await page.goto(`${BASE}/office/locations`, { waitUntil: "networkidle" });
+  await waitForHydration(page, "table");
+
+  const seededHtml = await page.content();
+  record(
+    "locations are server-rendered, not fetched in an effect",
+    seededHtml.includes("Speed Rail") && seededHtml.includes("Storeroom"),
+    "seeded names present in the server HTML",
+  );
+  record("Locations is in the office nav", (await page.locator('nav a[href="/office/locations"]').count()) > 0);
+
+  // ---- slice 2: create, rename, re-mode ----------------------------------
+  const stamp = Date.now();
+  const created = `Verify Bar ${stamp}`;
+  const renamed = `Verify Patio ${stamp}`;
+
+  // Count document navigations from here on. Amendment 2's whole point is
+  // that saving does not navigate, so navigation has to be *measured*, not
+  // assumed from the absence of a visible flicker.
+  let documentLoads = 0;
+  page.on("request", (r) => {
+    if (r.resourceType() === "document") documentLoads++;
+  });
+
+  await page.getByRole("button", { name: /new location/i }).click().catch(() => {});
+  await page.fill('input[placeholder="e.g., Patio Bar"]', created);
+  const navsBeforeCreate = documentLoads;
+  await page.getByRole("button", { name: /create location/i }).click();
+  await page.locator("table tbody").getByText(created, { exact: false }).first().waitFor({ timeout: 15000 });
+  record(
+    "a new location appears without a page navigation",
+    documentLoads === navsBeforeCreate,
+    `${documentLoads - navsBeforeCreate} document loads during the create`,
+  );
+
+  // Rename + re-mode, then prove it survived a reload rather than only
+  // living in local state.
+  const row = page.locator("tbody tr", { hasText: created });
+  await row.getByRole("button", { name: /^edit$/i }).click();
+  await page.fill('input[placeholder="e.g., Patio Bar"]', renamed);
+  const modeSelect = page.locator("select").first();
+  const originalMode = await modeSelect.inputValue();
+  await modeSelect.selectOption(originalMode === "tenths" ? "quantity" : "tenths");
+  await page.getByRole("button", { name: /save changes/i }).click();
+  await page.locator("table tbody").getByText(renamed, { exact: false }).first().waitFor({ timeout: 15000 });
+
+  await page.reload({ waitUntil: "networkidle" });
+  const persisted = await page.content();
+  record(
+    "rename and count-mode change survive a reload",
+    persisted.includes(renamed) && !persisted.includes(created),
+    `"${renamed}" present, old name gone`,
+  );
+
+  // ---- slice 3: retire, and the picker stops offering it ------------------
+  const retireRow = page.locator("tbody tr", { hasText: renamed });
+  await retireRow.getByRole("button", { name: /^retire$/i }).click();
+  await retireRow.getByRole("button", { name: /confirm retire/i }).click();
+  await page.locator("tbody tr", { hasText: renamed }).getByText("Retired").waitFor({ timeout: 15000 });
+  record("a retired location stays listed and is marked Retired", true, renamed);
+
+  // The point of Decision 5: this happens with no scan-page code changed.
+  const scanPageTouched = execSync("git diff main...HEAD --name-only", { cwd: process.cwd() })
+    .toString()
+    .split("\n")
+    .some((f) => f.includes("count/[countId]/scan/page.tsx"));
+  record(
+    "the scan page was not modified to make retirement work (Decision 5)",
+    !scanPageTouched,
+    scanPageTouched ? "scan/page.tsx IS in the diff" : "scan/page.tsx untouched in main...HEAD",
+  );
+
+  // ---- slice 5: the dashboard counts in the database, not in a page ------
+  const [[{ activeProducts }]] = await sql.query("SELECT COUNT(*) AS activeProducts FROM product WHERE active = 1");
+  await page.goto(`${BASE}/office`, { waitUntil: "networkidle" });
+  const healthText = await page.getByText(/active products/i).first().innerText();
+  const shown = Number((healthText.match(/([\d,]+)\s*active products/i)?.[1] ?? "").replace(/,/g, ""));
+  record(
+    "catalog health matches SELECT COUNT(*), and is not capped at 100",
+    shown === Number(activeProducts),
+    `tile=${shown} db=${activeProducts}`,
+  );
+
+  // ---- slice 4: per-cell cost editing, and no navigation per save --------
+  await page.goto(`${BASE}/office/catalog`, { waitUntil: "networkidle" });
+  await waitForHydration(page, "table");
+
+  const costCells = page.locator('input[aria-label^="Unit cost for"]');
+  const cellCount = await costCells.count();
+  record("cost cells are editable inputs in the table", cellCount > 0, `${cellCount} cost inputs`);
+
+  const EDITS = Math.min(4, cellCount);
+  const navsBeforeEdits = documentLoads;
+  for (let i = 0; i < EDITS; i++) {
+    const cell = costCells.nth(i);
+    restoreLog.push({ label: await cell.getAttribute("aria-label"), value: await cell.inputValue() });
+    await cell.fill(String(11 + i));
+    await cell.blur();
+    await page.waitForTimeout(700);
+  }
+  record(
+    `${EDITS} cost cells saved with zero page navigations`,
+    documentLoads === navsBeforeEdits,
+    `${documentLoads - navsBeforeEdits} document loads across ${EDITS} saves (Amendment 2)`,
+  );
+
+  // The cell must settle on the value the SERVER returned, not the typed one.
+  // "007.5" is the cheap probe: any normalization at all proves the round trip.
+  const probe = costCells.nth(0);
+  await probe.fill("007.5");
+  await probe.blur();
+  await page.waitForTimeout(1200);
+  const settled = await probe.inputValue();
+  record(
+    "an edited cell settles on the server's returned value",
+    settled !== "007.5" && Number(settled) === 7.5,
+    `typed "007.5", cell shows "${settled}"`,
+  );
+
+  // ---- slice 6: what actually lands on the clipboard ---------------------
+  await page.goto(`${BASE}/office/reorder`, { waitUntil: "networkidle" });
+  const copyButtons = page.locator('button[aria-label^="Copy "]');
+  if ((await copyButtons.count()) === 0) {
+    record(
+      "reorder copy/print",
+      true,
+      "SKIPPED — no vendor block renders: the dev data has no par levels, so this screen cannot produce a row (its own empty state says so). Not a pass.",
+    );
+    skipped.push("slice 6 copy/print — needs a par level and a closed count in the dev data");
+  } else {
+    await copyButtons.first().click();
+    await page.waitForTimeout(500);
+    const clip = await page.evaluate(() => navigator.clipboard.readText());
+    record(
+      "the clipboard text is dated and itemised",
+      /count #\d+/i.test(clip) && clip.trim().split("\n").length > 1,
+      JSON.stringify(clip.slice(0, 120)),
+    );
+
+    // Print without a dialog: window.print is stubbed at document start, so
+    // the click cannot open a modal that would freeze the whole session. The
+    // stub records the DOM state at print time, which is the thing worth
+    // asserting — that the scope classes were actually applied.
+    const printState = await page.evaluate(async () => {
+      const btn = document.querySelector('button[aria-label^="Print "]');
+      btn?.click();
+      await new Promise((r) => setTimeout(r, 300));
+      return window.__printState ?? null;
+    });
+    record(
+      "Print applies the scope classes before printing",
+      Boolean(printState?.called) && printState.bodyClass.includes("print-scope-active") && printState.targets === 1,
+      printState ? `body="${printState.bodyClass}" targets=${printState.targets}` : "window.print was never called",
+    );
+
+    // And the stylesheet those classes rely on must really hide the rest.
+    await page.emulateMedia({ media: "print" });
+    const hides = await page.evaluate(() => {
+      document.body.classList.add("print-scope-active");
+      const blocks = [...document.querySelectorAll("section")];
+      blocks[0]?.classList.add("print-target");
+      const target = getComputedStyle(blocks[0]).visibility;
+      const other = blocks[1] ? getComputedStyle(blocks[1]).visibility : "n/a";
+      return { target, other };
+    });
+    await page.emulateMedia({ media: "screen" });
+    record(
+      "print CSS shows only the target block",
+      hides.target === "visible" && hides.other !== "visible",
+      `target=${hides.target} sibling=${hides.other}`,
+    );
+  }
+
   // Collected in the page, so it must be read out before the browser closes.
   cspViolations.push(...(await page.evaluate(() => window.__csp ?? [])));
 
@@ -135,6 +418,28 @@ try {
   await browser.close();
 }
 
+// ---- put the dev data back ------------------------------------------------
+// The cost cells were edited in place against the owner's real catalog, and
+// the catalog is uncosted on purpose right now — leaving 11.00 behind would be
+// exactly the plausible-but-wrong data AGENTS.md warns about, and it would
+// silently make the valuation non-zero and wrong.
+try {
+  for (const { label, value } of restoreLog) {
+    const name = label.replace(/^Unit cost for /, "");
+    await sql.execute("UPDATE product SET current_unit_cost = ? WHERE name = ?", [value === "" ? null : value, name]);
+  }
+  record("edited product costs restored to their original values", true, `${restoreLog.length} products`);
+
+  // The throwaway locations this run created are removed by the harness — this
+  // is a fixture teardown, not the application deleting a location. Invariant 6
+  // still holds: the app only ever retired it, which is what was verified above.
+  const [res] = await sql.execute("DELETE FROM location WHERE name LIKE 'Verify Bar %' OR name LIKE 'Verify Patio %'");
+  record("throwaway verification locations removed", true, `${res.affectedRows} rows`);
+} catch (err) {
+  record("dev data restored", false, `MANUAL CLEANUP NEEDED — ${String(err).split("\n")[0]}; intended: ${JSON.stringify(restoreLog)}`);
+}
+await sql.end();
+
 record("no CSP violations", cspViolations.length === 0, cspViolations.join("; ") || "none");
 record(
   "no console errors",
@@ -144,4 +449,19 @@ record(
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
+
+if (skipped.length) {
+  console.log("\nNOT VERIFIED (absence of a failure here is not evidence):");
+  for (const s of skipped) console.log(`  - ${s}`);
+}
+
+/**
+ * Checks no browser can make, listed every run so they are not quietly
+ * forgotten. Each is covered against real MariaDB in the test suite; what is
+ * missing is only the browser half.
+ */
+console.log("\nNEEDS A SECOND ACCOUNT (no manager or staff user exists in this database):");
+console.log("  - the cost column is ABSENT from a manager's DOM, not merely disabled");
+console.log("  - staff get redirected away from /office/locations and see no nav link");
+
 process.exitCode = failed.length === 0 ? 0 : 1;
