@@ -29,6 +29,14 @@ five-location walk, 90 of 101 products unpriced. The project moved from "does it
 work at all" to "does it work at scale" in one day, and this file should not be
 read as saying more than that.
 
+**Also as of 2026-08-12, the app sets itself up.** Phases 1 and 1.5 shipped:
+locations are manageable from the app rather than by SQL, cost and case size are
+editable in place, the dashboard counts in the database instead of off a capped
+array, and a per-vendor order copies or prints. 163 integration tests and 28
+browser checks pass. **This changes what is buildable, not what is measured** —
+the binding constraint on closing Phase 1 is now the owner entering 90 costs and
+some par levels, which no amount of code can do.
+
 **Corrected 2026-08-11.** The paragraph that stood here described a 2026-07-31
 session against a volume that no longer exists — the database has been reset
 since, and that evidence is unrecoverable. What the current volume actually
@@ -247,6 +255,44 @@ Written, reviewed, typechecked — never observed working.
 - **The deploy pipeline.** Built, never run against a real host.
 
 ## Recent history
+
+- **2026-08-12** — **Phases 1 and 1.5 built through the 4-gate workflow: the
+  app now sets itself up.** Seven slices, planned in
+  `docs/plans/phase-1-to-1.5/` before any code existed, then built by subagents
+  one slice at a time. Locations are manageable from the app (create, rename,
+  change count mode, retire — migration `0003` added `location.active`, which
+  the ROADMAP had not anticipated); cost and case size are editable in place in
+  the catalog table; the dashboard counts in the database instead of off a
+  100-row-capped array; a per-vendor order copies to the clipboard or prints;
+  and three long-standing script/dev-env gaps are closed. **163 integration
+  tests pass and 28 browser checks pass**, the latter automated as
+  `bun run verify:browser` against a real Chrome.
+
+  **Two findings are worth more than the features.** The security review caught
+  that retiring a location never blocked *writes* into it — Gate 2's Decision 5
+  protected the read side, so a retired location vanishes from the picker on a
+  fresh fetch, but the scan screen fetches locations once and holds them per leg
+  by design, so a counter who had already loaded a location kept a live,
+  writable handle on it. `deactivateLocation`'s open-count guard structurally
+  cannot see that client: no `count_line` rows exist yet, so retirement
+  succeeds and every later scan lands in a retired location with no error
+  anywhere. Fixed in `ed5580b`, four tests, one mutation-checked. **Excluding a
+  row from a list is not the same as refusing a write to it** — any future
+  "deactivate" affordance needs both halves.
+
+  Then browser verification nearly renamed a real location. Editing a location
+  was a click on the `<tr>` itself — no Edit button, `tabIndex: -1`, no role,
+  and a form headed only "EDIT LOCATION" that never named its subject. Rows
+  reflow as the inline form opens, so a click aimed at one row landed on **Speed
+  Rail** and prefilled its name; one more click would have renamed the bar's
+  speed rail and flipped its count mode, with nothing on screen looking wrong
+  afterwards. Caught only by reading the prefilled value before typing.
+
+  **What is still not measured:** the owner's data entry. 90 unit costs, 16 case
+  sizes, par levels, vendors and 5 wine producers are all still absent, and
+  Phase 1 cannot close until they exist — the slices made that survivable, they
+  did not do it. The reorder screen literally cannot produce a row today because
+  no product has a par level; proving copy/print required fixturing one in.
 
 - **2026-08-12** — **The camera, the offline queue and the production CSP all
   ran for real. Counts 3 and 4.** Three of this file's four longest-standing
@@ -740,28 +786,65 @@ their risk has changed; they are simply not next. The new order also moves
 go-live to **Phase 3**, behind a UI redesign (Phase 2) and OCR invoice
 automation (Phase 2.5).
 
-What is next is the only remaining **construction** in Phase 1.
+**Both of Phase 1's remaining construction items shipped on 2026-08-12** — the
+locations screen and inline cost entry — so what is next is no longer code.
+Their original entries are kept at the bottom of this section for the record.
 
 `owner@truestock.local` is the **only** account in the database — have its
-password or run `bun run create-user` before walking anywhere. The stack is
-currently in **production mode** (`bun run docker:up:prod`), which has no hot
-reload and accepts sign-in **only on the https origin**; `bun run docker:up:lan`
-returns to dev.
+password or run `bun run create-user` before walking anywhere. Two browser
+checks are blocked on that: a manager's DOM must not contain the cost column,
+and staff must be redirected off `/office/locations`. Both are covered at the
+action layer by the test suite; only the browser half is missing, and
+`bun run verify:browser` prints them as NOT VERIFIED on every run so they
+cannot pass silently.
 
-1. **A locations management screen** (`/office/locations`). `lib/domain/catalog.ts`
+The stack is currently in **dev mode** (`next dev` in the app container, HMR
+connected). `bun run docker:up:prod` is the production-mode path, which has no
+hot reload and accepts sign-in **only on the https origin** — and it is the only
+way to test the CSP behaviour that broke this project once, because that failure
+was a production config problem. A clean CSP result under `next dev` is not a
+production result.
+
+1. **The owner's data entry** (open item #4), and nothing here can do it for
+   him. 90 unit costs, 16 case sizes, par levels, vendors and 5 wine producers.
+   **Phase 1 cannot close until this exists**: valuation is proven but nearly
+   empty, and the reorder screen literally cannot produce a row — proving its
+   copy/print worked at all required fixturing in a par level and a vendor,
+   because the database has zero of each. Gate 1's success metric is this
+   sitting: all 90 costs, unaided, under 45 minutes.
+2. **Phase 1.9's measurement.** A timed count and a full five-location walk.
+   Every mechanism is proven; nothing is measured. 8 count lines across four
+   sessions is not a count.
+3. **Two small fixes found while verifying, both in `docs/open-items.md`.**
+   Item 25: `docker:down` does not stop the TLS proxy, so the teardown command
+   item 24's new guard tells you to run does not fully work. Item 26: the
+   preflight origin banner reports a catastrophic failure on plain `localhost`
+   while the page works fine — a diagnostic people learn to ignore.
+
+The two entries that used to stand here, both now done:
+
+1. ~~**A locations management screen** (`/office/locations`).~~ Shipped
+   2026-08-12. `lib/domain/catalog.ts`
    has `listLocations` and nothing else — no create, no update, no route. This
    already cost real time on 2026-08-12: adding `Tap 1` so kegs could be counted
    at all took a CSV edit plus SQL against the live database. `location.count_mode`
    is what decides whether a product gets the fill pad or a quantity stepper, and
    it is unreachable from the app.
-2. **Bulk cost and case-size entry.** The fields already exist on
+2. ~~**Bulk cost and case-size entry.**~~ Shipped 2026-08-12 as per-cell inline
+   editing. The fields already exist on
    `product-edit-form.tsx` and are correctly role-gated; what is missing is
    throughput. 90 unit costs today means 90 separate page loads. Inline-editable
    columns in `catalog-table.tsx`, reusing the bulk-bar machinery the vendor work
    already built.
-3. **Then the data itself** (open item #4). 90 of 99 active products are unpriced
-   and 0 carry a `case_size`, so valuation is proven but nearly empty and the
-   reorder list still cannot produce a row. Item 2 exists to make this survivable.
+
+   One decision from building it is worth carrying forward: the cells
+   deliberately do **not** refresh the page after each save. A
+   `router.refresh()` per commit is ~180 round trips against a 45-minute,
+   90-cost budget, so only the edited row is patched — from the value the action
+   *returned*, not the value typed, so a manager's role-stripped cost visibly
+   snaps back. The accepted cost is that the "needs attention" pills and the
+   catalog-health counts lag until the next navigation. That is a tradeoff, not
+   a bug; do not "fix" it with cross-row recomputation.
 
 **#19 (vendors have no write path) is done** as of 2026-07-31, so the reorder
 list can group by vendor rather than dumping everything under "No vendor set" —
