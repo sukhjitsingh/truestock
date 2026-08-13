@@ -11,8 +11,8 @@ import { VendorEditForm } from "./vendor-edit-form";
  *
  * Shows all vendors in a table. An empty state explains that vendors group
  * reorder lines and why they matter. A "Create vendor" button reveals an inline
- * form for adding the first vendor or subsequent ones. Clicking a vendor row
- * opens the edit form for that vendor.
+ * form for adding the first vendor or subsequent ones. Each row carries an
+ * explicit Edit button.
  *
  * The empty state is critical — docs/mvp-gaps.md finding A calls this out: the
  * reorder screen's empty state once said "Nothing is below its reorder point,"
@@ -21,8 +21,18 @@ import { VendorEditForm } from "./vendor-edit-form";
  * and how to create one.
  *
  * Editing is inline in the same form used for creation (VendorEditForm detects
- * mode by checking if vendor is undefined vs populated). A row click sets
- * editingId and scrolls the form into view. Cancel or successful save closes it.
+ * mode by checking if vendor is undefined vs populated). The row's Edit button
+ * sets editingId and scrolls the form into view. Cancel or successful save
+ * closes it.
+ *
+ * Edit is a real button rather than a click on the whole `<tr>`, and the form
+ * heading names the vendor. Both were changed 2026-08-12 (open item 27) after
+ * the identical pattern on `/office/locations` put a click on the wrong row:
+ * rows reflow as the inline form opens above them, so a click aimed at one row
+ * landed on another and prefilled its name, one confirm away from renaming a
+ * real record with nothing on screen looking wrong. A `<tr>` with an `onClick`
+ * is also unreachable by keyboard and invisible to a screen reader. See
+ * `locations-table.tsx` for the reference implementation.
  */
 export function VendorsList({ vendors }: { vendors: VendorSummary[] }) {
   const router = useRouter();
@@ -139,15 +149,14 @@ export function VendorsList({ vendors }: { vendors: VendorSummary[] }) {
                   <th scope="col" className="py-2 text-label uppercase text-muted-foreground">
                     Lead time
                   </th>
+                  <th scope="col" className="py-2 text-right text-label uppercase text-muted-foreground">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {vendors.map((vendor) => (
-                  <tr
-                    key={vendor.id}
-                    onClick={() => handleEditClick(vendor.id)}
-                    className="border-b border-border align-top cursor-pointer hover:bg-muted transition-colors"
-                  >
+                  <tr key={vendor.id} className="border-b border-border align-top">
                     <td className="py-3">
                       <span className="block text-row-subtitle font-semibold text-foreground">
                         {vendor.name}
@@ -161,6 +170,11 @@ export function VendorsList({ vendors }: { vendors: VendorSummary[] }) {
                     </td>
                     <td className="py-3 text-row-subtitle text-muted-foreground">
                       {vendor.leadTimeDays != null ? `${vendor.leadTimeDays}d` : "—"}
+                    </td>
+                    <td className="py-3 text-right">
+                      <Button variant="outline" size="tap" onClick={() => handleEditClick(vendor.id)}>
+                        Edit
+                      </Button>
                     </td>
                   </tr>
                 ))}

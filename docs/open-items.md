@@ -1066,11 +1066,21 @@ simply confirm a `/_next/*` fetch succeeds — and treat `localhost` and
 `127.0.0.1` as allowed by construction. The LAN case it was built for (item 24)
 is the one where the warning is real and must stay.
 
-## 27. `/office/vendors` still has the row-click edit affordance that was just removed from locations
+## ~~27. `/office/vendors` still has the row-click edit affordance that was just removed from locations~~ — **CLOSED 2026-08-12**
 
-**Trigger: now, or the next time anyone edits a vendor. This is the original of
-the pattern — `locations-table.tsx` was modelled on `vendors-list.tsx`, so the
-finding below was inherited, not invented.**
+**Closed the same day it was filed, with the same three changes as `957bfeb`:**
+an explicit `Edit` button in a new Actions column, the `<tr>`'s `onClick` and
+`cursor-pointer` removed, and `vendor-edit-form.tsx`'s heading changed to
+`Edit ${vendor.name}` so the form names its subject.
+
+**Both halves are now covered by `bun run verify:browser`** — the vendor edit
+form must be editing the row whose Edit was clicked, and its heading must
+contain that vendor's name. Neither check could have passed before the fix:
+there was no button to click, and the heading was the constant `"Edit vendor"`.
+The suite went 28 → 30 checks. When no vendor exists — the default state of the
+dev database — both are reported SKIPPED rather than passing vacuously.
+
+The finding, for the record:
 
 Found 2026-08-12 while fixing the locations screen (`957bfeb`). All three legs
 of that finding are still present here:

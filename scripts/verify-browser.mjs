@@ -329,6 +329,35 @@ try {
     scanPageTouched ? "scan/page.tsx IS in the diff" : "scan/page.tsx untouched in main...HEAD",
   );
 
+  // ---- open item 27: /office/vendors has the same Edit affordance ---------
+  // The identical row-click pattern lived here first — locations-table.tsx was
+  // modelled on vendors-list.tsx — so the same assertion belongs on both
+  // screens: the form that opens must be editing the row whose button was
+  // clicked. Skipped rather than faked when no vendor exists, which is the
+  // default state of the dev database.
+  await page.goto(`${BASE}/office/vendors`, { waitUntil: "networkidle" });
+  const vendorRows = page.locator("table tbody tr");
+  if ((await vendorRows.count()) === 0) {
+    record("vendors Edit button", true, "SKIPPED — no vendor exists in this database. Not a pass.");
+    skipped.push("open item 27 — /office/vendors Edit button: needs at least one vendor row");
+  } else {
+    const firstVendorName = (await vendorRows.first().locator("td").first().innerText()).trim();
+    await vendorRows.first().getByRole("button", { name: /^edit$/i }).click();
+    const vendorNameField = page.locator("#name");
+    const editingVendor = await vendorNameField.inputValue();
+    record(
+      "the vendor edit form is editing the row whose Edit was clicked",
+      editingVendor === firstVendorName,
+      `form prefilled with "${editingVendor}", row read "${firstVendorName}"`,
+    );
+    const vendorHeading = await page.getByRole("heading", { level: 2 }).first().innerText();
+    record(
+      "the vendor edit form names its subject",
+      vendorHeading.toLowerCase().includes(firstVendorName.toLowerCase()),
+      `heading reads "${vendorHeading}"`,
+    );
+  }
+
   // ---- slice 5: the dashboard counts in the database, not in a page ------
   const [[{ activeProducts }]] = await sql.query("SELECT COUNT(*) AS activeProducts FROM product WHERE active = 1");
   await page.goto(`${BASE}/office`, { waitUntil: "networkidle" });

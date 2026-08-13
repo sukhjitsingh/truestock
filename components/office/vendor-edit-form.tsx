@@ -96,7 +96,7 @@ export function VendorEditForm({
     <form method="post" onSubmit={save} className="flex flex-col gap-section-gap" noValidate>
       <section className="flex flex-col gap-4">
         <h2 className="text-label uppercase text-muted-foreground">
-          {isCreate ? "New vendor" : "Edit vendor"}
+          {isCreate ? "New vendor" : `Edit ${vendor.name}`}
         </h2>
 
         <Field label="Name" htmlFor="name" error={fieldErrors.name}>
