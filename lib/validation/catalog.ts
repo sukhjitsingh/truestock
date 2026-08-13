@@ -12,11 +12,16 @@
  * then strip" beats "reject the whole request").
  */
 import { z } from "zod";
+// From db/enums.ts, never db/schema.ts: this module is imported by client
+// components (components/office/catalog-table.tsx pulls `unitCostSchema`), and
+// a value import of the enums from the schema drags drizzle-orm and every
+// table definition into the browser bundle. That is what made the back-office
+// catalog route hang. See the header of db/enums.ts.
 import {
   productUnitTypeEnum,
   barcodePackLevelEnum,
   locationCountModeEnum,
-} from "@/db/schema";
+} from "@/db/enums";
 
 export const barcodeStringSchema = z
   .string()

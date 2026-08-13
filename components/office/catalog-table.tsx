@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -129,14 +129,43 @@ export function CatalogTable({
   }
 
   /** Bubbled up from an editable cell on a successful save — patches only that row. */
-  function patchRow(updated: ProductSummary) {
+  const patchRow = useCallback((updated: ProductSummary) => {
     setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-  }
+  }, []);
 
   const canManage = userRole === "owner" || userRole === "manager";
 
-  const categories = Array.from(new Set(rows.map((p) => p.category))).sort();
-  const filteredRows = categoryFilter ? rows.filter((p) => p.category === categoryFilter) : rows;
+  const categories = useMemo(
+    () => Array.from(new Set(rows.map((p) => p.category))).sort(),
+    [rows],
+  );
+
+  /**
+   * This array is `useReactTable`'s `data`, and TanStack v8 watches it BY
+   * REFERENCE: `getCoreRowModel`/`getSortedRowModel` rebuild their row models
+   * whenever the reference changes. Built inline, it was a new array on every
+   * render, so every render re-derived all 99 rows' models and re-ran the
+   * column definitions closed over it.
+   *
+   * **This is an optimization, not a correctness fix — say so plainly, because
+   * an earlier version of this comment claimed otherwise.** It was written as
+   * the cure for the catalog page hanging, on a theory that the unstable
+   * reference drove `_autoResetPageIndex` → `setPagination` → re-render in a
+   * closed loop. That theory is wrong and was disproven twice on 2026-08-13:
+   * render instrumentation showed this component never renders more than three
+   * times, and the un-memoized original measured 151–710 ms per category-pill
+   * click with every click completing. The actual hang was Drizzle reaching
+   * the client bundle — see the header of db/enums.ts.
+   *
+   * What the memoization is worth, measured on the same five clicks in a fresh
+   * tab against the dev server: 308/638/315/114/350 ms memoized vs
+   * 396/710/439/151/445 ms inline. Consistent, roughly 20%, and not a fix for
+   * anything. Keep it on those terms.
+   */
+  const filteredRows = useMemo(
+    () => (categoryFilter ? rows.filter((p) => p.category === categoryFilter) : rows),
+    [rows, categoryFilter],
+  );
 
   function setCategory(next: string | null) {
     setCategoryFilter(next);
@@ -148,7 +177,7 @@ export function CatalogTable({
   // sync. "Visible" is filter-scoped, not page-scoped: selecting all is a
   // statement about everything matching the current filters, not just the
   // rows on the current pagination page.
-  const visibleIds = new Set(filteredRows.map((p) => p.id));
+  const visibleIds = useMemo(() => new Set(filteredRows.map((p) => p.id)), [filteredRows]);
 
   // When the product list changes (search query, view filter, category
   // filter, navigation), prune selectedIds to only include products still
@@ -156,7 +185,10 @@ export function CatalogTable({
   // products — a silent failure where the manager sees a count for rows they
   // believe they selected, but the ids actually belong to products that are
   // no longer displayed.
-  const visibleSelectedIds = new Set(Array.from(selectedIds).filter((id) => visibleIds.has(id)));
+  const visibleSelectedIds = useMemo(
+    () => new Set(Array.from(selectedIds).filter((id) => visibleIds.has(id))),
+    [selectedIds, visibleIds],
+  );
 
   // Ref for the "select all" checkbox to manage indeterminate state (CSS has
   // no way to set it; it must be done in JS via the property).
@@ -168,8 +200,7 @@ export function CatalogTable({
       selectAllRef.current.checked = allSelected;
       selectAllRef.current.indeterminate = someSelected;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleSelectedIds.size, visibleIds.size]);
+  }, [visibleSelectedIds, visibleIds]);
 
   function navigate(next: { q?: string; view?: string }) {
     const search = new URLSearchParams(params.toString());
@@ -180,26 +211,33 @@ export function CatalogTable({
     router.push(`/office/catalog?${search.toString()}`);
   }
 
-  function toggleProduct(id: number) {
-    const next = new Set(selectedIds);
-    if (next.has(id)) {
-      next.delete(id);
-    } else {
-      next.add(id);
-    }
-    setSelectedIds(next);
+  // These three are `useCallback` because the column definitions below close
+  // over them, and `columns` is memoized — see the note on `filteredRows`.
+  // `toggleProduct` reads the previous selection through the functional
+  // updater rather than closing over `selectedIds`, which is what lets it stay
+  // referentially stable across a selection change.
+  const toggleProduct = useCallback((id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
     setAssignError(null);
-  }
+  }, []);
 
-  function selectAllVisible() {
+  const selectAllVisible = useCallback(() => {
     setSelectedIds(new Set(visibleIds));
     setAssignError(null);
-  }
+  }, [visibleIds]);
 
-  function clearSelection() {
+  const clearSelection = useCallback(() => {
     setSelectedIds(new Set());
     setAssignError(null);
-  }
+  }, []);
 
   async function submitAssignVendor() {
     if (visibleSelectedIds.size === 0) return;
@@ -243,168 +281,190 @@ export function CatalogTable({
 
   // Column arrays are built conditionally, per role, at call time —
   // `columnVisibility` is never used (ui-spec-web.md §1's binding rule).
-  const columns: ColumnDef<ProductSummary>[] = [];
+  //
+  // Memoized for the same reason `filteredRows` is: `useReactTable` compares
+  // `columns` by reference too, and rebuilding it every render throws away and
+  // reconstructs the entire column and row model on each pass.
+  const columns = useMemo<ColumnDef<ProductSummary>[]>(() => {
+    const cols: ColumnDef<ProductSummary>[] = [];
 
-  if (canManage) {
-    columns.push({
-      id: "select",
-      header: () => (
-        <input
-          ref={selectAllRef}
-          type="checkbox"
-          onChange={(e) => (e.currentTarget.checked ? selectAllVisible() : clearSelection())}
-          aria-label={`Select all ${visibleIds.size} visible products`}
-          className="h-4 w-4 cursor-pointer"
-        />
-      ),
-      cell: ({ row }) => (
-        <input
-          type="checkbox"
-          checked={selectedIds.has(row.original.id)}
-          onChange={() => toggleProduct(row.original.id)}
-          aria-label={`Select ${row.original.name}`}
-          className="h-4 w-4 cursor-pointer"
-        />
-      ),
-      enableSorting: false,
-    });
-  }
+    if (canManage) {
+      cols.push({
+        id: "select",
+        header: () => (
+          <input
+            ref={selectAllRef}
+            type="checkbox"
+            onChange={(e) => (e.currentTarget.checked ? selectAllVisible() : clearSelection())}
+            aria-label={`Select all ${visibleIds.size} visible products`}
+            className="h-4 w-4 cursor-pointer"
+          />
+        ),
+        cell: ({ row }) => (
+          <input
+            type="checkbox"
+            checked={selectedIds.has(row.original.id)}
+            onChange={() => toggleProduct(row.original.id)}
+            aria-label={`Select ${row.original.name}`}
+            className="h-4 w-4 cursor-pointer"
+          />
+        ),
+        enableSorting: false,
+      });
+    }
 
-  columns.push({
-    id: "product",
-    accessorKey: "name",
-    header: "Product",
-    cell: ({ row }) => {
-      const product = row.original;
-      return (
-        <div>
-          <span
-            className="block max-w-[16rem] truncate text-row-subtitle font-semibold text-foreground"
-            title={product.name}
-          >
-            {product.name}
-          </span>
-          <span className="block text-caption text-muted-foreground">
-            {product.unitType === "keg" ? "Keg" : `${product.sizeMl}ml`}
-            {product.brand ? ` · ${product.brand}` : ""}
-          </span>
-          {product.incomplete.length > 0 ? (
-            <span className="mt-1.5 flex flex-wrap gap-1.5">
-              {product.incomplete.map((reason) => (
-                <StatusPill key={reason} tone="warning">
-                  {REASON_LABEL[reason]}
-                </StatusPill>
-              ))}
-            </span>
-          ) : null}
-        </div>
-      );
-    },
-  });
-
-  columns.push({
-    id: "category",
-    accessorKey: "category",
-    header: "Category",
-    cell: ({ getValue }) => (
-      <span className="text-row-subtitle text-muted-foreground">{getValue<string>()}</span>
-    ),
-  });
-
-  columns.push({
-    id: "onHand",
-    accessorFn: (row) => row.stock?.onHand ?? -1,
-    header: "On hand",
-    cell: ({ row }) => {
-      const stock = row.original.stock;
-      if (!stock) return null;
-      // No closed count yet — "never counted" is not "zero on hand", and
-      // showing a 0 here would read as an urgent stockout across the whole
-      // catalog.
-      if (stock.onHand == null) {
-        return <span className="text-row-subtitle text-muted-foreground">no closed count</span>;
-      }
-      return (
-        <div className="flex flex-col items-end">
-          <StockCell onHand={stock.onHand} par={stock.parLevel} isPartial={stock.onHandIsPartial} />
-        </div>
-      );
-    },
-  });
-
-  if (canSeeCost) {
-    columns.push({
-      id: "unitCost",
-      accessorFn: (row) => (row.currentUnitCost != null ? Number(row.currentUnitCost) : -1),
-      header: "Unit cost",
+    cols.push({
+      id: "product",
+      accessorKey: "name",
+      header: "Product",
       cell: ({ row }) => {
         const product = row.original;
-        if (canEditCost) {
-          return (
-            <EditableProductCell
-              productId={product.id}
-              field="currentUnitCost"
-              value={product.currentUnitCost ?? ""}
-              placeholder="Enter cost"
-              ariaLabel={`Unit cost for ${product.name}`}
-              onSaved={patchRow}
-            />
-          );
-        }
-        return product.currentUnitCost ? (
-          <Money value={Number(product.currentUnitCost)} />
-        ) : (
-          <NullValue reason="not-entered" />
+        return (
+          <div>
+            <span
+              className="block max-w-[16rem] truncate text-row-subtitle font-semibold text-foreground"
+              title={product.name}
+            >
+              {product.name}
+            </span>
+            <span className="block text-caption text-muted-foreground">
+              {product.unitType === "keg" ? "Keg" : `${product.sizeMl}ml`}
+              {product.brand ? ` · ${product.brand}` : ""}
+            </span>
+            {product.incomplete.length > 0 ? (
+              <span className="mt-1.5 flex flex-wrap gap-1.5">
+                {product.incomplete.map((reason) => (
+                  <StatusPill key={reason} tone="warning">
+                    {REASON_LABEL[reason]}
+                  </StatusPill>
+                ))}
+              </span>
+            ) : null}
+          </div>
         );
       },
     });
-  }
 
-  if (canManage) {
-    columns.push({
-      id: "caseSize",
-      accessorFn: (row) => row.caseSize ?? -1,
-      header: "Case size",
+    cols.push({
+      id: "category",
+      accessorKey: "category",
+      header: "Category",
+      cell: ({ getValue }) => (
+        <span className="text-row-subtitle text-muted-foreground">{getValue<string>()}</span>
+      ),
+    });
+
+    cols.push({
+      id: "onHand",
+      accessorFn: (row) => row.stock?.onHand ?? -1,
+      header: "On hand",
       cell: ({ row }) => {
-        const product = row.original;
-        if (isCountedByCase(product)) {
-          return (
-            <EditableProductCell
-              productId={product.id}
-              field="caseSize"
-              value={product.caseSize == null ? "" : String(product.caseSize)}
-              placeholder="Case size"
-              ariaLabel={`Case size for ${product.name}`}
-              onSaved={patchRow}
-            />
-          );
+        const stock = row.original.stock;
+        if (!stock) return null;
+        // No closed count yet — "never counted" is not "zero on hand", and
+        // showing a 0 here would read as an urgent stockout across the whole
+        // catalog.
+        if (stock.onHand == null) {
+          return <span className="text-row-subtitle text-muted-foreground">no closed count</span>;
         }
         return (
-          <span
-            className="inline-flex"
-            aria-label={`Case size is not applicable for ${product.name} — not counted by the case`}
-          >
-            <NullValue reason="not-applicable" />
-          </span>
+          <div className="flex flex-col items-end">
+            <StockCell
+              onHand={stock.onHand}
+              par={stock.parLevel}
+              isPartial={stock.onHandIsPartial}
+            />
+          </div>
         );
       },
     });
 
-    columns.push({
-      id: "edit",
-      header: "",
-      enableSorting: false,
-      cell: ({ row }) => (
-        <Link
-          href={`/office/catalog/${row.original.id}`}
-          aria-label={`Edit ${row.original.name}`}
-          className={cn(buttonVariants({ variant: "outline", size: "tap" }), "whitespace-nowrap")}
-        >
-          Edit
-        </Link>
-      ),
-    });
-  }
+    if (canSeeCost) {
+      cols.push({
+        id: "unitCost",
+        accessorFn: (row) => (row.currentUnitCost != null ? Number(row.currentUnitCost) : -1),
+        header: "Unit cost",
+        cell: ({ row }) => {
+          const product = row.original;
+          if (canEditCost) {
+            return (
+              <EditableProductCell
+                productId={product.id}
+                field="currentUnitCost"
+                value={product.currentUnitCost ?? ""}
+                placeholder="Enter cost"
+                ariaLabel={`Unit cost for ${product.name}`}
+                onSaved={patchRow}
+              />
+            );
+          }
+          return product.currentUnitCost ? (
+            <Money value={Number(product.currentUnitCost)} />
+          ) : (
+            <NullValue reason="not-entered" />
+          );
+        },
+      });
+    }
+
+    if (canManage) {
+      cols.push({
+        id: "caseSize",
+        accessorFn: (row) => row.caseSize ?? -1,
+        header: "Case size",
+        cell: ({ row }) => {
+          const product = row.original;
+          if (isCountedByCase(product)) {
+            return (
+              <EditableProductCell
+                productId={product.id}
+                field="caseSize"
+                value={product.caseSize == null ? "" : String(product.caseSize)}
+                placeholder="Case size"
+                ariaLabel={`Case size for ${product.name}`}
+                onSaved={patchRow}
+              />
+            );
+          }
+          return (
+            <span
+              className="inline-flex"
+              aria-label={`Case size is not applicable for ${product.name} — not counted by the case`}
+            >
+              <NullValue reason="not-applicable" />
+            </span>
+          );
+        },
+      });
+
+      cols.push({
+        id: "edit",
+        header: "",
+        enableSorting: false,
+        cell: ({ row }) => (
+          <Link
+            href={`/office/catalog/${row.original.id}`}
+            aria-label={`Edit ${row.original.name}`}
+            className={cn(buttonVariants({ variant: "outline", size: "tap" }), "whitespace-nowrap")}
+          >
+            Edit
+          </Link>
+        ),
+      });
+    }
+
+    return cols;
+  }, [
+    canManage,
+    canSeeCost,
+    canEditCost,
+    selectedIds,
+    visibleIds,
+    selectAllVisible,
+    clearSelection,
+    toggleProduct,
+    patchRow,
+  ]);
 
   const table = useReactTable({
     data: filteredRows,

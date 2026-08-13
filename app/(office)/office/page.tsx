@@ -13,8 +13,8 @@ export const metadata = { title: "Dashboard · Truestock" };
 
 /**
  * The back-office landing screen. `/office` used to render the counts table
- * directly; that table now lives at `/office/counts` (components/office/
- * office-nav.tsx was updated alongside this move) and this route answers a
+ * directly; that table now lives at `/office/counts` (linked from the office
+ * rail, `components/office/office-rail.tsx`) and this route answers a
  * different question: "what needs my attention right now."
  *
  * Every read here is an existing server action — no query runs directly
@@ -134,9 +134,12 @@ export default async function OfficeDashboardPage() {
               {/* Owner only — lastClosed.totalValue arrives undefined for a
                   manager (invariant 8), and Money renders nothing for
                   undefined rather than $0.00 (design-system.md §8). */}
+              {/* `block` because `Money` renders a `<span>`: inline, so its
+                  `mt-1` did nothing and the "View summary" link below sat on
+                  the same line, rendering "$0.00View summary". */}
               <Money
                 value={lastClosed.totalValue != null ? Number(lastClosed.totalValue) : undefined}
-                className="mt-1 text-numeral-sm text-muted-foreground"
+                className="mt-1 block text-numeral-sm text-muted-foreground"
               />
               <Link
                 href={`/office/counts/${lastClosed.id}`}
