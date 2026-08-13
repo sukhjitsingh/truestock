@@ -9,55 +9,21 @@
   only. Designed at 1440px. See the annotation block at the bottom of this
   file for design decisions and open questions.
 -->
+<link rel="stylesheet" href="tokens.css" />
 <style>
-  :root {
-    --radius: 1rem;
-    --background: #f7f7f5; --foreground: #111111;
-    --card: #ffffff; --card-foreground: #111111;
-    --muted: #efefec; --muted-foreground: #6b6b6b;
-    --primary: #0a0a0a; --primary-foreground: #ffffff;
-    --secondary: #efefec; --secondary-foreground: #111111;
-    --accent: #2563eb; --accent-foreground: #ffffff;
-    --destructive: #c4304f; --destructive-foreground: #ffffff;
-    --border: #e4e4e1; --input: #8c8c8c; --ring: #2563eb;
-    --success: #1f7a3d; --success-bg: #e4f5e6;
-    --warning: #92600a; --warning-bg: #fdf0dc;
-    --negative: #b8305a; --negative-bg: #fde8ec;
-    --radius-sm: calc(var(--radius) - 4px); --radius-md: calc(var(--radius) - 2px);
-    --radius-lg: var(--radius); --radius-xl: calc(var(--radius) + 4px);
-    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body { background: var(--background); color: var(--foreground); font-family: var(--font-sans);
-    font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; min-width: 1280px; }
-  h1, h2, h3, p, ol, ul { margin: 0; padding: 0; list-style: none; }
-  button, input { font: inherit; color: inherit; }
-  button { cursor: pointer; background: none; border: none; }
-  svg { display: block; }
-  table { border-collapse: collapse; width: 100%; }
-
-  a, button, input, [tabindex] { outline-offset: 2px; }
-  a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  body { min-width: 1280px; }
 
   .flex { display: flex; } .flex-col { flex-direction: column; } .items-center { align-items: center; }
   .items-start { align-items: flex-start; } .justify-between { justify-content: space-between; }
   .justify-center { justify-content: center; } .flex-1 { flex: 1 1 0%; } .gap-2 { gap: .5rem; }
   .gap-3 { gap: .75rem; } .gap-4 { gap: 1rem; } .mt-1 { margin-top: .25rem; } .mt-2 { margin-top: .5rem; }
   .mt-3 { margin-top: .75rem; } .mt-4 { margin-top: 1rem; } .mt-6 { margin-top: 1.5rem; }
-  .uppercase { text-transform: uppercase; } .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .rounded-md { border-radius: var(--radius-md); } .rounded-lg { border-radius: var(--radius-lg); } .rounded-full { border-radius: var(--radius-full); }
   .border { border: 1px solid var(--border); }
   .bg-card { background: var(--card); } .bg-muted { background: var(--muted); }
-  .text-foreground { color: var(--foreground); } .text-muted-foreground { color: var(--muted-foreground); }
-  .text-accent { color: var(--accent); } .text-warning { color: var(--warning); } .text-negative { color: var(--negative); }
-  .text-header-title { font-size: 1.75rem; line-height: 1.15; font-weight: 600; }
-  .text-row-title { font-size: 1.125rem; line-height: 1.3; font-weight: 600; }
-  .text-numeral-md { font-size: 1.5rem; line-height: 1.1; font-weight: 600; }
-  .text-caption { font-size: .8125rem; line-height: 1.4; }
-  .text-label { font-size: .6875rem; line-height: 1.2; font-weight: 600; letter-spacing: .06em; }
-  .tabular-nums { font-variant-numeric: tabular-nums; }
+  .text-negative { color: var(--negative); }
 
   .app-shell { display: flex; min-height: 100vh; }
   .rail { width: 64px; flex-shrink: 0; background: var(--card); border-right: 1px solid var(--border);
@@ -104,7 +70,7 @@
   /* ---- vendor groups ---- */
   .vendor-group { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); margin-bottom: 1rem; overflow: hidden; }
   .vendor-group-header { display: flex; align-items: center; gap: .75rem; padding: .875rem 1.125rem; background: var(--muted); }
-  .vendor-dot { width: 28px; height: 28px; border-radius: var(--radius-full); display: flex; align-items: center; justify-content: center; font-size: .6875rem; font-weight: 700; color: #fff; flex-shrink: 0; }
+  .vendor-dot { width: 28px; height: 28px; border-radius: var(--radius-full); display: flex; align-items: center; justify-content: center; font-size: .6875rem; font-weight: 700; color: var(--primary-foreground); flex-shrink: 0; }
   .vendor-name { font-weight: 700; font-size: .9375rem; }
   .vendor-meta { font-size: .8125rem; color: var(--muted-foreground); }
   .vendor-group-actions { margin-left: auto; }
@@ -205,14 +171,15 @@
         <!-- Hensley Beverage Company -->
         <div class="vendor-group">
           <div class="vendor-group-header">
-            <span class="vendor-dot" style="background:#b8305a;">HB</span>
+            <span class="vendor-dot" style="background:var(--negative);">HB</span>
             <div>
               <div class="vendor-name">Hensley Beverage Company</div>
               <div class="vendor-meta">Beer &amp; draft · lead time 3 days</div>
             </div>
           </div>
           <table>
-            <thead><tr><th style="width:40%;">Product</th><th class="num">On hand</th><th class="num">Par</th><th class="num">Reorder point</th><th class="num">Suggested order</th></tr></thead>
+            <caption class="sr-only">Reorder items from Hensley Beverage Company, 3 of 3 shown</caption>
+            <thead><tr><th scope="col" style="width:40%;">Product</th><th scope="col" class="num">On hand</th><th scope="col" class="num">Par</th><th scope="col" class="num">Reorder point</th><th scope="col" class="num">Suggested order</th></tr></thead>
             <tbody>
               <tr><td><div class="product-name">Blue Moon Belgian White</div><div class="product-sub">Sixtel · Draft keg</div></td><td class="num tabular-nums">0</td><td class="num tabular-nums">2</td><td class="num tabular-nums">1</td><td class="num"><span class="qty-badge">2</span></td></tr>
               <tr><td><div class="product-name">Michelob Ultra</div><div class="product-sub">12 oz · Bottled beer</div></td><td class="num tabular-nums">0</td><td class="num tabular-nums">48</td><td class="num tabular-nums">12</td><td class="num"><span class="qty-badge">48</span></td></tr>
@@ -224,14 +191,15 @@
         <!-- Southern Glazer's -->
         <div class="vendor-group">
           <div class="vendor-group-header">
-            <span class="vendor-dot" style="background:#2563eb;">SG</span>
+            <span class="vendor-dot" style="background:var(--accent);">SG</span>
             <div>
               <div class="vendor-name">Southern Glazer's Wine &amp; Spirits</div>
               <div class="vendor-meta">Spirits &amp; liqueur · lead time 5 days</div>
             </div>
           </div>
           <table>
-            <thead><tr><th style="width:40%;">Product</th><th class="num">On hand</th><th class="num">Par</th><th class="num">Reorder point</th><th class="num">Suggested order</th></tr></thead>
+            <caption class="sr-only">Reorder items from Southern Glazer's Wine &amp; Spirits, 3 of 3 shown</caption>
+            <thead><tr><th scope="col" style="width:40%;">Product</th><th scope="col" class="num">On hand</th><th scope="col" class="num">Par</th><th scope="col" class="num">Reorder point</th><th scope="col" class="num">Suggested order</th></tr></thead>
             <tbody>
               <tr><td><div class="product-name">Patrón Silver Tequila</div><div class="product-sub">750 ml</div></td><td class="num tabular-nums">0</td><td class="num tabular-nums">12</td><td class="num tabular-nums">4</td><td class="num"><span class="qty-badge">12</span></td></tr>
               <tr><td><div class="product-name">Grey Goose Vodka</div><div class="product-sub">750 ml</div></td><td class="num tabular-nums">6</td><td class="num tabular-nums">18</td><td class="num tabular-nums">6</td><td class="num"><span class="qty-badge">12</span></td></tr>
@@ -243,14 +211,15 @@
         <!-- Breakthru Beverage Arizona -->
         <div class="vendor-group">
           <div class="vendor-group-header">
-            <span class="vendor-dot" style="background:#92600a;">BB</span>
+            <span class="vendor-dot" style="background:var(--warning);">BB</span>
             <div>
               <div class="vendor-name">Breakthru Beverage Arizona</div>
               <div class="vendor-meta">Spirits &amp; liqueur · lead time 4 days</div>
             </div>
           </div>
           <table>
-            <thead><tr><th style="width:40%;">Product</th><th class="num">On hand</th><th class="num">Par</th><th class="num">Reorder point</th><th class="num">Suggested order</th></tr></thead>
+            <caption class="sr-only">Reorder items from Breakthru Beverage Arizona, 2 of 2 shown</caption>
+            <thead><tr><th scope="col" style="width:40%;">Product</th><th scope="col" class="num">On hand</th><th scope="col" class="num">Par</th><th scope="col" class="num">Reorder point</th><th scope="col" class="num">Suggested order</th></tr></thead>
             <tbody>
               <tr><td><div class="product-name">Jameson Irish Whiskey</div><div class="product-sub">1.75 L · Handle</div></td><td class="num tabular-nums">3</td><td class="num tabular-nums">10</td><td class="num tabular-nums">4</td><td class="num"><span class="qty-badge">7</span></td></tr>
               <tr><td><div class="product-name">St-Germain Elderflower Liqueur</div><div class="product-sub">750 ml</div></td><td class="num tabular-nums">3</td><td class="num tabular-nums">4</td><td class="num tabular-nums">1</td><td class="num"><span class="qty-badge">1</span></td></tr>
@@ -261,14 +230,15 @@
         <!-- Young's Market -->
         <div class="vendor-group">
           <div class="vendor-group-header">
-            <span class="vendor-dot" style="background:#1f7a3d;">YM</span>
+            <span class="vendor-dot" style="background:var(--success);">YM</span>
             <div>
               <div class="vendor-name">Young's Market Co. of Arizona</div>
               <div class="vendor-meta">Wine &amp; spirits · lead time 6 days</div>
             </div>
           </div>
           <table>
-            <thead><tr><th style="width:40%;">Product</th><th class="num">On hand</th><th class="num">Par</th><th class="num">Reorder point</th><th class="num">Suggested order</th></tr></thead>
+            <caption class="sr-only">Reorder items from Young's Market Co. of Arizona, 1 of 1 shown</caption>
+            <thead><tr><th scope="col" style="width:40%;">Product</th><th scope="col" class="num">On hand</th><th scope="col" class="num">Par</th><th scope="col" class="num">Reorder point</th><th scope="col" class="num">Suggested order</th></tr></thead>
             <tbody>
               <tr><td><div class="product-name">Hendrick's Gin</div><div class="product-sub">750 ml</div></td><td class="num tabular-nums">11</td><td class="num tabular-nums">12</td><td class="num tabular-nums">4</td><td class="num"><span class="qty-badge">1</span></td></tr>
             </tbody>

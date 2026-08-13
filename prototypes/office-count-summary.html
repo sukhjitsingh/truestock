@@ -9,57 +9,23 @@
   only. Designed at 1440px. See the annotation block at the bottom of this
   file for design decisions and open questions.
 -->
+<link rel="stylesheet" href="tokens.css" />
 <style>
-  :root {
-    --radius: 1rem;
-    --background: #f7f7f5; --foreground: #111111;
-    --card: #ffffff; --card-foreground: #111111;
-    --muted: #efefec; --muted-foreground: #6b6b6b;
-    --primary: #0a0a0a; --primary-foreground: #ffffff;
-    --secondary: #efefec; --secondary-foreground: #111111;
-    --accent: #2563eb; --accent-foreground: #ffffff;
-    --destructive: #c4304f; --destructive-foreground: #ffffff;
-    --border: #e4e4e1; --input: #8c8c8c; --ring: #2563eb;
-    --success: #1f7a3d; --success-bg: #e4f5e6;
-    --warning: #92600a; --warning-bg: #fdf0dc;
-    --negative: #b8305a; --negative-bg: #fde8ec;
-    --radius-sm: calc(var(--radius) - 4px); --radius-md: calc(var(--radius) - 2px);
-    --radius-lg: var(--radius); --radius-xl: calc(var(--radius) + 4px);
-    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body { background: var(--background); color: var(--foreground); font-family: var(--font-sans);
-    font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; min-width: 1280px; }
-  h1, h2, h3, p, ol, ul { margin: 0; padding: 0; list-style: none; }
-  button, input { font: inherit; color: inherit; }
-  button { cursor: pointer; background: none; border: none; }
-  svg { display: block; }
-  table { border-collapse: collapse; width: 100%; }
-
-  a, button, input, [tabindex] { outline-offset: 2px; }
-  a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  /* Tokens, reset, focus-visible ring, type scale and color-text utilities
+     all come from tokens.css (generated from app/globals.css — see
+     prototypes/generate-tokens.mjs, P2.7). Only file-specific layout
+     utilities and components live here. */
+  body { min-width: 1280px; }
 
   .flex { display: flex; } .flex-col { flex-direction: column; } .items-center { align-items: center; }
   .items-start { align-items: flex-start; } .justify-between { justify-content: space-between; }
   .flex-1 { flex: 1 1 0%; } .gap-2 { gap: .5rem; } .gap-3 { gap: .75rem; } .gap-4 { gap: 1rem; } .gap-6 { gap: 1.5rem; }
   .mt-1 { margin-top: .25rem; } .mt-2 { margin-top: .5rem; } .mt-3 { margin-top: .75rem; }
   .mt-4 { margin-top: 1rem; } .mt-6 { margin-top: 1.5rem; } .mb-2 { margin-bottom: .5rem; }
-  .uppercase { text-transform: uppercase; }
 
   .rounded-md { border-radius: var(--radius-md); } .rounded-lg { border-radius: var(--radius-lg); } .rounded-full { border-radius: var(--radius-full); }
   .border { border: 1px solid var(--border); }
   .bg-card { background: var(--card); } .bg-muted { background: var(--muted); }
-  .text-foreground { color: var(--foreground); } .text-muted-foreground { color: var(--muted-foreground); }
-  .text-accent { color: var(--accent); } .text-success { color: var(--success); } .text-warning { color: var(--warning); } .text-negative { color: var(--negative); }
-
-  .text-header-title { font-size: 1.75rem; line-height: 1.15; font-weight: 600; }
-  .text-numeral-lg { font-size: 3rem; line-height: 1; font-weight: 700; }
-  .text-numeral-md { font-size: 1.5rem; line-height: 1.1; font-weight: 600; }
-  .text-row-title { font-size: 1.125rem; line-height: 1.3; font-weight: 600; }
-  .text-caption { font-size: .8125rem; line-height: 1.4; }
-  .text-label { font-size: .6875rem; line-height: 1.2; font-weight: 600; letter-spacing: .06em; }
-  .tabular-nums { font-variant-numeric: tabular-nums; }
 
   .app-shell { display: flex; min-height: 100vh; }
   .rail { width: 64px; flex-shrink: 0; background: var(--card); border-right: 1px solid var(--border);
@@ -131,7 +97,11 @@
   .role-inline { display: none; }
   .role-inline[data-active="true"] { display: inline; }
 
-  /* ---- prototype chrome (NOT shipped UI) — added at session close ---- */
+  /* ---- prototype chrome (NOT shipped UI) — added at session close ----
+     These two colors are intentionally outside the token set (same
+     reasoning as the letterbox background in count-scan.html): a
+     debug-only overlay marking a demo-only control must read as visually
+     distinct from every real token in the palette, not borrow one. */
   .proto-chrome { position: relative; outline: 2px dashed #C8901A; outline-offset: 7px;
                   border-radius: 8px; }
   .proto-chrome::before { content: "PROTOTYPE ONLY \2014 NOT SHIPPED UI";
@@ -322,10 +292,11 @@
       <div class="lines-card">
         <div class="lines-card-header"><div class="section-title" style="margin-bottom:0;">Count lines</div></div>
         <table>
+          <caption class="sr-only">Count #47 lines, 8 of 49 shown</caption>
           <thead>
             <tr>
-              <th>Product</th><th>Category</th><th>Location</th><th class="num">Units</th>
-              <th class="num role-block" data-active="true" id="th-value">Extended value</th>
+              <th scope="col">Product</th><th scope="col">Category</th><th scope="col">Location</th><th scope="col" class="num">Units</th>
+              <th scope="col" class="num role-block" data-active="true" id="th-value">Extended value</th>
             </tr>
           </thead>
           <tbody id="lines-tbody"></tbody>

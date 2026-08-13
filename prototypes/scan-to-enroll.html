@@ -4,25 +4,16 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Truestock — Scan-to-Enroll (prototype)</title>
+<link rel="stylesheet" href="tokens.css" />
 <style>
-  :root{
-    --background:#0B0B0C;--foreground:#F5F5F4;--card:#17181A;--card-foreground:#F5F5F4;
-    --muted:#131315;--muted-foreground:#A8A8A5;--primary:#F5F5F4;--primary-foreground:#0A0A0A;
-    --secondary:#1E1E21;--secondary-foreground:#F5F5F4;--accent:#60A5FA;--accent-foreground:#0A0A0A;
-    --destructive:#D33039;--destructive-foreground:#FFFFFF;--border:#232326;--input:#6B6B6B;--ring:#60A5FA;
-    --header:#121317;--header-foreground:#F5F5F4;
-    --success:#6FCF8E;--success-bg:#14301F;--warning:#F0B429;--warning-bg:#3A2A10;--negative:#F0718A;--negative-bg:#3A1620;
-    --radius-sm:12px;--radius-md:14px;--radius-lg:16px;--radius-xl:20px;
-    --card-gap:12px;--card-pad:16px;--bar-pad:16px;--section-gap:24px;--tap-min:44px;--tap-primary:56px;
-  }
-  *{box-sizing:border-box;}
-  html,body{margin:0;padding:0;}
-  body{background:#050506;color:var(--foreground);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
-    font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;}
+  /* Outer letterbox background is intentionally darker than --background
+     (#050506 vs #0B0B0C) — this is device-frame chrome around the 390px
+     mockup, not a token; the app surface itself uses --background. Same
+     precedent as count-scan.html. */
+  body{ background:#050506; }
   :focus-visible{outline:2px solid var(--ring);outline-offset:2px;}
-  button{cursor:pointer;font-family:inherit;}
-  a{color:inherit;text-decoration:none;}
 
+  /* ---- prototype chrome (NOT shipped UI) ---- */
   .proto-bar{max-width:390px;margin:0 auto;padding:10px 12px;border:1px dashed #3a3a3f;border-bottom:none;
     background:#111114;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8a8a90;display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
   .proto-bar b{color:#c9c9cf;}
@@ -33,7 +24,7 @@
   .proto-controls select{background:#1c1c20;color:#eee;border:1px solid #3a3a3f;border-radius:8px;padding:6px 8px;font-size:12px;}
   .proto-label{font-weight:600;color:#6f6f75;}
   .proto-timer{margin-left:auto;font-weight:700;color:#eee;}
-  .proto-timer.warn{color:var(--warning, #F0B429);}
+  .proto-timer.warn{color:var(--warning);}
   .proto-annotations{max-width:390px;margin:0 auto;padding:16px 14px;border:1px dashed #3a3a3f;background:#0d0d10;color:#b5b5ba;font-size:12.5px;line-height:1.6;}
   .proto-annotations h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8a8a90;margin:0 0 10px;}
   .proto-annotations h3{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#6f6f75;margin:16px 0 6px;}
@@ -43,13 +34,6 @@
 
   .app{max-width:390px;margin:0 auto;min-height:100vh;background:var(--background);position:relative;
     border:1px solid var(--border);border-top:none;padding-bottom:96px;}
-
-  .text-header-title{font-size:28px;font-weight:600;line-height:1.15;}
-  .text-row-subtitle{font-size:15px;font-weight:400;line-height:1.4;color:var(--muted-foreground);}
-  .text-body{font-size:16px;font-weight:400;line-height:1.5;}
-  .text-screen-title{font-size:13px;font-weight:600;line-height:1.2;letter-spacing:.06em;text-transform:uppercase;}
-  .text-caption{font-size:13px;font-weight:400;line-height:1.4;color:var(--muted-foreground);}
-  .text-label{font-size:11px;font-weight:600;line-height:1.2;letter-spacing:.06em;text-transform:uppercase;}
 
   .topbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px var(--bar-pad) 4px;}
   .topbar .cancel{color:var(--muted-foreground);font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
@@ -127,7 +111,7 @@
     </div>
   </div>
 
-  <form id="enrollForm" onsubmit="return false">
+  <form id="enrollForm" method="post" onsubmit="return false">
 
     <div class="field">
       <label class="text-label req" for="name">Product name</label>

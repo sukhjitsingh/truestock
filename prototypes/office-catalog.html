@@ -17,75 +17,18 @@
   See the annotation block at the bottom of this file (scroll to </body>)
   for design decisions and open questions.
 -->
+<link rel="stylesheet" href="tokens.css" />
 <style>
-  /* ===================================================================
-     TOKENS — copied verbatim from app/globals.css :root (light theme).
-     Back office never applies .dark, so only the light block is needed.
-     =================================================================== */
-  :root {
-    --radius: 1rem;
-    --background: #f7f7f5;
-    --foreground: #111111;
-    --card: #ffffff;
-    --card-foreground: #111111;
-    --muted: #efefec;
-    --muted-foreground: #6b6b6b;
-    --primary: #0a0a0a;
-    --primary-foreground: #ffffff;
-    --secondary: #efefec;
-    --secondary-foreground: #111111;
-    --accent: #2563eb;
-    --accent-foreground: #ffffff;
-    --destructive: #c4304f;
-    --destructive-foreground: #ffffff;
-    --border: #e4e4e1;
-    --input: #8c8c8c;
-    --ring: #2563eb;
-    --header: #0a0a0a;
-    --header-foreground: #ffffff;
-    --success: #1f7a3d;
-    --success-bg: #e4f5e6;
-    --warning: #92600a;
-    --warning-bg: #fdf0dc;
-    --negative: #b8305a;
-    --negative-bg: #fde8ec;
-
-    --radius-sm: calc(var(--radius) - 4px);
-    --radius-md: calc(var(--radius) - 2px);
-    --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) + 4px);
-
-    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  }
-
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    background: var(--background);
-    color: var(--foreground);
-    font-family: var(--font-sans);
-    font-variant-numeric: tabular-nums;
-    -webkit-font-smoothing: antialiased;
-    min-width: 1280px;
-  }
-  h1, h2, h3, p, ol, ul { margin: 0; padding: 0; list-style: none; }
-  button, input, select { font: inherit; color: inherit; }
-  button { cursor: pointer; background: none; border: none; }
-  svg { display: block; }
-  table { border-collapse: collapse; width: 100%; }
-
-  /* Accessibility floor — every interactive element gets a visible focus
-     ring (design-system.md §7 / app/globals.css :focus-visible). */
-  a, button, input, select, [role="button"], [tabindex] { outline-offset: 2px; }
-  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
-  [role="button"]:focus-visible, [tabindex]:focus-visible {
-    outline: 2px solid var(--ring);
-    outline-offset: 2px;
-  }
+  /* Tokens, reset, focus-visible ring, type scale and color-text utilities
+     all come from tokens.css (generated from app/globals.css — see
+     prototypes/generate-tokens.mjs, P2.7). Only file-specific layout
+     utilities and components live here. */
+  body { min-width: 1280px; }
 
   /* ===================================================================
      UTILITIES (hand-rolled, 1:1 named after the real Tailwind classes in
-     docs/design-system.md so the mapping back to production is obvious)
+     docs/design-system.md so the mapping back to production is obvious;
+     tokens.css has no utility-class library, only tokens + type scale)
      =================================================================== */
   .flex { display: flex; }
   .inline-flex { display: inline-flex; }
@@ -104,7 +47,6 @@
   .text-center { text-align: center; }
   .text-right { text-align: right; }
   .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .uppercase { text-transform: uppercase; }
   .italic { font-style: italic; }
   .relative { position: relative; }
   .w-full { width: 100%; }
@@ -139,26 +81,8 @@
   .bg-warning-bg { background: var(--warning-bg); }
   .bg-negative-bg { background: var(--negative-bg); }
 
-  .text-foreground { color: var(--foreground); }
-  .text-card-foreground { color: var(--card-foreground); }
-  .text-muted-foreground { color: var(--muted-foreground); }
   .text-primary-foreground { color: var(--primary-foreground); }
-  .text-accent { color: var(--accent); }
-  .text-success { color: var(--success); }
-  .text-warning { color: var(--warning); }
-  .text-negative { color: var(--negative); }
-
-  /* Type scale — mirrors --text-* companions in app/globals.css exactly */
-  .text-header-title { font-size: 1.75rem; line-height: 1.15; font-weight: 600; }
-  .text-numeral-md { font-size: 1.5rem; line-height: 1.1; font-weight: 600; }
-  .text-row-title { font-size: 1.125rem; line-height: 1.3; font-weight: 600; }
-  .text-numeral-sm { font-size: 1.0625rem; line-height: 1.2; font-weight: 600; }
-  .text-row-subtitle { font-size: .9375rem; line-height: 1.4; font-weight: 400; }
-  .text-body { font-size: 1rem; line-height: 1.5; }
-  .text-caption { font-size: .8125rem; line-height: 1.4; }
-  .text-label { font-size: .6875rem; line-height: 1.2; font-weight: 600; letter-spacing: .06em; }
   .font-semibold { font-weight: 600; }
-  .tabular-nums { font-variant-numeric: tabular-nums; }
 
   /* ===================================================================
      APP SHELL — icon rail + top bar (docs/design-reference.md PART B)
@@ -299,7 +223,12 @@
     border-bottom: 1px solid var(--border);
   }
   th.num, td.num { text-align: right; }
-  th .sort { color: var(--muted-foreground); font-weight: 400; margin-left: .25rem; cursor: pointer; }
+  /* Sort control — a real button inside the th, matching
+     docs/design-system.md §9 "Sort control": never a decorative span with
+     cursor:pointer and no handler (ui-audit.md P1.2). */
+  th .sort-btn { display: inline-flex; align-items: center; gap: .25rem; font: inherit; font-weight: 600; color: var(--muted-foreground); }
+  th .sort-btn:hover { color: var(--foreground); }
+  th .sort-btn svg { flex-shrink: 0; }
   tbody tr { height: 57px; border-bottom: 1px solid var(--border); }
   tbody tr:last-child { border-bottom: none; }
   tbody tr:hover { background: color-mix(in srgb, var(--muted) 55%, transparent); }
@@ -320,7 +249,7 @@
   .attn-pill { display: inline-flex; align-items: center; padding: .0625rem .5rem; border-radius: var(--radius-full); background: var(--warning-bg); color: var(--warning); font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 
   .vendor-cell { display: flex; align-items: center; gap: .5rem; white-space: nowrap; }
-  .vendor-dot { width: 22px; height: 22px; border-radius: var(--radius-full); display: flex; align-items: center; justify-content: center; font-size: .625rem; font-weight: 700; color: #fff; flex-shrink: 0; }
+  .vendor-dot { width: 22px; height: 22px; border-radius: var(--radius-full); display: flex; align-items: center; justify-content: center; font-size: .625rem; font-weight: 700; color: var(--primary-foreground); flex-shrink: 0; }
 
   .stock-cell { min-width: 150px; }
   .stock-line { display: flex; align-items: baseline; gap: .375rem; white-space: nowrap; }
@@ -350,7 +279,12 @@
   .role-note { display: none; }
   .role-note[data-active="true"] { display: block; }
 
-  /* ---- prototype chrome (NOT shipped UI) — added at session close ---- */
+  /* ---- prototype chrome (NOT shipped UI) — added at session close ----
+     These two colors are intentionally outside the token set, same
+     reasoning as the letterbox background in count-scan.html: this is a
+     debug-only overlay marking a demo-only control, not shipped UI, so it
+     must read as visually distinct from every real token in the palette
+     rather than borrow one. */
   .proto-chrome { position: relative; outline: 2px dashed #C8901A; outline-offset: 7px;
                   border-radius: 8px; }
   .proto-chrome::before { content: "PROTOTYPE ONLY \2014 NOT SHIPPED UI";
@@ -472,16 +406,17 @@
       <!-- ================= OWNER TABLE ================= -->
       <div id="table-owner" class="table-card">
         <table>
+          <caption class="sr-only">Catalog, owner view, 19 of 97 products shown</caption>
           <thead>
             <tr>
-              <th style="width:320px;">Product <span class="sort" aria-hidden="true">⇅</span></th>
-              <th>Category <span class="sort" aria-hidden="true">⇅</span></th>
-              <th>Size</th>
-              <th>Case</th>
-              <th>Vendor <span class="sort" aria-hidden="true">⇅</span></th>
-              <th class="num">Unit cost <span class="sort" aria-hidden="true">⇅</span></th>
-              <th style="width:170px;">Stock <span class="sort" aria-hidden="true">⇅</span></th>
-              <th style="width:44px;"><span style="position:absolute; width:1px; height:1px; overflow:hidden;">Row actions</span></th>
+              <th scope="col" style="width:320px;" aria-sort="none"><button type="button" class="sort-btn" onclick="toggleSort(this)">Product <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></th>
+              <th scope="col" aria-sort="none"><button type="button" class="sort-btn" onclick="toggleSort(this)">Category <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></th>
+              <th scope="col">Size</th>
+              <th scope="col">Case</th>
+              <th scope="col" aria-sort="none"><button type="button" class="sort-btn" onclick="toggleSort(this)">Vendor <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></th>
+              <th scope="col" class="num" aria-sort="none"><button type="button" class="sort-btn" onclick="toggleSort(this)">Unit cost <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></th>
+              <th scope="col" style="width:170px;" aria-sort="none"><button type="button" class="sort-btn" onclick="toggleSort(this)">Stock <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></th>
+              <th scope="col" style="width:44px;"><span class="sr-only">Row actions</span></th>
             </tr>
           </thead>
           <tbody id="tbody-owner"></tbody>
@@ -495,15 +430,16 @@
       <!-- ================= MANAGER TABLE (no Unit cost column at all) ================= -->
       <div id="table-manager" class="table-card" style="display:none;">
         <table>
+          <caption class="sr-only">Catalog, manager view, 19 of 97 products shown</caption>
           <thead>
             <tr>
-              <th style="width:320px;">Product <span class="sort" aria-hidden="true">⇅</span></th>
-              <th>Category <span class="sort" aria-hidden="true">⇅</span></th>
-              <th>Size</th>
-              <th>Case</th>
-              <th>Vendor <span class="sort" aria-hidden="true">⇅</span></th>
-              <th style="width:170px;">Stock <span class="sort" aria-hidden="true">⇅</span></th>
-              <th style="width:44px;"><span style="position:absolute; width:1px; height:1px; overflow:hidden;">Row actions</span></th>
+              <th scope="col" style="width:320px;" aria-sort="none"><button type="button" class="sort-btn" onclick="toggleSort(this)">Product <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></th>
+              <th scope="col" aria-sort="none"><button type="button" class="sort-btn" onclick="toggleSort(this)">Category <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></th>
+              <th scope="col">Size</th>
+              <th scope="col">Case</th>
+              <th scope="col" aria-sort="none"><button type="button" class="sort-btn" onclick="toggleSort(this)">Vendor <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></th>
+              <th scope="col" style="width:170px;" aria-sort="none"><button type="button" class="sort-btn" onclick="toggleSort(this)">Stock <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></th>
+              <th scope="col" style="width:44px;"><span class="sr-only">Row actions</span></th>
             </tr>
           </thead>
           <tbody id="tbody-manager"></tbody>
@@ -525,25 +461,25 @@
   // count, per the annotation block below.
   // ---------------------------------------------------------------------
   var rows = [
-    { name: "Tito's Handmade Vodka", sub: "Tito's · Vodka", size: "750 ml", vendor: "Southern Glazer's", vendorColor: "#2563eb", cost: "$14.85", onHand: 22, par: 24, reorder: 8, active: true },
-    { name: "Grey Goose Vodka", sub: "Grey Goose · Vodka", size: "750 ml", vendor: "Southern Glazer's", vendorColor: "#2563eb", cost: null, onHand: 6, par: 18, reorder: 6, active: true },
-    { name: "Jameson Irish Whiskey", sub: "Jameson · Irish Whiskey · Handle", size: "1.75 L", vendor: "Breakthru Beverage AZ", vendorColor: "#92600a", cost: null, onHand: 3, par: 10, reorder: 4, active: true },
-    { name: "Patrón Silver Tequila", sub: "Patrón · Tequila", size: "750 ml", vendor: "Southern Glazer's", vendorColor: "#2563eb", cost: "$28.40", onHand: 0, par: 12, reorder: 4, active: true },
-    { name: "Bacardí Superior Rum", sub: "Bacardí · Rum", size: "750 ml", vendor: "Breakthru Beverage AZ", vendorColor: "#92600a", cost: null, onHand: 14, par: null, reorder: null, active: true },
-    { name: "Jack Daniel's Old No. 7", sub: "Jack Daniel's · Whiskey", size: "750 ml", vendor: "Southern Glazer's", vendorColor: "#2563eb", cost: null, onHand: 9, par: 20, reorder: 8, active: true },
-    { name: "Hendrick's Gin", sub: "Hendrick's · Gin", size: "750 ml", vendor: "Young's Market Co. of AZ", vendorColor: "#1f7a3d", cost: null, onHand: 11, par: 12, reorder: 4, active: true },
-    { name: "Coors Light", sub: "Coors · Draft keg", size: "Half barrel", vendor: "Hensley Beverage Co.", vendorColor: "#b8305a", cost: "$118.00", onHand: 2, par: 4, reorder: 1, active: true },
-    { name: "Modelo Especial", sub: "Modelo · Draft keg", size: "Half barrel", vendor: "Hensley Beverage Co.", vendorColor: "#b8305a", cost: "$132.50", onHand: 1, par: 3, reorder: 1, active: true },
-    { name: "Blue Moon Belgian White", sub: "Blue Moon · Draft keg", size: "Sixtel", vendor: "Hensley Beverage Co.", vendorColor: "#b8305a", cost: "$96.00", onHand: 0, par: 2, reorder: 1, active: true },
-    { name: "Coors Light", sub: "Coors · Bottled beer", size: "12 oz", vendor: "Hensley Beverage Co.", vendorColor: "#b8305a", cost: null, onHand: 48, par: 72, reorder: 24, active: true },
-    { name: "Corona Extra", sub: "Corona · Bottled beer", size: "12 oz", vendor: "Hensley Beverage Co.", vendorColor: "#b8305a", cost: null, onHand: 60, par: 72, reorder: 24, active: true },
-    { name: "Michelob Ultra", sub: "Michelob · Bottled beer", size: "12 oz", vendor: "Hensley Beverage Co.", vendorColor: "#b8305a", cost: null, onHand: 0, par: 48, reorder: 12, active: true },
-    { name: "Merlot", sub: "Wine · Varietal", size: "750 ml", vendor: "Young's Market Co. of AZ", vendorColor: "#1f7a3d", cost: null, onHand: 9, par: null, reorder: null, active: true, attn: "Needs producer" },
-    { name: "Chardonnay", sub: "Wine · Varietal", size: "750 ml", vendor: "Young's Market Co. of AZ", vendorColor: "#1f7a3d", cost: null, onHand: 7, par: null, reorder: null, active: true, attn: "Needs producer" },
-    { name: "Kahlúa Coffee Liqueur", sub: "Kahlúa · Liqueur", size: "750 ml", vendor: "Southern Glazer's", vendorColor: "#2563eb", cost: null, onHand: 4, par: 6, reorder: 2, active: true },
-    { name: "St-Germain Elderflower Liqueur", sub: "St-Germain · Liqueur", size: "750 ml", vendor: "Breakthru Beverage AZ", vendorColor: "#92600a", cost: null, onHand: 3, par: 4, reorder: 1, active: true },
-    { name: "O'Doul's", sub: "O'Doul's · Non-alcoholic", size: "12 oz", vendor: "Hensley Beverage Co.", vendorColor: "#b8305a", cost: null, onHand: 24, par: 24, reorder: 8, active: true },
-    { name: "Heineken 0.0", sub: "Heineken · Non-alcoholic", size: "11.2 oz", vendor: "Hensley Beverage Co.", vendorColor: "#b8305a", cost: null, onHand: 0, par: 12, reorder: 4, active: false },
+    { name: "Tito's Handmade Vodka", sub: "Tito's · Vodka", size: "750 ml", vendor: "Southern Glazer's", vendorColor: "var(--accent)", cost: "$14.85", onHand: 22, par: 24, reorder: 8, active: true },
+    { name: "Grey Goose Vodka", sub: "Grey Goose · Vodka", size: "750 ml", vendor: "Southern Glazer's", vendorColor: "var(--accent)", cost: null, onHand: 6, par: 18, reorder: 6, active: true },
+    { name: "Jameson Irish Whiskey", sub: "Jameson · Irish Whiskey · Handle", size: "1.75 L", vendor: "Breakthru Beverage AZ", vendorColor: "var(--warning)", cost: null, onHand: 3, par: 10, reorder: 4, active: true },
+    { name: "Patrón Silver Tequila", sub: "Patrón · Tequila", size: "750 ml", vendor: "Southern Glazer's", vendorColor: "var(--accent)", cost: "$28.40", onHand: 0, par: 12, reorder: 4, active: true },
+    { name: "Bacardí Superior Rum", sub: "Bacardí · Rum", size: "750 ml", vendor: "Breakthru Beverage AZ", vendorColor: "var(--warning)", cost: null, onHand: 14, par: null, reorder: null, active: true },
+    { name: "Jack Daniel's Old No. 7", sub: "Jack Daniel's · Whiskey", size: "750 ml", vendor: "Southern Glazer's", vendorColor: "var(--accent)", cost: null, onHand: 9, par: 20, reorder: 8, active: true },
+    { name: "Hendrick's Gin", sub: "Hendrick's · Gin", size: "750 ml", vendor: "Young's Market Co. of AZ", vendorColor: "var(--success)", cost: null, onHand: 11, par: 12, reorder: 4, active: true },
+    { name: "Coors Light", sub: "Coors · Draft keg", size: "Half barrel", vendor: "Hensley Beverage Co.", vendorColor: "var(--negative)", cost: "$118.00", onHand: 2, par: 4, reorder: 1, active: true },
+    { name: "Modelo Especial", sub: "Modelo · Draft keg", size: "Half barrel", vendor: "Hensley Beverage Co.", vendorColor: "var(--negative)", cost: "$132.50", onHand: 1, par: 3, reorder: 1, active: true },
+    { name: "Blue Moon Belgian White", sub: "Blue Moon · Draft keg", size: "Sixtel", vendor: "Hensley Beverage Co.", vendorColor: "var(--negative)", cost: "$96.00", onHand: 0, par: 2, reorder: 1, active: true },
+    { name: "Coors Light", sub: "Coors · Bottled beer", size: "12 oz", vendor: "Hensley Beverage Co.", vendorColor: "var(--negative)", cost: null, onHand: 48, par: 72, reorder: 24, active: true },
+    { name: "Corona Extra", sub: "Corona · Bottled beer", size: "12 oz", vendor: "Hensley Beverage Co.", vendorColor: "var(--negative)", cost: null, onHand: 60, par: 72, reorder: 24, active: true },
+    { name: "Michelob Ultra", sub: "Michelob · Bottled beer", size: "12 oz", vendor: "Hensley Beverage Co.", vendorColor: "var(--negative)", cost: null, onHand: 0, par: 48, reorder: 12, active: true },
+    { name: "Merlot", sub: "Wine · Varietal", size: "750 ml", vendor: "Young's Market Co. of AZ", vendorColor: "var(--success)", cost: null, onHand: 9, par: null, reorder: null, active: true, attn: "Needs producer" },
+    { name: "Chardonnay", sub: "Wine · Varietal", size: "750 ml", vendor: "Young's Market Co. of AZ", vendorColor: "var(--success)", cost: null, onHand: 7, par: null, reorder: null, active: true, attn: "Needs producer" },
+    { name: "Kahlúa Coffee Liqueur", sub: "Kahlúa · Liqueur", size: "750 ml", vendor: "Southern Glazer's", vendorColor: "var(--accent)", cost: null, onHand: 4, par: 6, reorder: 2, active: true },
+    { name: "St-Germain Elderflower Liqueur", sub: "St-Germain · Liqueur", size: "750 ml", vendor: "Breakthru Beverage AZ", vendorColor: "var(--warning)", cost: null, onHand: 3, par: 4, reorder: 1, active: true },
+    { name: "O'Doul's", sub: "O'Doul's · Non-alcoholic", size: "12 oz", vendor: "Hensley Beverage Co.", vendorColor: "var(--negative)", cost: null, onHand: 24, par: 24, reorder: 8, active: true },
+    { name: "Heineken 0.0", sub: "Heineken · Non-alcoholic", size: "11.2 oz", vendor: "Hensley Beverage Co.", vendorColor: "var(--negative)", cost: null, onHand: 0, par: 12, reorder: 4, active: false },
   ];
 
   function glyph() {
@@ -657,6 +593,22 @@
   var managerBody = rows.map(function (r) { return renderRow(r, false); }).join("");
   document.getElementById("tbody-owner").innerHTML = ownerBody;
   document.getElementById("tbody-manager").innerHTML = managerBody;
+
+  // Real sort control (design-system.md §9 "Sort control"): cycles the
+  // owning <th>'s aria-sort through none -> ascending -> descending and
+  // back, clearing every sibling th first so only one column is ever
+  // marked sorted at a time. No actual row re-ordering — this is a static
+  // prototype — but the control itself is a real, keyboard-reachable
+  // button with a live ARIA state, not a decorative span.
+  function toggleSort(btn) {
+    var th = btn.closest("th");
+    var row = th.parentElement;
+    var current = th.getAttribute("aria-sort");
+    Array.prototype.forEach.call(row.querySelectorAll("th[aria-sort]"), function (t) {
+      if (t !== th) t.setAttribute("aria-sort", "none");
+    });
+    th.setAttribute("aria-sort", current === "ascending" ? "descending" : "ascending");
+  }
 
   function toggleMenu(id) {
     var el = document.getElementById("menu-" + id);

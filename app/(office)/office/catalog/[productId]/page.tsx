@@ -1,7 +1,7 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireOfficeUser } from "@/lib/current-user";
 import { searchProductsAction, listVendorsAction } from "@/app/actions/catalog";
+import { PageHeader } from "@/components/office/page-header";
 import { ProductEditForm } from "@/components/office/product-edit-form";
 
 export const metadata = { title: "Edit product · Truestock" };
@@ -37,10 +37,7 @@ export default async function ProductEditPage({
 
   return (
     <div className="max-w-2xl">
-      <Link href="/office/catalog" className="text-caption text-muted-foreground underline">
-        ← Catalog
-      </Link>
-      <h1 className="mt-2 text-header-title">{product.name}</h1>
+      <PageHeader title={product.name} breadcrumb={{ label: "← Catalog", href: "/office/catalog" }} />
 
       <ProductEditForm
         product={product}

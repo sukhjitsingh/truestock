@@ -427,6 +427,166 @@ try {
     `typed "007.5", cell shows "${settled}"`,
   );
 
+  // ======================================================================
+  // Phase 2 (docs/plans/phase-2-ui-redesign) — the TanStack Table v8
+  // catalog, and the accessibility/structural contracts design-system.md §7
+  // and §9 make binding across the whole back office. Runs against the
+  // owner's already-hydrated /office/catalog page from slice 4 above.
+  // ======================================================================
+
+  // ---- owner's DOM DOES contain the cost column — the positive control ---
+  // Without this, the manager check further down (no "Unit cost for" string
+  // anywhere in their DOM) would also pass against a table that simply
+  // failed to render at all.
+  const ownerCatalogHtml = await page.content();
+  record(
+    'owner\'s rendered DOM DOES contain "Unit cost for" — positive control for the manager check below',
+    ownerCatalogHtml.includes("Unit cost for"),
+    ownerCatalogHtml.includes("Unit cost for") ? "present, as required" : "STRING MISSING — the table may not be rendering at all",
+  );
+
+  // ---- no par levels exist in the dev data, so no product may show a bar -
+  // `product_par` has zero rows today (AGENTS.md open question 2 / the
+  // no-par-no-bar rule) — every on-hand cell on this page must render its
+  // unit count alone, with no Meter bar (`role="presentation"`) under it.
+  const rowsWithUnitCount = await page.locator("table tbody tr").filter({ hasText: /\bunit\b/ }).count();
+  const meterBarsInTable = await page.locator('table [role="presentation"]').count();
+  record(
+    "a product with no par level renders NO stock bar",
+    rowsWithUnitCount > 0 && meterBarsInTable === 0,
+    `${rowsWithUnitCount} rows show a unit count, ${meterBarsInTable} meter bars rendered`,
+  );
+
+  // ---- sorting: aria-sort updates on the th, and the rows actually reorder
+  //
+  // The product-name cell is targeted by its distinguishing class
+  // (`.truncate`, from catalog-table.tsx's product-name span) rather than
+  // "first <td>" — the owner's row has a select checkbox as its actual first
+  // cell, which has no text at all. Column position is role-dependent;
+  // this class is not.
+  const onHandHeader = page.locator('th[aria-sort]', { hasText: /on hand/i });
+  const ariaSortBefore = await onHandHeader.getAttribute("aria-sort");
+  const firstProductBefore = await page.locator("table tbody tr").first().locator("span.truncate").first().innerText();
+  await onHandHeader.getByRole("button").click();
+  await page.waitForTimeout(300);
+  const ariaSortAfter = await onHandHeader.getAttribute("aria-sort");
+  const firstProductAfter = await page.locator("table tbody tr").first().locator("span.truncate").first().innerText();
+  record(
+    "clicking a sortable column header updates aria-sort on that th",
+    ariaSortBefore === "none" && ariaSortAfter !== "none" && ariaSortAfter !== ariaSortBefore,
+    `before=${ariaSortBefore} after=${ariaSortAfter}`,
+  );
+  record(
+    "sorting actually reorders the rows, not just the header state",
+    firstProductBefore !== firstProductAfter,
+    `first row before="${firstProductBefore}" after="${firstProductAfter}"`,
+  );
+
+  // ---- pagination: renders, and Next actually advances ---------------------
+  if (Number(activeProducts) > 20) {
+    const rangeBefore = await page.getByText(/^Showing \d/).innerText();
+    const firstProductPage1 = await page.locator("table tbody tr").first().locator("span.truncate").first().innerText();
+    const navsBeforePage = documentLoads;
+    await page.getByRole("button", { name: /next page/i }).click();
+    await page.waitForTimeout(300);
+    const rangeAfter = await page.getByText(/^Showing \d/).innerText();
+    const firstProductPage2 = await page.locator("table tbody tr").first().locator("span.truncate").first().innerText();
+    record(
+      "pagination renders and Next advances to the next page, with zero navigations",
+      rangeBefore !== rangeAfter && documentLoads === navsBeforePage,
+      `before="${rangeBefore}" after="${rangeAfter}"`,
+    );
+    record(
+      "pagination changes which rows are shown",
+      firstProductPage1 !== firstProductPage2,
+      `page 1 first row="${firstProductPage1}" page 2 first row="${firstProductPage2}"`,
+    );
+  } else {
+    record("catalog pagination advances", true, `SKIPPED — only ${activeProducts} active products, fewer than one page (20)`);
+    skipped.push(`catalog pagination — needs more than 20 active products (currently ${activeProducts})`);
+  }
+
+  // ---- P0.2: no table row carries a click handler wrapping the whole row -
+  // A click on a cell with no interactive descendant (the Category cell)
+  // must do nothing — no navigation, no state change. Asserted behaviourally
+  // rather than by grepping for an "onclick" DOM attribute, which a React
+  // synthetic handler never sets in the first place.
+  const urlBeforeRowClick = page.url();
+  const navsBeforeRowClick = documentLoads;
+  await page.locator("table tbody tr").first().locator("td").nth(1).click({ position: { x: 4, y: 4 } });
+  await page.waitForTimeout(400);
+  record(
+    "clicking a non-interactive table cell does not navigate (P0.2 — no whole-row click handler)",
+    page.url() === urlBeforeRowClick && documentLoads === navsBeforeRowClick,
+    `url before="${urlBeforeRowClick}" after="${page.url()}"`,
+  );
+
+  // ---- every icon-only control has an accessible name ----------------------
+  async function assertNoUnlabelledIconControls(label) {
+    const bad = await page.evaluate(() => {
+      const controls = Array.from(document.querySelectorAll("button, a[href]"));
+      return controls
+        .filter((el) => {
+          const text = (el.textContent ?? "").trim();
+          const hasIcon = el.querySelector("svg") !== null;
+          const labelled = el.hasAttribute("aria-label") || el.hasAttribute("aria-labelledby");
+          return text === "" && hasIcon && !labelled;
+        })
+        .map((el) => el.outerHTML.slice(0, 140));
+    });
+    record(`every icon-only control has an accessible name — ${label}`, bad.length === 0, bad.join(" | ") || "none found");
+  }
+  await assertNoUnlabelledIconControls("/office/catalog");
+
+  // ---- no heading-level skips -----------------------------------------------
+  async function assertNoHeadingSkips(label) {
+    const levels = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("h1,h2,h3,h4,h5,h6")).map((h) => Number(h.tagName[1])),
+    );
+    let skip = false;
+    for (let i = 1; i < levels.length; i++) {
+      if (levels[i] - levels[i - 1] > 1) skip = true;
+    }
+    record(`no heading-level skips — ${label}`, !skip, `levels=[${levels.join(",")}]`);
+  }
+  await assertNoHeadingSkips("/office/catalog");
+
+  // ---- every focusable element has a visible focus treatment ---------------
+  // design-system.md §7: "No component may set outline: none ... without
+  // providing a substitute that is at least as visible." Tab through the
+  // real keyboard focus order (not a CSS-rule grep) so this fails the same
+  // way a keyboard user would actually hit it.
+  async function assertFocusVisible(label, tabs = 25) {
+    const offenders = [];
+    for (let i = 0; i < tabs; i++) {
+      await page.keyboard.press("Tab");
+      const info = await page.evaluate(() => {
+        const el = document.activeElement;
+        if (!el || el === document.body) return null;
+        const cs = getComputedStyle(el);
+        return {
+          tag: el.tagName,
+          label: el.getAttribute("aria-label") || (el.textContent ?? "").trim().slice(0, 30) || "",
+          outlineStyle: cs.outlineStyle,
+          outlineWidth: cs.outlineWidth,
+          boxShadow: cs.boxShadow,
+        };
+      });
+      if (!info) continue;
+      const hasOutline = info.outlineStyle !== "none" && info.outlineWidth !== "0px";
+      const hasSubstitute = info.boxShadow !== "none" && info.boxShadow !== "";
+      if (!hasOutline && !hasSubstitute) {
+        offenders.push(`${info.tag} "${info.label}"`);
+      }
+    }
+    record(
+      `every focused element has a visible outline or an equivalent substitute — ${label}`,
+      offenders.length === 0,
+      offenders.join(" | ") || `checked ${tabs} tab stops, none bare`,
+    );
+  }
+  await assertFocusVisible("/office/catalog");
+
   // ---- slice 6: what actually lands on the clipboard ---------------------
   await page.goto(`${BASE}/office/reorder`, { waitUntil: "networkidle" });
   const copyButtons = page.locator('button[aria-label^="Copy "]');
@@ -544,6 +704,17 @@ try {
           "a manager's catalog has no cost column anywhere in the DOM",
           costInputs === 0 && costHeader === 0 && !/Unit cost for/.test(html),
           `cost inputs=${costInputs} cost headers=${costHeader}`,
+        );
+
+        // The Phase 2 completion criterion stated explicitly, as its own
+        // check: the TanStack table's manager column array never contains
+        // the cost column at all (columnVisibility is forbidden precisely
+        // because it would keep the column in the DOM, hidden). Asserted
+        // against the rendered DOM, not the server payload.
+        record(
+          'manager\'s rendered DOM contains no "Unit cost for" string (TanStack table — column omitted, not hidden)',
+          !html.includes("Unit cost for"),
+          html.includes("Unit cost for") ? "STRING FOUND in manager DOM" : "absent, as required",
         );
 
         // The positive control. Without it, the check above would also pass

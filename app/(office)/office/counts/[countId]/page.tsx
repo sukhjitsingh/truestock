@@ -1,10 +1,19 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireOfficeUser } from "@/lib/current-user";
 import { countSummaryAction } from "@/app/actions/reports";
+import { PageHeader } from "@/components/office/page-header";
 import { Card } from "@/components/ui/card";
 import { Money } from "@/components/ui/money";
 import { StatusPill, countStatusTone, countStatusLabel } from "@/components/ui/status-pill";
+import {
+  TableContainer,
+  Table,
+  TableCaption,
+  TableBody,
+  TableRow,
+  TableCell,
+} from "@/components/ui/table";
+import { EmptyState } from "@/components/ui/empty-state";
 import { formatUnits, formatDate } from "@/lib/utils";
 import type { SummaryGroup } from "@/lib/domain/reports";
 
@@ -33,16 +42,15 @@ export default async function CountSummaryPage({
 
   return (
     <div>
-      <Link href="/office" className="text-caption text-muted-foreground underline">
-        ← All counts
-      </Link>
-
-      <div className="mt-2 flex flex-wrap items-center gap-3">
-        <h1 className="text-header-title">Count #{summary.countId}</h1>
-        <StatusPill tone={countStatusTone(summary.status)}>
-          {countStatusLabel(summary.status)}
-        </StatusPill>
-      </div>
+      <PageHeader
+        title={`Count #${summary.countId}`}
+        breadcrumb={{ label: "← All counts", href: "/office/counts" }}
+        pills={
+          <StatusPill tone={countStatusTone(summary.status)}>
+            {countStatusLabel(summary.status)}
+          </StatusPill>
+        }
+      />
 
       {/* Two tiles for a manager, three for an owner — the grid follows the
           role rather than leaving an empty cell where a value would be. */}
@@ -59,11 +67,13 @@ export default async function CountSummaryPage({
       </div>
 
       {summary.excludedLineCount > 0 ? (
-        <p className="mt-3 text-caption text-muted-foreground">
-          {summary.pricedLineCount} priced &middot; {summary.excludedLineCount} excluded from
-          valuation — no cost or case size on file. Excluded lines are left out of the total
-          rather than counted as free.
-        </p>
+        <div className="mt-3 flex items-start gap-2.5 rounded-md border border-border bg-warning-bg p-3 text-warning">
+          <p className="text-row-subtitle">
+            {summary.pricedLineCount} priced &middot; {summary.excludedLineCount} excluded from
+            valuation — no cost or case size on file. Excluded lines are left out of the total
+            rather than counted as free.
+          </p>
+        </div>
       ) : null}
 
       {summary.previous ? (
@@ -156,30 +166,39 @@ function Rollup({ title, groups }: { title: string; groups: SummaryGroup[] }) {
   return (
     <section>
       <h2 className="mb-3 text-label uppercase text-muted-foreground">{title}</h2>
-      {groups.length === 0 ? (
-        <p className="text-row-subtitle text-muted-foreground">Nothing counted.</p>
-      ) : (
-        <table className="w-full border-collapse text-left">
-          <tbody>
-            {groups.map((group) => (
-              <tr key={group.key} className="border-b border-border">
-                <td className="py-2 text-row-subtitle text-foreground">{group.label}</td>
-                <td className="py-2 text-right text-row-subtitle tabular-nums text-muted-foreground">
-                  {formatUnits(group.units)} units
-                  {group.excludedLineCount > 0 ? (
-                    <span className="ml-2 text-caption">({group.excludedLineCount} excl.)</span>
-                  ) : null}
+      <TableContainer>
+        <Table>
+          <TableCaption>{title}, {groups.length} groups</TableCaption>
+          <TableBody>
+            {groups.length === 0 ? (
+              <tr>
+                <td colSpan={3}>
+                  <EmptyState message="Nothing counted." />
                 </td>
-                {group.value != null ? (
-                  <td className="py-2 pl-4 text-right">
-                    <Money value={group.value} />
-                  </td>
-                ) : null}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+            ) : (
+              groups.map((group) => (
+                <TableRow key={group.key}>
+                  <TableCell className="max-w-[16rem] truncate" title={group.label}>
+                    {group.label}
+                  </TableCell>
+                  <TableCell numeric className="text-muted-foreground">
+                    {formatUnits(group.units)} units
+                    {group.excludedLineCount > 0 ? (
+                      <span className="ml-2 text-caption">({group.excludedLineCount} excl.)</span>
+                    ) : null}
+                  </TableCell>
+                  {group.value != null ? (
+                    <TableCell numeric>
+                      <Money value={group.value} />
+                    </TableCell>
+                  ) : null}
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
     </section>
   );
 }

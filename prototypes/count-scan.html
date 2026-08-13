@@ -40,10 +40,10 @@
   .icon-btn{width:44px;height:44px;min-width:44px;display:flex;align-items:center;justify-content:center;
     border-radius:var(--radius-full);border:1px solid var(--border);background:var(--card);color:var(--foreground);}
   .count-id{text-align:center;flex:1;}
-  .count-id .t1{font-size:13px;font-weight:600;letter-spacing:.04em;color:var(--foreground);}
-  .count-id .t2{font-size:11px;color:var(--muted-foreground);letter-spacing:.04em;}
+  .count-id .t1{font-size:13px;font-weight:600;letter-spacing:.04em;color:var(--foreground);text-transform:uppercase;}
+  .count-id .t2{font-size:11px;color:var(--muted-foreground);letter-spacing:.04em;text-transform:uppercase;}
   .sync-pill{display:flex;align-items:center;gap:6px;height:32px;padding:0 10px;border-radius:var(--radius-full);
-    border:1px solid var(--border);color:var(--muted-foreground);font-size:11px;font-weight:600;letter-spacing:.04em;white-space:nowrap;}
+    border:1px solid var(--border);color:var(--muted-foreground);font-size:11px;font-weight:600;letter-spacing:.04em;white-space:nowrap;text-transform:uppercase;}
   .sync-dot{width:6px;height:6px;border-radius:var(--radius-full);background:var(--muted-foreground);}
   .sync-dot.active{background:var(--accent);animation:pulse 1s ease-in-out infinite;}
   @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
@@ -142,12 +142,12 @@
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
     </button>
     <div class="count-id">
-      <div class="t1">COUNT #1247 &middot; FULL</div>
-      <div class="t2">IN PROGRESS</div>
+      <div class="t1">Count #1247 &middot; Full</div>
+      <div class="t2">In progress</div>
     </div>
     <div class="sync-pill" id="syncPill" aria-live="polite">
       <span class="sync-dot" id="syncDot"></span>
-      <span id="syncText">ALL SYNCED</span>
+      <span id="syncText">All synced</span>
     </div>
   </div>
 
@@ -372,10 +372,10 @@
     var txt = document.getElementById('syncText');
     if (pending > 0){
       dot.classList.add('active');
-      txt.textContent = pending + ' PENDING';
+      txt.textContent = pending + ' pending';
     } else {
       dot.classList.remove('active');
-      txt.textContent = 'ALL SYNCED';
+      txt.textContent = 'All synced';
     }
   }
   function flashSaved(rowEl){
