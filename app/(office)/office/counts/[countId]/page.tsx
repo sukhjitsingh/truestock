@@ -178,7 +178,7 @@ function Rollup({ title, groups }: { title: string; groups: SummaryGroup[] }) {
               </tr>
             ) : (
               groups.map((group) => (
-                <TableRow key={group.key}>
+                <TableRow key={group.key} interactive={false}>
                   <TableCell className="max-w-[16rem] truncate" title={group.label}>
                     {group.label}
                   </TableCell>

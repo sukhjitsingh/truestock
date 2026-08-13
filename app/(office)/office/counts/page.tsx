@@ -78,7 +78,10 @@ export default async function CountsListPage() {
                 </tr>
               ) : (
                 counts.map((count) => (
-                  <TableRow key={count.id}>
+                  // Not interactive as a row: the only control is the `#id`
+                  // link inside the first cell. A row-wide hover would promise
+                  // whole-row tap-ability that does not exist.
+                  <TableRow key={count.id} interactive={false}>
                     <TableCell>
                       <Link href={`/office/counts/${count.id}`} className="text-foreground underline">
                         #{count.id}

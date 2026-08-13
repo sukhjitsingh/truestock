@@ -40,6 +40,7 @@ export function AccountMenu({
   const menuId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const firstItemRef = useRef<HTMLButtonElement>(null);
 
   const initials =
     name
@@ -49,12 +50,26 @@ export function AccountMenu({
       .map((part) => part[0]?.toUpperCase())
       .join("") || "?";
 
+  // Move focus into the menu on open (design-system.md §9: a popover "moves focus
+  // in on open and restores it to the trigger on close"). Without this a keyboard
+  // user opens the menu and their focus is still on the trigger behind it, so the
+  // next Tab walks past the menu entirely into the page.
+  useEffect(() => {
+    if (open) firstItemRef.current?.focus();
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
 
     function handlePointerDown(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        // Only pull focus back to the trigger if it was inside the menu we are
+        // closing. Restoring unconditionally would yank focus off whatever the
+        // user just clicked outside, which is worse than not restoring at all.
+        const focusWasInside =
+          containerRef.current.contains(document.activeElement);
         setOpen(false);
+        if (focusWasInside) triggerRef.current?.focus();
       }
     }
     function handleKeyDown(e: KeyboardEvent) {
@@ -106,6 +121,7 @@ export function AccountMenu({
           </p>
           <p className="mt-0.5 text-caption capitalize text-muted-foreground">{role}</p>
           <button
+            ref={firstItemRef}
             type="button"
             role="menuitem"
             disabled={pending}

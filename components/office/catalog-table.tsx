@@ -442,7 +442,7 @@ export function CatalogTable({
             navigate({ q: value, view: view === "attention" ? "attention" : undefined });
           }}
           method="get"
-          className="flex min-w-[16rem] flex-1 items-center gap-2 rounded-md border border-input bg-card px-4"
+          className="flex min-w-[16rem] flex-1 items-center gap-2 rounded-md border border-input bg-card px-4 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50"
         >
           <input
             type="search"
@@ -550,7 +550,10 @@ export function CatalogTable({
               </tr>
             ) : (
               bodyRows.map((row) => (
-                <TableRow key={row.id}>
+                // Staff get neither the select checkbox nor the Edit column
+                // (both gated on `canManage`), so for that role the row holds
+                // no control at all and must not advertise hover.
+                <TableRow key={row.id} interactive={canManage}>
                   {row.getVisibleCells().map((cell) => (
                     <TableCell
                       key={cell.id}

@@ -556,36 +556,109 @@ try {
   // providing a substitute that is at least as visible." Tab through the
   // real keyboard focus order (not a CSS-rule grep) so this fails the same
   // way a keyboard user would actually hit it.
-  async function assertFocusVisible(label, tabs = 25) {
+  //
+  // Two things here are load-bearing and were both wrong in the first version
+  // of this check, which passed while `/office/catalog`'s search input was bare:
+  //
+  //  1. Tab order resumes from `document.activeElement`, so the walk began
+  //     wherever the previous assertion's last click left focus — deep inside
+  //     the table — and never reached the controls above it. It reported
+  //     "25 tab stops, none bare" having never visited the one bare control.
+  //     Re-navigating resets `activeElement` to the document, so the walk is
+  //     deterministic instead of order-dependent.
+  //  2. `mustReach` makes the coverage claim falsifiable. Without it, a walk
+  //     that silently stops covering a control still reports a clean pass —
+  //     the exact failure above. With it, losing coverage fails the check.
+  async function assertFocusVisible(path, mustReach, tabs = 30) {
+    await page.goto(`${BASE}${path}`, { waitUntil: "networkidle" });
     const offenders = [];
+    const visited = [];
     for (let i = 0; i < tabs; i++) {
       await page.keyboard.press("Tab");
       const info = await page.evaluate(() => {
         const el = document.activeElement;
         if (!el || el === document.body) return null;
-        const cs = getComputedStyle(el);
+        const ring = (n) => {
+          const cs = getComputedStyle(n);
+          return (
+            (cs.outlineStyle !== "none" && cs.outlineWidth !== "0px") ||
+            (cs.boxShadow !== "none" && cs.boxShadow !== "")
+          );
+        };
+        // A focus ring painted on the WRAPPER via `focus-within:ring-*` is the
+        // house pattern for search fields — an input sitting flush inside a
+        // bordered box, where an outline on the input itself would collide with
+        // that border. It is a real, visible indicator that simply does not
+        // live on the focused element, so an element-only check reads it as
+        // bare. Walking up two levels is sound here specifically because
+        // design-system.md §5 bans `shadow-*` for anything except focus rings,
+        // so an ancestor box-shadow cannot be decoration.
+        let ancestorRing = false;
+        let p = el.parentElement;
+        for (let d = 0; d < 2 && p; d++, p = p.parentElement) {
+          if (ring(p)) {
+            ancestorRing = true;
+            break;
+          }
+        }
         return {
           tag: el.tagName,
-          label: el.getAttribute("aria-label") || (el.textContent ?? "").trim().slice(0, 30) || "",
-          outlineStyle: cs.outlineStyle,
-          outlineWidth: cs.outlineWidth,
-          boxShadow: cs.boxShadow,
+          label:
+            el.getAttribute("aria-label") ||
+            el.getAttribute("placeholder") ||
+            (el.textContent ?? "").trim().slice(0, 30) ||
+            "",
+          visible: ring(el) || ancestorRing,
         };
       });
       if (!info) continue;
-      const hasOutline = info.outlineStyle !== "none" && info.outlineWidth !== "0px";
-      const hasSubstitute = info.boxShadow !== "none" && info.boxShadow !== "";
-      if (!hasOutline && !hasSubstitute) {
-        offenders.push(`${info.tag} "${info.label}"`);
-      }
+      visited.push(`${info.tag} "${info.label}"`);
+      if (!info.visible) offenders.push(`${info.tag} "${info.label}"`);
     }
+    const reached = visited.some((v) => mustReach.test(v));
     record(
-      `every focused element has a visible outline or an equivalent substitute — ${label}`,
-      offenders.length === 0,
-      offenders.join(" | ") || `checked ${tabs} tab stops, none bare`,
+      `every focused element has a visible outline or an equivalent substitute — ${path}`,
+      offenders.length === 0 && reached,
+      offenders.length > 0
+        ? `bare: ${offenders.join(" | ")}`
+        : reached
+          ? `checked ${visited.length} tab stops, none bare`
+          : `COVERAGE LOST — walked ${visited.length} stops without reaching ${mustReach}`,
     );
   }
-  await assertFocusVisible("/office/catalog");
+  await assertFocusVisible("/office/catalog", /Search catalog/);
+
+  // ---- account menu moves focus in on open, and gives it back on Escape ----
+  // design-system.md §9's popover contract. A menu that opens without taking
+  // focus leaves a keyboard user's focus on the trigger *behind* the menu, so
+  // the next Tab walks straight past every item in it — the menu is visible
+  // but unreachable, which no screenshot shows.
+  const accountTrigger = page.locator('button[aria-label^="Account menu"]');
+  if ((await accountTrigger.count()) === 0) {
+    record("account menu focus contract", false, "no account-menu trigger rendered in the office layout");
+  } else {
+    await accountTrigger.click();
+    await page.waitForTimeout(150);
+    const focusedOnOpen = await page.evaluate(() => {
+      const el = document.activeElement;
+      return el ? `${el.getAttribute("role") ?? el.tagName}:${(el.textContent ?? "").trim().slice(0, 20)}` : "none";
+    });
+    record(
+      "opening the account menu moves focus into it",
+      focusedOnOpen.startsWith("menuitem"),
+      `focus landed on "${focusedOnOpen}"`,
+    );
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(150);
+    const focusedOnClose = await page.evaluate(
+      () => document.activeElement?.getAttribute("aria-label") ?? "none",
+    );
+    record(
+      "Escape closes the account menu and returns focus to the trigger",
+      focusedOnClose.startsWith("Account menu"),
+      `focus returned to "${focusedOnClose}"`,
+    );
+  }
 
   // ---- slice 6: what actually lands on the clipboard ---------------------
   await page.goto(`${BASE}/office/reorder`, { waitUntil: "networkidle" });
