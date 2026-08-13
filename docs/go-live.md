@@ -6,12 +6,12 @@ happens. This is the decision: whether it should.
 
 **This is Phase 3, re-sequenced 2026-08-12.** Deploy used to follow the MVP
 immediately; it now sits behind Phase 1 (locations screen, bulk cost entry),
-Phase 1.5 (survive-daily-use items), Phase 1.9 (the deferred field
+Phase 1.5 (survive-daily-use items), Phase 2.9 (the deferred field
 measurements), Phase 2 (UI redesign) and Phase 2.5 (OCR invoice automation).
 See `ROADMAP.md`. Nothing in this file changed because of that — a gate is a
 gate whenever it is reached — but two things follow from the new position:
 
-- **Phase 1.9 should close the standalone-entrypoint item below** before this
+- **Phase 2.9 should close the standalone-entrypoint item below** before this
   gate is ever opened, which removes the last deploy-day unknown.
 - **Part 2.4's counting checks are no longer entirely unobserved.** Most of
   them now have a local result to compare against, which makes them stronger
@@ -68,7 +68,7 @@ Blocking items. Each one is either done or the deploy waits.
       `"next start" does not work with "output: standalone" configuration`. It
       gave us what was needed — no HMR, the real CSP — but it is not the
       runtime Hostinger uses. The policy and hydration are settled; the
-      entrypoint is not. **Phase 1.9 should close this locally**, so that a
+      entrypoint is not. **Phase 2.9 should close this locally**, so that a
       failure here is a hosting problem rather than an unknown.
 
 ### 1.2 Non-blocking but decide deliberately
@@ -180,7 +180,7 @@ The invariant that cannot be tested by one tenant using the app normally.
 
 **Updated 2026-08-12.** This section used to say everything below had been
 reasoned about and never observed. That is no longer true: four phone sessions
-drove the counting loop end to end against the LAN stack, and Phase 1.9 is
+drove the counting loop end to end against the LAN stack, and Phase 2.9 is
 where the rest gets measured. What remains true is that **none of it has run
 against production** — a different database, real TLS, a real phone on the
 bar's WiFi rather than the office's.
@@ -191,7 +191,7 @@ named — a check that passed locally and fails here is telling you something
 specific about production rather than about the code.
 
 - [ ] **Drive a full count on a phone, one-handed**, in actual bar lighting.
-      Time it against the sub-20-minute target. *Phase 1.9 measures this first;
+      Time it against the sub-20-minute target. *Phase 2.9 measures this first;
       if it has not run, this is the first measurement and should be treated as
       such rather than as a confirmation.*
 - [ ] **Turn WiFi off mid-scan.** Count three bottles. The chip must read
@@ -202,7 +202,7 @@ specific about production rather than about the code.
       drains.*
 - [ ] **Kill the app with writes queued**, reopen, confirm the mount-time flush
       sends them. *Never observed anywhere — only the `online` path has run.
-      Deferred to Phase 1.9; if that has not happened, this is the first time.*
+      Deferred to Phase 2.9; if that has not happened, this is the first time.*
 - [ ] **Queue more than one write at a time** and confirm ordered replay. The
       queue has only ever held a single write.
 - [ ] **The one that matters most:** confirm a write that reached the server *just
@@ -221,7 +221,7 @@ specific about production rather than about the code.
       four counts closed; valuation reconciled to the cent in SQL on count 2.*
 - [ ] **Rapid-scan a shelf, then count it by hand, and compare.** Its frame
       guard is tested only against modelled frame sequences, and both of its
-      failure modes are silent. Quantity locations only. *Deferred to Phase 1.9;
+      failure modes are silent. Quantity locations only. *Deferred to Phase 2.9;
       do not let production be where this is first tried.*
 
 ### 2.5 Numbers, once a count is closed
@@ -266,7 +266,7 @@ had gone stale and said the opposite of the truth.
 #3 (user management shipped 2026-08-03 and is browser-verified — role and
 active changes are no longer manual SQL), #10 (`scanCountLine` was wired
 2026-08-04 and rapid mode is reachable; what is unproven is the camera, which
-is now a Phase 1.9 item), and #11 (Walk-In's count mode was confirmed by the
+is now a Phase 2.9 item), and #11 (Walk-In's count mode was confirmed by the
 owner on 2026-07-31).
 
 ---

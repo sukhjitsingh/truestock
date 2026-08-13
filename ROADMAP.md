@@ -4,10 +4,17 @@ Where this goes after the MVP. `STATE.md` is where it is now.
 
 **Re-sequenced 2026-08-12 by owner decision.** The previous order put the first
 production deploy immediately after the MVP and pushed invoice capture to a
-conditional Phase 4. Both moved: **field validation is deferred to Phase 1.9**,
+conditional Phase 4. Both moved: **field validation was deferred** (to 1.9 then,
+to 2.9 now),
 the **UI redesign and OCR invoice automation now come before go-live**, and
 **Toast PMIX moves to Phase 5**. What follows reflects that order, not the old
 one.
+
+**Re-sequenced again 2026-08-13 by owner decision.** Two changes: **1.3 (the
+owner's data entry) is folded into the field-validation phase**, and that phase
+**moves from 1.9 to 2.9** — after the UI redesign and OCR invoice automation
+rather than before them. So **Phase 1 is now complete**, and Phase 2 is what is
+next.
 
 Phases are ordered by decision, not by dependency alone. Where the new order
 creates a consequence worth knowing about, it is stated under the phase rather
@@ -15,11 +22,11 @@ than left to be discovered.
 
 | Phase | What |
 |---|---|
-| **1** | MVP completion — locations screen, bulk cost entry |
-| **1.5** | Survive daily use — #14, #1b, #23, #24, reorder output |
-| **1.9** | Field validation — the deferred measurements |
-| **2** | UI redesign — mobile layout and design flow |
+| **1** | ~~MVP completion — locations screen, bulk cost entry~~ **DONE 2026-08-12** |
+| **1.5** | ~~Survive daily use — #14, #1b, #23, #24, reorder output~~ **DONE 2026-08-12** |
+| **2** | UI redesign — mobile layout and design flow ← **next** |
 | **2.5** | OCR invoice automation |
+| **2.9** | Field validation + the owner's data entry — the deferred measurements |
 | **3** | **Go-live — deploy to production** |
 | **4** | Reports, heatmap, back-office enhancements |
 | **5** | Toast PMIX import + variance |
@@ -30,6 +37,18 @@ than left to be discovered.
 
 ## Phase 1 — MVP completion
 
+> **PHASE 1 IS COMPLETE, 2026-08-13.** 1.1 and 1.2 were built and
+> browser-verified on 2026-08-12 (PR #11), and **1.3 — the owner's data entry —
+> moved to Phase 2.9** by owner decision on 2026-08-13. Phase 1 therefore closes
+> on what it actually built.
+>
+> **What that defers, stated plainly:** the catalog is still uncosted. Verified in
+> MariaDB 2026-08-12: 9 of 99 active products costed, 0 with a `case_size`, 0 par
+> rows, 0 vendors. So valuation stays near-empty and **the reorder screen cannot
+> produce a row** until Phase 2.9. Every phase between here and there works against
+> a catalog with no prices in it — which is survivable for UI work, and is exactly
+> what Phase 2.5 exists to fix at the source.
+
 Catalog, locations, barcode scan, fill level in tenths, quantity input, count
 sessions with the Draft → Closed lifecycle, valuation, reorder list, three roles,
 multi-tenancy — **all built**, and as of 2026-08-12 every part of the counting
@@ -37,7 +56,8 @@ loop has run on a real phone: camera scan and enrol, tenths, sealed quantities,
 valuation (count 2 closed at $170.90, reconciled to the cent in SQL), and the
 offline write queue draining on reconnect, the last under the production CSP.
 
-**Two things are left to build.** Everything else in Phase 1 is data entry.
+**Both remaining build items shipped on 2026-08-12.** Their entries are kept
+below because the reasoning explains why the screens look the way they do.
 
 ### 1.1 Locations management screen — `/office/locations`
 
@@ -76,23 +96,33 @@ the selection and bulk-bar machinery already there. Preferred over a CSV import 
 no new parser, no new silent failure mode, and case size is only 16 rows (bottled
 beer only; a NULL case size on the 62 spirits is correct, not missing).
 
-### 1.3 Data entry — not construction
+### 1.3 Data entry — *moved to Phase 2.9 on 2026-08-13*
 
-90 unit costs · 16 case sizes · par levels (0 set, so the reorder list still
-cannot produce a row) · vendors (0, and `docs/catalog/vendors.csv` ships
-header-only on purpose) · 5 wine producers.
+90 unit costs · 16 case sizes · par levels · vendors · 5 wine producers. **This
+was never construction**, which is why it moved rather than being dropped: no
+agent and no amount of code can enter it, and holding Phase 1 open for it kept a
+finished phase looking unfinished.
 
-**Done when:** locations are manageable from the app, the catalog is costed, and
-a count produces a valuation and a reorder list worth acting on.
+It now lives in **Phase 2.9**, alongside the measurements that depend on it — a
+timed count means little against an uncosted catalog, so the two belong together.
+**Phase 2.5 is the reason this ordering is defensible:** OCR invoice capture is
+the automated version of this data entry, so doing it after 2.5 may mean typing a
+fraction of those 90 costs by hand instead of all of them.
 
-> **Exit criterion changed.** This phase used to close on *"a full count runs on
-> a phone in under 20 minutes."* That measurement moved to Phase 1.9, so keeping
-> it here would make Phase 1 uncloseable. The sub-20-minute target is not
-> abandoned — it is deferred, and it is Phase 1.9's exit criterion instead.
+**Phase 1's exit criterion, as met:** locations are manageable from the app and
+cost/case-size entry is survivable. The valuation-and-reorder half moved with the
+data.
 
 ---
 
 ## Phase 1.5 — Make it survive daily use
+
+> **BUILT, 2026-08-12 (PR #11).** #14, #23 and #24 are closed; reorder output
+> ships as clipboard + print. **#1b is half done** — `sweepExpiredSessions` exists
+> and is tested, but the cron that runs it can only be created against Hostinger,
+> so it lands in Phase 3. Two further items (#25 `docker:down` not stopping the TLS
+> proxy, #26 the preflight banner's false alarm) were found *while verifying* and
+> fixed in the same PR.
 
 Small, unglamorous, and it is what decides whether the MVP is still in use in
 three months. Driven by open-items, each with its own trigger.
@@ -142,7 +172,7 @@ three months. Driven by open-items, each with its own trigger.
   would record a full bottle for a part-full one. Frame guard in
   `lib/rescan-guard.ts`, tested without a camera; writing those tests found two
   silent miscounts before anyone scanned anything. *Camera validation moved to
-  Phase 1.9.*
+  Phase 2.9.*
 - ~~**Offline write queue** (#9)~~ — **DONE 2026-08-12.** Verified on a phone:
   `1 pending` while offline, `Synced` on reconnect with no interaction, exactly
   one ledger row afterwards. Required building `scripts/prod-lan.sh` first —
@@ -156,60 +186,26 @@ audit export means. Leave it.
 
 ---
 
-## Phase 1.9 — Field validation · *deferred measurements*
-
-**Everything here is measurement, not construction.** None of it is blocked on
-code; all of it was deferred on 2026-08-12 by owner decision. It is written down
-as a phase rather than dropped because these are the only claims in the project
-with no evidence behind them, and the project's own history is that unmeasured
-claims fail silently.
-
-Run against the LAN stack — this phase does not need production.
-`docs/phone-count-test.md` is the protocol; record results there rather than in a
-session log, because a run that is not written down is an anecdote.
-
-- **The enrollment pass (Run A).** 95 of 99 active products have no barcode, so a
-  first walk is essentially all enrolment. Measures the **20-second** enroll
-  budget from `AGENTS.md`, not the 20-minute one. Also finally answers open
-  question #3, the open-vs-sealed split, which every counting-speed estimate
-  depends on.
-- **The timed count (Run B).** The **sub-20-minute** target the whole design is
-  justified by, and still the one claim with no measurement behind it. Only
-  meaningful once barcodes resolve, so it follows Run A over the same bottles.
-  Watch the per-line gaps: count 2 saw 29s and 102s between two kegs *on the same
-  screen with no leg switch*.
-- **The five-location walk.** No pass has covered all five. The locked-location
-  design and its "count something elsewhere" escape hatch are both untested, and a
-  wrong active location fails *silently* — the total stays right and only the
-  distribution is wrong.
-- **Rapid-scan against a real camera.** The last untested part of scanning and the
-  one whose failures are silent by construction. Its frame guard is tested only
-  against *modelled* frame sequences. **Count a real shelf in rapid mode, then
-  count it by hand, and compare.** Offered only on quantity locations, and
-  *hidden* rather than greyed out elsewhere.
-- **The two remaining queue gaps (#9).** The **mount-time flush** has never run —
-  only the `online` listener was observed — and the queue has never held **more
-  than one write at a time**, so ordered replay is still only reasoned about.
-- **The standalone server entrypoint.** The 2026-08-12 CSP verification ran under
-  `next start`, which printed `"next start" does not work with "output:
-  standalone" configuration`. Hostinger runs `node .next/standalone/server.js`,
-  which has never been started. Cheap to close locally and it is a Phase 3
-  blocker, so closing it here removes a deploy-day unknown.
-- **The barcode-resolution branch.** Both real scans so far were *enrolments of
-  unknown codes*. Resolving a barcode to a product the catalog already has is a
-  different branch of `onBarcode` and has never run on a device.
-
-**Done when:** a full count runs on a phone in under 20 minutes, the numbers are
-trusted enough to act on, and rapid mode's count matches a hand count.
-
----
-
 ## Phase 2 — UI redesign · mobile layout and design flow
 
 The counting app's entire reason to exist is being faster than a clipboard in a
 dim bar, one-handed, with the other hand holding a bottle. The screens work; how
-well they work at pace is the open question, and Phase 1.9's numbers are the
-input to this phase rather than an afterthought.
+well they work at pace is the open question.
+
+> **This phase used to be fed by measurements, and as of 2026-08-13 it is not.**
+> The field-validation phase moved from 1.9 to **2.9**, so the redesign now happens
+> *before* any timed count, five-location walk, or enroll-budget number exists. That
+> is the real cost of the new order and it is worth naming: this phase will be
+> designed from judgement and from the two Dribbble references, not from evidence
+> about where time actually goes. Count 2 showed 29s and 102s between two kegs *on
+> the same screen with no leg switch* — nobody knows why, and this phase will now
+> ship without knowing.
+>
+> **Two ways to keep that from being expensive.** Prefer changes that are cheap to
+> revisit over ones that lock in a flow — the leg model especially, since Phase 2.9
+> is the first thing that will actually test it. And where a change is a bet on
+> where time goes, write the bet down in `docs/phone-count-test.md` so 2.9 can
+> settle it rather than re-litigate it.
 
 **Start from what exists, which is more than it looks:** `docs/design-system.md`
 holds binding rules (two themes, one token set; the counting route hardcodes
@@ -229,16 +225,20 @@ Known material for this phase:
   have not.**
 - **Design flow, not just layout.** The leg model (pick a location, count it,
   *Finish section*, move on) is a flow decision that has never been walked
-  end to end across five locations. Phase 1.9 produces the first evidence about
-  it.
+  end to end across five locations, and under the new order **Phase 2.9 will not
+  produce evidence about it until after this phase ships**. Treat the leg model as
+  the thing most worth leaving alone here — changing an untested flow on judgement
+  alone risks replacing a design that works with one that merely reads better.
 - **The back office is desktop-first and gets used on a phone anyway.** The office
   nav already needed an overflow fix; the catalog table's bulk bar rendered
   off-screen below 98 rows and had to be made sticky. Both are symptoms.
 - **The enroll form is held to a 20-second budget** and is the highest-risk
-  interaction in the product. If Phase 1.9 says it is over budget, this is the
-  phase that fixes it — and per `AGENTS.md`, by shortening the path or lengthening
-  a preset list, not by adding free-text fields that accept a plausible wrong
-  answer.
+  interaction in the product. **Nobody has timed it.** Under the old order Phase
+  1.9 would have said whether it was over budget before this phase touched it;
+  now this phase goes first. So treat the budget as a design constraint to respect
+  rather than a measured failure to fix — and per `AGENTS.md`, if it does need
+  shortening, do it by shortening the path or lengthening a preset list, never by
+  adding free-text fields that accept a plausible wrong answer.
 
 **Two rules carry over and are not negotiable here.** Verify in a browser, never
 with `curl` — every client-side failure this project has hit was invisible to
@@ -300,6 +300,93 @@ it.
 
 ---
 
+## Phase 2.9 — Field validation + the owner's data entry
+
+**Nothing here is construction, and all of it needs the owner personally** — a
+phone, a walk-in, and supplier invoices. Moved from Phase 1.9 to 2.9 on 2026-08-13,
+and **Phase 1.3's data entry was folded in at the same time**, because a timed count
+against an uncosted catalog measures the wrong thing: the reorder list cannot
+produce a row and valuation stays near-empty, so "are the numbers worth acting on"
+is unanswerable until the data exists.
+
+It is written down as a phase rather than dropped because these are the only claims
+in the project with no evidence behind them, and the project's own history is that
+unmeasured claims fail silently.
+
+> **What being last costs.** Phases 2 and 2.5 now ship before any of this is
+> measured, so the UI redesign is designed without knowing where time goes (stated
+> under Phase 2) and OCR is built against a catalog whose manual-entry burden has
+> never been felt. If a measurement here contradicts a Phase 2 decision, the fix
+> belongs here — do not re-open the redesign wholesale.
+
+### The data (was Phase 1.3)
+
+**Do this first — the measurements below are close to meaningless without it.**
+
+90 unit costs · 16 case sizes · par levels (**0 set**, so the reorder list still
+cannot produce a row) · vendors (**0**, and `docs/catalog/vendors.csv` ships
+header-only on purpose — inventing distributor names in a catalog that drives real
+orders is not acceptable) · 5 wine producers (currently varietals like `Merlot`,
+which cannot be costed or scanned until they name a producer).
+
+**Phase 2.5 should have reduced this.** OCR invoice capture is the automated
+version of exactly this typing, so on arriving here, check what it already
+populated before entering anything by hand. If it populated nothing, that is a
+finding about Phase 2.5, not a reason to skip this.
+
+**The 45-minute budget still stands** (Gate 1 of `docs/plans/phase-1-to-1.5/`):
+all 90 costs in one sitting, unaided, with the dashboard valuation reconciling to
+the cent against a hand-checked SQL total — the way count 2 was reconciled at
+$170.90. Inline cost editing was built specifically to make that possible; if it
+is not, that is a Phase 1.2 regression worth reporting.
+
+### The measurements
+
+Run against the LAN stack — this phase does not need production.
+`docs/phone-count-test.md` is the protocol; record results there rather than in a
+session log, because a run that is not written down is an anecdote.
+
+- **The enrollment pass (Run A).** 95 of 99 active products have no barcode, so a
+  first walk is essentially all enrolment. Measures the **20-second** enroll
+  budget from `AGENTS.md`, not the 20-minute one. Also finally answers open
+  question #3, the open-vs-sealed split, which every counting-speed estimate
+  depends on.
+- **The timed count (Run B).** The **sub-20-minute** target the whole design is
+  justified by, and still the one claim with no measurement behind it. Only
+  meaningful once barcodes resolve, so it follows Run A over the same bottles.
+  Watch the per-line gaps: count 2 saw 29s and 102s between two kegs *on the same
+  screen with no leg switch*.
+- **The five-location walk.** No pass has covered all five. The locked-location
+  design and its "count something elsewhere" escape hatch are both untested, and a
+  wrong active location fails *silently* — the total stays right and only the
+  distribution is wrong.
+- **Rapid-scan against a real camera.** The last untested part of scanning and the
+  one whose failures are silent by construction. Its frame guard is tested only
+  against *modelled* frame sequences. **Count a real shelf in rapid mode, then
+  count it by hand, and compare.** Offered only on quantity locations, and
+  *hidden* rather than greyed out elsewhere.
+- **The two remaining queue gaps (#9).** The **mount-time flush** has never run —
+  only the `online` listener was observed — and the queue has never held **more
+  than one write at a time**, so ordered replay is still only reasoned about.
+- **The standalone server entrypoint.** The 2026-08-12 CSP verification ran under
+  `next start`, which printed `"next start" does not work with "output:
+  standalone" configuration`. Hostinger runs `node .next/standalone/server.js`,
+  which has never been started. Cheap to close locally and it is a Phase 3
+  blocker, so closing it here removes a deploy-day unknown.
+- **The barcode-resolution branch.** Both real scans so far were *enrolments of
+  unknown codes*. Resolving a barcode to a product the catalog already has is a
+  different branch of `onBarcode` and has never run on a device.
+
+**Done when:** the catalog is costed, a full count runs on a phone in under 20
+minutes, the resulting valuation and reorder list are trusted enough to act on,
+and rapid mode's count matches a hand count.
+
+**This is the last phase before go-live**, and its output is what makes Phase 3 a
+decision rather than a hope: `docs/go-live.md`'s remaining browser checks and the
+standalone-entrypoint item both close here.
+
+---
+
 ## Phase 3 — Go-live · deploy to production
 
 **`docs/go-live.md` is the gate and it is already written.** `docs/deploy.md` is
@@ -316,7 +403,7 @@ Blocking items, none of which are construction:
 - **A rollback rehearsed**, not merely documented.
 - The dev owner password is not reused — `LocalDevOwner123` sat in a plaintext
   container log and must be treated as public.
-- The **standalone entrypoint** starts, if Phase 1.9 has not already closed it.
+- The **standalone entrypoint** starts, if Phase 2.9 has not already closed it.
 
 Then run **go-live Part 2 against production, in order, on the first day** — the
 browser checks first. Two rules govern it: **a 200 is not evidence**, and
@@ -324,10 +411,11 @@ browser checks first. Two rules govern it: **a 200 is not evidence**, and
 against production tells you nothing new.
 
 The session-sweep cron (#1b) gets scheduled here, using the query built in
-Phase 1.5.
+Phase 1.5. **Phase 2.9 is the gate immediately before this one** — go-live is not
+a decision anyone can make until its numbers exist.
 
 > **What moving this to Phase 3 costs, stated plainly.** The bar does not use the
-> product until this phase lands, so Phases 1.9 and 2 produce measurements from a
+> product until this phase lands, so Phases 2 and 2.9 produce their evidence from a
 > LAN dev stack rather than from daily production use, and Phase 2.5 captures
 > invoices with nowhere durable to put them yet. That is a legitimate trade — the
 > app is better when it arrives — but "we will learn it in production" is not
