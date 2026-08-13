@@ -13,8 +13,9 @@
  * query/response shape here, not left to the UI to hide.
  */
 import { and, desc, eq, inArray, isNull, lt, ne } from "drizzle-orm";
+import { alias } from "drizzle-orm/mysql-core";
 import { db } from "@/db";
-import { count, countLine, location, product, productPar, vendor } from "@/db/schema";
+import { count, countLine, location, product, productPar, user, vendor } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
 import { canSeeCost } from "@/lib/authz";
 import { NotFoundError } from "@/lib/domain/errors";
@@ -292,6 +293,64 @@ async function previousCountComparison(
 }
 
 // ---------------------------------------------------------------------------
+// Dashboard: last closed count (#14, Slice 5). A direct query for exactly
+// one row, replacing the dashboard's old "fetch 50 via listCounts, filter to
+// closed, sort client-side" pattern — which was also a capped read subject
+// to the same #14 bug once an org has more than 50 counts.
+// ---------------------------------------------------------------------------
+
+export interface LastClosedCount {
+  id: number;
+  type: (typeof count.$inferSelect)["type"];
+  closedAt: Date;
+  notes: string | null;
+  openedByName: string | null;
+  closedByName: string | null;
+  /** Owner only — invariant 8, same pattern as `CountSummary.totalValue`. */
+  totalValue?: string;
+}
+
+/** Owner/manager only (enforced in the action). Null if nothing has ever closed. */
+export async function getLastClosedCount(actor: Actor): Promise<LastClosedCount | null> {
+  const opener = alias(user, "opener");
+  const closer = alias(user, "closer");
+
+  const [row] = await db
+    .select({
+      id: count.id,
+      type: count.type,
+      closedAt: count.closedAt,
+      notes: count.notes,
+      totalValue: count.totalValue,
+      openedByName: opener.name,
+      closedByName: closer.name,
+    })
+    .from(count)
+    .leftJoin(opener, eq(opener.id, count.openedBy))
+    .leftJoin(closer, eq(closer.id, count.closedBy))
+    .where(and(eq(count.organizationId, actor.organizationId), eq(count.status, "closed")))
+    .orderBy(desc(count.closedAt))
+    .limit(1);
+
+  if (!row || row.closedAt == null) {
+    return null;
+  }
+
+  const result: LastClosedCount = {
+    id: row.id,
+    type: row.type,
+    closedAt: row.closedAt,
+    notes: row.notes,
+    openedByName: row.openedByName,
+    closedByName: row.closedByName,
+  };
+  if (canSeeCost(actor.role) && row.totalValue != null) {
+    result.totalValue = row.totalValue;
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Reorder list (spec §9.3): on-hand (from the most recently *closed* count)
 // vs. par/reorder point, grouped by vendor. No cost data involved at all —
 // par levels and quantities are the only inputs — so there is nothing to
@@ -313,6 +372,13 @@ export interface ReorderItem {
 export interface ReorderList {
   /** The closed count on-hand figures are computed from; null if none exist yet. */
   asOfCountId: number | null;
+  /**
+   * When that count closed — sourced from `getOnHandSnapshot`'s already-computed
+   * field, no new query. A copy/print of this list carries this date (Risk 8,
+   * Gate 3 Amendment 4a) so a tab left open since before the day's count closed
+   * doesn't hand a vendor a stale order with nothing marking it as such.
+   */
+  asOfClosedAt: Date | null;
   items: ReorderItem[];
   /**
    * How many active products have an overall par at all.
@@ -332,12 +398,12 @@ export async function reorderList(actor: Actor): Promise<ReorderList> {
   // the back-office catalog's stock cell also reads. Two screens showing two
   // different on-hand numbers for the same bottle is the kind of quiet
   // disagreement this codebase spends most of its comments avoiding.
-  const { asOfCountId, byProduct: onHandByProduct } = await getOnHandSnapshot(
+  const { asOfCountId, asOfClosedAt, byProduct: onHandByProduct } = await getOnHandSnapshot(
     actor.organizationId,
   );
 
   if (asOfCountId == null) {
-    return { asOfCountId: null, items: [], productsWithPar: 0 };
+    return { asOfCountId: null, asOfClosedAt: null, items: [], productsWithPar: 0 };
   }
 
   // MVP only ever writes overall par rows (location_id IS NULL) — spec §8.
@@ -358,7 +424,7 @@ export async function reorderList(actor: Actor): Promise<ReorderList> {
     );
 
   if (parRows.length === 0) {
-    return { asOfCountId, items: [], productsWithPar: 0 };
+    return { asOfCountId, asOfClosedAt, items: [], productsWithPar: 0 };
   }
 
   const productIds = parRows.map((p) => p.productId);
@@ -417,5 +483,5 @@ export async function reorderList(actor: Actor): Promise<ReorderList> {
     return a.productName.localeCompare(b.productName);
   });
 
-  return { asOfCountId, items, productsWithPar: parRows.length };
+  return { asOfCountId, asOfClosedAt, items, productsWithPar: parRows.length };
 }

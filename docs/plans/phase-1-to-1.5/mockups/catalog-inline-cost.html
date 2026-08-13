@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Catalog — inline cost &amp; case size (Gate 1 mockup)</title>
+<!--
+  Gate 1 mockup, throwaway by design. Mirrors components/office/catalog-table.tsx's
+  table shell and column set, adding two editable cells: unit cost (dollars, DECIMAL
+  10,4) and case size (integer, NULL for spirits). Light theme only — back office.
+
+  CRITICAL correctness rules encoded here (docs/plans/phase-1-to-1.5/01-product.md):
+  - A NULL case_size on a spirit renders as static "n/a" text, never an empty
+    input box begging to be filled — that would invent a pack level the bar
+    doesn't use (AGENTS.md catalog notes).
+  - A cost cell never carries a prefilled 0.00. Empty is honest; 0.00 is a
+    plausible-but-wrong default that values a bottle at nothing.
+-->
+<style>
+  :root {
+    --radius: 1rem;
+    --background: #f7f7f5;
+    --foreground: #111111;
+    --card: #ffffff;
+    --card-foreground: #111111;
+    --muted: #efefec;
+    --muted-foreground: #6b6b6b;
+    --primary: #0a0a0a;
+    --primary-foreground: #ffffff;
+    --accent: #2563eb;
+    --accent-foreground: #ffffff;
+    --destructive: #c4304f;
+    --border: #e4e4e1;
+    --input: #8c8c8c;
+    --ring: #2563eb;
+    --negative: #b8305a;
+    --negative-bg: #fde8ec;
+    --warning: #92600a;
+    --warning-bg: #fdf0dc;
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, p { margin: 0; padding: 0; }
+  button, input { font: inherit; color: inherit; }
+  a, button, input, [tabindex] { outline-offset: 2px; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+  .shell { max-width: 1160px; margin: 0 auto; padding: 2rem 1.25rem 5rem; }
+  .text-header-title { font-size: 1.75rem; line-height: 1.15; font-weight: 600; }
+  .text-row-title { font-size: 1.0625rem; line-height: 1.3; font-weight: 600; }
+  .text-row-subtitle { font-size: 0.875rem; line-height: 1.4; }
+  .text-caption { font-size: 0.8125rem; line-height: 1.4; }
+  .text-label { font-size: 0.6875rem; line-height: 1.2; font-weight: 600; letter-spacing: 0.06em; }
+  .text-numeral-sm { font-size: 1.0625rem; line-height: 1.2; font-weight: 600; }
+  .uppercase { text-transform: uppercase; }
+  .muted { color: var(--muted-foreground); }
+  .section-note { max-width: 72ch; color: var(--muted-foreground); font-size: 0.9375rem; margin-top: 0.5rem; }
+
+  .demo-heading {
+    margin-top: 3rem; margin-bottom: 0.75rem;
+    font-size: 0.8125rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted-foreground); padding-bottom: 0.5rem; border-bottom: 1px solid var(--border);
+  }
+
+  .table-wrap { overflow-x: auto; border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--card); }
+  table { width: 100%; min-width: 52rem; border-collapse: collapse; text-align: left; }
+  thead tr { border-bottom: 1px solid var(--border); }
+  th { padding: 0.75rem 1rem; font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted-foreground); white-space: nowrap; }
+  th.right, td.right { text-align: right; }
+  td { padding: 0.85rem 1rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  .state-row td { background: var(--muted); padding: 0.5rem 1rem; }
+  .state-row .state-tag { font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--foreground); }
+  .state-row .state-desc { color: var(--muted-foreground); font-size: 0.8125rem; margin-left: 0.6rem; }
+
+  .product-name { font-weight: 600; }
+  .product-meta { color: var(--muted-foreground); font-size: 0.8125rem; margin-top: 0.15rem; }
+
+  .cell-input {
+    min-height: 2.75rem;
+    width: 8.5rem;
+    max-width: 100%;
+    border: 1px solid var(--input);
+    border-radius: var(--radius-md);
+    background: var(--card);
+    padding: 0 0.65rem;
+    font-size: 1rem;
+    text-align: right;
+    color: var(--foreground);
+  }
+  .cell-input::placeholder { color: var(--muted-foreground); font-style: italic; }
+  .cell-input.focused { outline: 2px solid var(--ring); outline-offset: 2px; border-color: var(--ring); }
+  .cell-input.dirty { border-color: var(--accent); }
+  .cell-input.saving { color: var(--muted-foreground); background: var(--muted); }
+  .cell-input.error { border-color: var(--negative); }
+
+  .cell-wrap { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 0.3rem; }
+  .cell-status { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.75rem; }
+  .cell-status.dirty-label { color: var(--accent); }
+  .cell-status.saving-label { color: var(--muted-foreground); }
+  .cell-status.saved-label { color: var(--muted-foreground); }
+  .cell-status.error-label { color: var(--negative); max-width: 9rem; text-align: right; white-space: normal; }
+
+  .na-text { color: var(--muted-foreground); font-size: 0.9375rem; display: inline-block; padding: 0 0.65rem; min-height: 2.75rem; line-height: 2.75rem; }
+
+  .spinner {
+    width: 0.85rem; height: 0.85rem; border-radius: 9999px;
+    border: 2px solid var(--border); border-top-color: var(--muted-foreground);
+    display: inline-block;
+  }
+  .icon { width: 0.85rem; height: 0.85rem; flex-shrink: 0; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <div>
+    <h1 class="text-header-title">Catalog</h1>
+    <p class="section-note">
+      Cost and case size edit in place — type a value, it saves as you go. Dollars are
+      entered as plain text (numeric keypad on a phone), never pre-filled. Every editing
+      state below is shown at once so the sequence can be reviewed without clicking through it.
+    </p>
+  </div>
+
+  <h2 class="demo-heading">Unit cost &amp; case size — every cell state</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Product</th>
+          <th scope="col">Category</th>
+          <th scope="col" class="right">Unit cost</th>
+          <th scope="col" class="right">Case size</th>
+        </tr>
+      </thead>
+      <tbody>
+
+        <tr class="state-row"><td colspan="4"><span class="state-tag">State — empty / never entered</span><span class="state-desc">no prefilled $0.00; NULL case size on a spirit renders as static "n/a", not an input</span></td></tr>
+        <tr>
+          <td>
+            <div class="product-name">Bombay Sapphire Gin 750ml</div>
+            <div class="product-meta">SKU-01120 &middot; Speed Rail</div>
+          </td>
+          <td class="muted text-row-subtitle">Spirits</td>
+          <td class="right">
+            <input class="cell-input" type="text" inputmode="decimal" placeholder="Enter cost" aria-label="Unit cost for Bombay Sapphire Gin 750ml" />
+          </td>
+          <td class="right">
+            <span class="na-text" aria-label="Case size not applicable — spirits are counted as bottles, not cases">n/a</span>
+          </td>
+        </tr>
+
+        <tr class="state-row"><td colspan="4"><span class="state-tag">State — focus</span><span class="state-desc">cursor in the field, mid-entry, ring in --ring / accent</span></td></tr>
+        <tr>
+          <td>
+            <div class="product-name">Tito's Handmade Vodka 750ml</div>
+            <div class="product-meta">SKU-04471 &middot; Speed Rail</div>
+          </td>
+          <td class="muted text-row-subtitle">Spirits</td>
+          <td class="right">
+            <input class="cell-input focused" type="text" inputmode="decimal" value="18.9" aria-label="Unit cost for Tito's Handmade Vodka 750ml, editing" />
+          </td>
+          <td class="right">
+            <span class="na-text">n/a</span>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="product-name">Coors Light 12oz</div>
+            <div class="product-meta">SKU-07310 &middot; Storeroom</div>
+          </td>
+          <td class="muted text-row-subtitle">Bottled beer</td>
+          <td class="right">
+            <input class="cell-input" type="text" inputmode="decimal" value="1.35" aria-label="Unit cost for Coors Light 12oz" />
+          </td>
+          <td class="right">
+            <input class="cell-input focused" type="text" inputmode="numeric" value="2" aria-label="Case size for Coors Light 12oz, editing" />
+          </td>
+        </tr>
+
+        <tr class="state-row"><td colspan="4"><span class="state-tag">State — dirty</span><span class="state-desc">value changed, not yet saved — accent border, "unsaved" label</span></td></tr>
+        <tr>
+          <td>
+            <div class="product-name">Jameson Irish Whiskey 750ml</div>
+            <div class="product-meta">SKU-03390 &middot; Back Bar</div>
+          </td>
+          <td class="muted text-row-subtitle">Spirits</td>
+          <td class="right">
+            <div class="cell-wrap">
+              <input class="cell-input dirty" type="text" inputmode="decimal" value="24.90" aria-label="Unit cost for Jameson Irish Whiskey 750ml, unsaved" />
+              <span class="cell-status dirty-label">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/></svg>
+                Unsaved
+              </span>
+            </div>
+          </td>
+          <td class="right">
+            <span class="na-text">n/a</span>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="product-name">Modelo Especial 12oz</div>
+            <div class="product-meta">SKU-07655 &middot; Storeroom</div>
+          </td>
+          <td class="muted text-row-subtitle">Bottled beer</td>
+          <td class="right">
+            <input class="cell-input" type="text" inputmode="decimal" value="1.42" aria-label="Unit cost for Modelo Especial 12oz" />
+          </td>
+          <td class="right">
+            <div class="cell-wrap">
+              <input class="cell-input dirty" type="text" inputmode="numeric" value="12" aria-label="Case size for Modelo Especial 12oz, unsaved, was 24" />
+              <span class="cell-status dirty-label">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/></svg>
+                Unsaved &middot; was 24
+              </span>
+            </div>
+          </td>
+        </tr>
+
+        <tr class="state-row"><td colspan="4"><span class="state-tag">State — saving</span><span class="state-desc">field disabled while the write is in flight</span></td></tr>
+        <tr>
+          <td>
+            <div class="product-name">Patr&oacute;n Silver 750ml</div>
+            <div class="product-meta">SKU-03910 &middot; Back Bar</div>
+          </td>
+          <td class="muted text-row-subtitle">Spirits</td>
+          <td class="right">
+            <div class="cell-wrap">
+              <input class="cell-input saving" type="text" inputmode="decimal" value="42.00" disabled aria-label="Unit cost for Patrón Silver 750ml, saving" />
+              <span class="cell-status saving-label">
+                <span class="spinner" aria-hidden="true"></span>
+                Saving&hellip;
+              </span>
+            </div>
+          </td>
+          <td class="right">
+            <span class="na-text">n/a</span>
+          </td>
+        </tr>
+
+        <tr class="state-row"><td colspan="4"><span class="state-tag">State — saved</span><span class="state-desc">write confirmed; field returns to normal with a brief acknowledgement</span></td></tr>
+        <tr>
+          <td>
+            <div class="product-name">Sailor Jerry Spiced Rum 750ml</div>
+            <div class="product-meta">SKU-05502 &middot; Speed Rail</div>
+          </td>
+          <td class="muted text-row-subtitle">Spirits</td>
+          <td class="right">
+            <div class="cell-wrap">
+              <input class="cell-input" type="text" inputmode="decimal" value="16.75" aria-label="Unit cost for Sailor Jerry Spiced Rum 750ml, saved" />
+              <span class="cell-status saved-label">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Saved
+              </span>
+            </div>
+          </td>
+          <td class="right">
+            <span class="na-text">n/a</span>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="product-name">Corona Extra 12oz</div>
+            <div class="product-meta">SKU-07422 &middot; Storeroom</div>
+          </td>
+          <td class="muted text-row-subtitle">Bottled beer</td>
+          <td class="right">
+            <input class="cell-input" type="text" inputmode="decimal" value="1.50" aria-label="Unit cost for Corona Extra 12oz" />
+          </td>
+          <td class="right">
+            <div class="cell-wrap">
+              <input class="cell-input" type="text" inputmode="numeric" value="24" aria-label="Case size for Corona Extra 12oz, saved" />
+              <span class="cell-status saved-label">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Saved
+              </span>
+            </div>
+          </td>
+        </tr>
+
+        <tr class="state-row"><td colspan="4"><span class="state-tag">State — per-cell error</span><span class="state-desc">the row's other cell stays editable; only the invalid field blocks</span></td></tr>
+        <tr>
+          <td>
+            <div class="product-name">Casamigos Blanco 750ml</div>
+            <div class="product-meta">SKU-06010 &middot; Back Bar</div>
+          </td>
+          <td class="muted text-row-subtitle">Spirits</td>
+          <td class="right">
+            <div class="cell-wrap">
+              <input class="cell-input error" type="text" inputmode="decimal" value="abc" aria-invalid="true" aria-describedby="cost-error-casamigos" aria-label="Unit cost for Casamigos Blanco 750ml, invalid" />
+              <span class="cell-status error-label" id="cost-error-casamigos" role="alert">Enter a dollar amount, like 21.50</span>
+            </div>
+          </td>
+          <td class="right">
+            <span class="na-text">n/a</span>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="product-name">Heineken 12oz</div>
+            <div class="product-meta">SKU-07890 &middot; Storeroom</div>
+          </td>
+          <td class="muted text-row-subtitle">Bottled beer</td>
+          <td class="right">
+            <input class="cell-input" type="text" inputmode="decimal" value="1.60" aria-label="Unit cost for Heineken 12oz" />
+          </td>
+          <td class="right">
+            <div class="cell-wrap">
+              <input class="cell-input error" type="text" inputmode="numeric" value="-4" aria-invalid="true" aria-describedby="case-error-heineken" aria-label="Case size for Heineken 12oz, invalid" />
+              <span class="cell-status error-label" id="case-error-heineken" role="alert">Case size must be a positive whole number</span>
+            </div>
+          </td>
+        </tr>
+
+      </tbody>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>

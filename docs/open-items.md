@@ -4,7 +4,12 @@ Known gaps, carried deliberately rather than forgotten. Each one says **when** t
 pick it up — the trigger matters more than the item, because most of these are
 correct to ignore until their trigger fires.
 
-Close an item by deleting its section and saying so in the commit message.
+Close an item by striking its heading, adding **— CLOSED &lt;date&gt;**, and
+replacing the body with what was actually done and what was learned. (This used
+to say "delete the section." Nothing in this file has ever been deleted, because
+the close notes turned out to be the most useful part — #9's `next dev` reload
+trap and #13's silent CSP break are both things a fresh session would otherwise
+rediscover the hard way. The instruction now matches the practice.)
 
 ---
 
@@ -141,7 +146,21 @@ non-functional while every server-side check passed. ~~The counting screens on a
 phone, and the offline queue, remain untouched.~~ **Both driven 2026-08-12 —
 see the note above.**
 
-## 1b. Nothing sweeps expired sessions
+## 1b. Nothing sweeps expired sessions — **HALF CLOSED 2026-08-12, cron still owed**
+
+**The sweep exists and is tested; only the schedule is missing.** `9f81967`
+added `sweepExpiredSessions` in `lib/domain/sessions.ts`, runnable as
+`bun run sweep-sessions`, with `tests/session-sweep.test.ts` covering it —
+including a mutation-checked batch-limit test (removing `.limit(batchSize)`
+makes it delete 5 rows where 2 were expected, and that test fails).
+
+**Trigger for the remaining half: the first production deploy.** The cron can
+only be created against Hostinger, which is Phase 3, so this is scheduled work
+rather than unfinished work — do not read it as an incomplete slice. Create it
+with `hosting_createAccountCronJobV1` when the deploy happens, and tick it off
+in `docs/go-live.md` rather than here.
+
+The original entry, still accurate about the shape of the problem:
 
 **Trigger: first production deploy, or the first time `session` row count is
 noticed growing. Not urgent — at 3–5 users per tenant this is years away from
@@ -532,26 +551,41 @@ byte-for-byte the runtime Hostinger uses (`node .next/standalone/server.js`).
 The CSP and hydration are settled; the standalone entrypoint is not, and stays
 on the go-live list.
 
-## 14. The dashboard's stat tiles are computed from capped queries
+## ~~14. The dashboard's stat tiles are computed from capped queries~~ — **CLOSED 2026-08-12**
 
-**Trigger: when the catalog passes ~100 products, or counts pass ~50. Sooner
-if either number starts being quoted to anyone.**
+**Closed by `3d8a347`, and verified in a browser against a hand-run SQL count:
+the tile reads 99, `SELECT COUNT(*) FROM product WHERE active = 1` returns 99.**
 
-`app/(office)/office/page.tsx` derives two figures from list reads that take a
-`limit`:
+`getCatalogHealth` and `getLastClosedCount` in `lib/domain/catalog.ts` do
+dedicated aggregate reads. What matters more is the **removal**: three capped
+reads — `searchProductsAction`, `listCountsAction`, `countSummaryAction` —
+came out of `app/(office)/office/page.tsx` entirely. Adding uncapped queries
+while leaving the capped ones in place would have left the bug in the page;
+the tile said 100 *because* it counted `products.length` off a truncated array.
 
-- "N active products" and the unpriced count come from
-  `searchProductsAction({ activeOnly: true, limit: 100 })`. At 101 products the
-  tile silently understates.
-- The last-closed-count tile finds its count inside
-  `listCountsAction({ limit: 50 })`. With 50 non-closed counts ahead of it, it
-  would report "no count has been closed yet" against a database full of them.
+Two things worth keeping from how this was closed:
 
-Both are correct against today's 97-product seed and would stay plausible
-while becoming wrong — the failure mode CLAUDE.md names as this app's worst.
-Reusing the existing actions was the right call for a first cut (no new
-unscoped reads, tenancy enforced in one place), but the fix is a dedicated
-aggregate read in `lib/domain/`, not a bigger `limit`.
+- **The test had to fail first.** `tests/catalog-health.test.ts` inserts 101
+  active products and asserts the capped `searchProducts({ limit: 100 })` read
+  returns exactly 100 in the *same* test that asserts `getCatalogHealth`
+  returns 101 — so the bug and the fix are both visible in one passing run,
+  rather than the fix being asserted against nothing.
+- **An "incomplete products" aggregate was designed and then dropped.** Gate 2
+  specified one; Gate 3 pointed out the dashboard has four tiles and none of
+  them is "incomplete". Its hand-written SQL predicate would have duplicated
+  `incompleteReasons` and drifted from it silently. Deleting it removed the
+  drift risk by construction instead of by test. See
+  `docs/plans/phase-1-to-1.5/02-architecture.md`, Amendment 1.
+
+`unpricedCount` is `null` for non-owners and the query is **skipped**, not
+computed and then withheld — invariant 8.
+
+What it looked like before, for the record: "N active products" and the
+unpriced count came from `searchProductsAction({ activeOnly: true, limit: 100 })`,
+and the last-closed-count tile searched inside `listCountsAction({ limit: 50 })`
+— so with 50 non-closed counts ahead of it, it would have reported "no count has
+been closed yet" against a database full of them. Both were correct against the
+97-product seed and would have stayed *plausible* while becoming wrong.
 
 ## 15. The dashboard's owner-only value branch has never rendered
 
@@ -856,7 +890,17 @@ back-office product form, driven at a desk in a browser rather than on the
 phone; it has not had that click-through since the fix, but it is not blocked
 on item 20's trigger.
 
-## 23. `scripts/create-user.ts` has the same unguarded-`main()` shape `db/seed.ts` just had
+## ~~23. `scripts/create-user.ts` has the same unguarded-`main()` shape `db/seed.ts` just had~~ — **CLOSED 2026-08-12**
+
+**Closed by `9f81967`, guarded the same way `db/seed.ts` is:
+`import.meta.url === pathToFileURL(process.argv[1]).href`.** Verified by
+importing the module and confirming no password prompt opens and no row is
+written. Like `db/seed.ts`'s guard, this has no automated test — neither entry
+point is importable from the test suite without reintroducing the exact side
+effect being guarded against, which is the point.
+
+The original entry follows, because its explanation of *why* an unguarded
+`main()` is so hard to notice is the durable part:
 
 **Trigger: the first time anything imports this script rather than running it
 as a CLI — a test, a future admin action, a wrapper script.**
@@ -878,7 +922,26 @@ worse than a seed race: it opens an interactive password prompt.
 `import.meta.url === pathToFileURL(process.argv[1]).href` — before anything
 ever has a reason to import this file.
 
-## 24. A plain `docker:up` silently reverts a live LAN session
+## ~~24. A plain `docker:up` silently reverts a live LAN session~~ — **CLOSED 2026-08-12**
+
+**Closed by `9f81967`: `bun run docker:up` now refuses when a LAN session looks
+live, and names `bun run docker:down` as the fix.**
+
+The check reads the **running container** (`docker inspect` exposes `Env`, so
+the effective `DEV_LAN_ORIGIN` and `APP_BIND` are both readable, and the `tls`
+profile proxy's presence is directly observable). A gitignored state file was
+designed for this and then dropped: its only failure mode is going stale, and
+the guard has to reconcile against real container state regardless, so the file
+was pure redundancy with a way to be wrong. See
+`docs/plans/phase-1-to-1.5/02-architecture.md`, Amendment 3.
+
+**It surfaced a separate, pre-existing bug — see item 25.** `docker:down` does
+not fully tear down a LAN session, so the guard can keep refusing after what
+looks like a clean teardown.
+
+The original entry follows; its root-cause walkthrough is the durable part,
+because the symptom ("the page just refreshes on submit") points nowhere near
+the cause:
 
 **Trigger: before this project is handed to anyone who doesn't already know
 this by heart, or the next time an agent is told to "just try `docker:up`" as
@@ -944,3 +1007,136 @@ This is also the fifth instance of the pattern item #18 named: the server was
 fine and returned 200 (`curl https://192.168.12.33:3443/login`, the whole
 time it was broken) while the app was completely unusable on the device it
 was built for. See `STATE.md`'s "every gate stayed green" paragraph.
+
+## ~~25. `docker:down` does not stop the TLS proxy, so a LAN session never fully ends~~ — **CLOSED 2026-08-12**
+
+**Closed by making both teardowns profile-aware:** `docker:down` is now
+`docker compose --profile tls down`, and `docker:reset`'s leading `down -v`
+likewise. Compose accepts `--profile` on `down` (verified on v2.23.0).
+
+**Verified by reproducing it, both directions**, rather than by reading the
+flag's documentation. `docker compose --profile tls create tls` (create, not
+up, so no port is bound), then plain `docker compose down` — `truestock-tls`
+survives, which is the bug. Then `docker compose --profile tls down` — removed.
+
+Nothing else needed changing: `dev-lan.sh`, `prod-lan.sh`, `README.md`,
+`docs/phone-count-test.md` and item 24's guard message all already document the
+teardown as `bun run docker:down && bun run docker:up`. That instruction was
+simply not true before, and now is.
+
+The finding, for the record:
+
+Found 2026-08-12 while proving item 24's new `docker:up` guard, on Docker
+Compose v2.23.0.
+
+`bun run docker:up:lan` / `docker:up:prod` start the TLS proxy through
+`--profile tls`. `bun run docker:down` is a plain `docker compose down` with no
+profile flag, and **Compose will not stop a container belonging to a profile it
+was not told about.** Reproduced twice: after `bun run docker:down`,
+`docker ps -a` still shows `truestock-tls  Up`, and Compose prints its own tell
+— `Network truestock_default  Removing / Resource is still in use`.
+
+The consequence is a confusing loop rather than a broken app: item 24's guard
+sees the `tls` container still running, correctly concludes a LAN session is
+live, and refuses `docker:up` — right after the user ran the exact command the
+guard told them to run. Clearing it today needs `docker compose --profile tls
+down`.
+
+**How to close it:** make `docker:down` profile-aware —
+`docker compose --profile tls down` — so one teardown command actually tears
+everything down. Worth checking `dev-lan.sh` and `prod-lan.sh` for the same
+assumption while in there.
+
+This is a documentation-versus-reality gap as much as a script bug: the
+teardown sequence is documented in several places as `docker:down &&
+docker:up`, and that sequence has never fully worked for a LAN session.
+
+## ~~26. The preflight origin banner cries wolf on plain `localhost`~~ — **CLOSED 2026-08-12**
+
+**Closed by fixing the predicate, not by moving the check client-side.**
+`lib/dev-origins.ts` gained `isDevOriginAllowed(hostname)`, which knows what
+`parseDevOriginHosts()` cannot: Next allows `localhost` and `*.localhost` on its
+own, and no configuration file expresses that. `PreflightOriginCheck` now calls
+it instead of testing membership in the configured list.
+
+**The close note in this item originally proposed having the banner confirm a
+real `/_next/*` fetch. That idea was wrong and was dropped.** The component's
+own docblock already explains why: in the failure case being detected, no client
+JavaScript runs at all, so there is nothing left to do the observing. The
+verdict has to be derivable on the server. Strictly more accurate and strictly
+useless.
+
+Covered by `tests/dev-origins.test.ts` — 10 pure tests, no database, no browser
+— and **mutation-checked**: deleting the `localhost` allowance makes exactly two
+of them fail (`localhost is allowed…` and `a .localhost subdomain is allowed…`)
+and leaves the other eight green. `notlocalhost` is asserted NOT to match, since
+a `.endsWith("localhost")` implementation would wrongly allow it. There is also
+a browser check in `verify:browser` asserting the rendered banner reads *Yes*
+and does not contain "no JavaScript runs", because what a human reads is the
+thing that was wrong.
+
+The finding, for the record:
+
+Found 2026-08-12 in a real browser on `http://localhost:3000/login`, brought up
+with a plain `bun run docker:up`.
+
+`components/count/preflight-origin-check.tsx` renders **"Origin allowed: NO"**
+and states that "client chunks return 403 — so no JavaScript runs. The form
+appears but never responds to taps." All of that was false at the time it was
+displayed: React had demonstrably attached (`__reactFiber$` on the form), HMR
+was connected, and the page was fully interactive. The banner's premise —
+`localhost:3000` not being in `allowedDevOrigins` — does not imply blocked
+chunks, because Next permits same-origin `/_next/*` requests regardless;
+`allowedDevOrigins` governs *cross*-origin dev requests, which is what item 17
+and item 24 were actually about.
+
+So the check is right about the config value and wrong about the consequence,
+in the one configuration a developer hits most often.
+
+**How to close it:** make the banner's verdict depend on the *observed*
+outcome rather than the config value — it already runs client-side, so it can
+simply confirm a `/_next/*` fetch succeeds — and treat `localhost` and
+`127.0.0.1` as allowed by construction. The LAN case it was built for (item 24)
+is the one where the warning is real and must stay.
+
+## ~~27. `/office/vendors` still has the row-click edit affordance that was just removed from locations~~ — **CLOSED 2026-08-12**
+
+**Closed the same day it was filed, with the same three changes as `957bfeb`:**
+an explicit `Edit` button in a new Actions column, the `<tr>`'s `onClick` and
+`cursor-pointer` removed, and `vendor-edit-form.tsx`'s heading changed to
+`Edit ${vendor.name}` so the form names its subject.
+
+**Both halves are now covered by `bun run verify:browser`** — the vendor edit
+form must be editing the row whose Edit was clicked, and its heading must
+contain that vendor's name. Neither check could have passed before the fix:
+there was no button to click, and the heading was the constant `"Edit vendor"`.
+The suite went 28 → 30 checks. When no vendor exists — the default state of the
+dev database — both are reported SKIPPED rather than passing vacuously.
+
+The finding, for the record:
+
+Found 2026-08-12 while fixing the locations screen (`957bfeb`). All three legs
+of that finding are still present here:
+
+- `components/office/vendors-list.tsx:148-149` — the `<tr>` carries
+  `onClick={() => handleEditClick(vendor.id)}` plus
+  `cursor-pointer hover:bg-muted`, with no `role`, no `tabIndex` and no visible
+  Edit control. Keyboard and screen-reader users cannot edit a vendor at all.
+- `components/office/vendor-edit-form.tsx:99` — the heading is the generic
+  `"Edit vendor"` and never names the vendor being edited.
+
+Why it matters even though a vendor is less dangerous than a location: on the
+locations screen this combination put a click on **Speed Rail** when another row
+was aimed at, one confirm away from renaming a real location and flipping its
+`count_mode`. The mechanism is the row reflowing as the inline form opens, and
+it is identical here. A mis-renamed vendor is quieter — it silently regroups the
+reorder list, which nobody notices until an order goes to the wrong rep.
+
+**How to close it:** the same three changes `957bfeb` made — an explicit `Edit`
+`<Button variant="outline" size="tap">` in the actions cell, the `<tr>`'s
+`onClick` and `cursor-pointer` removed so the hazard is gone by construction,
+and the vendor's name in the form heading so the form states its own subject.
+`components/office/locations-table.tsx` is now the reference implementation.
+
+`users-list.tsx` and `catalog-table.tsx` were checked and do **not** have this
+pattern — both use explicit controls.

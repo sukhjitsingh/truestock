@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Reorder — copy &amp; print (Gate 1 mockup)</title>
+<!--
+  Gate 1 mockup, throwaway by design. Mirrors app/(office)/office/reorder/page.tsx's
+  vendor-grouped table exactly, adding per-vendor Copy and Print controls plus the
+  literal plain-text block that a Copy tap places on the clipboard — shown in a <pre>
+  so the owner can approve the exact text before it ever reaches a text message.
+  Light theme only — back office. Copy is wired for real (navigator.clipboard) as
+  the one allowed "tiny script to demo a state toggle"; nothing else is interactive.
+-->
+<style>
+  :root {
+    --radius: 1rem;
+    --background: #f7f7f5;
+    --foreground: #111111;
+    --card: #ffffff;
+    --card-foreground: #111111;
+    --muted: #efefec;
+    --muted-foreground: #6b6b6b;
+    --primary: #0a0a0a;
+    --primary-foreground: #ffffff;
+    --accent: #2563eb;
+    --accent-foreground: #ffffff;
+    --border: #e4e4e1;
+    --input: #8c8c8c;
+    --ring: #2563eb;
+    --success: #1f7a3d;
+    --success-bg: #e4f5e6;
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, p { margin: 0; padding: 0; }
+  button { font: inherit; color: inherit; }
+  button, [tabindex] { outline-offset: 2px; }
+  button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+  .shell { max-width: 980px; margin: 0 auto; padding: 2rem 1.25rem 5rem; }
+  .text-header-title { font-size: 1.75rem; line-height: 1.15; font-weight: 600; }
+  .text-row-subtitle { font-size: 0.9375rem; line-height: 1.4; }
+  .text-caption { font-size: 0.8125rem; line-height: 1.4; }
+  .text-label { font-size: 0.6875rem; line-height: 1.2; font-weight: 600; letter-spacing: 0.06em; }
+  .text-numeral-sm { font-size: 1.0625rem; line-height: 1.2; font-weight: 600; }
+  .uppercase { text-transform: uppercase; }
+  .muted { color: var(--muted-foreground); }
+  .section-note { max-width: 70ch; color: var(--muted-foreground); font-size: 0.9375rem; margin-top: 0.5rem; }
+  .section-gap { display: flex; flex-direction: column; gap: 2.5rem; margin-top: 2rem; }
+
+  .demo-heading {
+    margin-top: 0; margin-bottom: 0.5rem;
+    font-size: 0.8125rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted-foreground); padding-bottom: 0.5rem; border-bottom: 1px solid var(--border);
+  }
+
+  .vendor-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.75rem; }
+  .vendor-head h2 { font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted-foreground); }
+  .vendor-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+    min-height: 2.75rem; padding: 0 1rem;
+    border-radius: var(--radius-md); font-size: 0.8125rem; font-weight: 600;
+    border: 1px solid var(--input); background: var(--card); color: var(--foreground);
+    cursor: pointer; white-space: nowrap;
+  }
+  .btn-primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+  .btn.copied { border-color: var(--success); color: var(--success); }
+  .icon { width: 1rem; height: 1rem; flex-shrink: 0; }
+
+  .table-wrap { overflow-x: auto; border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--card); }
+  table { width: 100%; min-width: 34rem; border-collapse: collapse; text-align: left; }
+  thead tr { border-bottom: 1px solid var(--border); }
+  th { padding: 0.65rem 1rem; font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted-foreground); white-space: nowrap; }
+  th.right, td.right { text-align: right; }
+  td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); }
+  tbody tr:last-child td { border-bottom: none; }
+
+  .clip-label { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-top: 0.9rem; }
+  .clip-label p { font-size: 0.8125rem; color: var(--muted-foreground); }
+
+  pre.clip {
+    margin: 0.5rem 0 0;
+    padding: 1rem;
+    background: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    color: var(--foreground);
+    white-space: pre-wrap;
+    overflow-x: auto;
+  }
+
+  .toast {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    background: var(--success-bg); color: var(--success);
+    border-radius: 9999px; padding: 0.35rem 0.8rem;
+    font-size: 0.75rem; font-weight: 600;
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <div>
+    <h1 class="text-header-title">Reorder</h1>
+    <p class="section-note">
+      On hand as of count #1246799 &middot; 6 items at or below par. Each vendor's order
+      can be copied to the clipboard or sent to a printer, so it never has to be
+      retyped into a text message.
+    </p>
+  </div>
+
+  <div class="section-gap">
+
+    <!-- ================= VENDOR 1 — idle state ================= -->
+    <section>
+      <h2 class="demo-heading" style="border-bottom:none; padding-bottom:0; margin-bottom:0.75rem;">State &mdash; idle (before tapping Copy)</h2>
+      <div class="vendor-head">
+        <h2>Southern Glazer's</h2>
+        <div class="vendor-actions">
+          <button class="btn" type="button" id="copy-btn-1" onclick="copyOrder('sgws-text', 'copy-btn-1')" aria-label="Copy Southern Glazer's order to clipboard">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="1.5"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4H5.5A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span id="copy-btn-1-label">Copy order</span>
+          </button>
+          <button class="btn" type="button" onclick="window.print()" aria-label="Print Southern Glazer's order">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M7 8V4h10v4M7 17h10v4H7z" stroke-linecap="round" stroke-linejoin="round"/><rect x="4" y="8" width="16" height="8" rx="1.5"/></svg>
+            Print
+          </button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Product</th>
+              <th scope="col" class="right">On hand</th>
+              <th scope="col" class="right">Par</th>
+              <th scope="col" class="right">Order</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Tito's Handmade Vodka <span class="muted text-caption">Spirits</span></td>
+              <td class="right muted text-numeral-sm">2</td>
+              <td class="right muted text-numeral-sm">6</td>
+              <td class="right text-numeral-sm">4</td>
+            </tr>
+            <tr>
+              <td>Bombay Sapphire Gin <span class="muted text-caption">Spirits</span></td>
+              <td class="right muted text-numeral-sm">1</td>
+              <td class="right muted text-numeral-sm">4</td>
+              <td class="right text-numeral-sm">3</td>
+            </tr>
+            <tr>
+              <td>Jameson Irish Whiskey <span class="muted text-caption">Spirits</span></td>
+              <td class="right muted text-numeral-sm">0</td>
+              <td class="right muted text-numeral-sm">3</td>
+              <td class="right text-numeral-sm">3</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="clip-label">
+        <p>Exact text a Copy tap places on the clipboard:</p>
+      </div>
+      <pre class="clip" id="sgws-text">Order — Southern Glazer's
+Truestock · Count #1246799 · Aug 11, 2026
+
+Tito's Handmade Vodka 750ml ..... 4
+Bombay Sapphire Gin 750ml ....... 3
+Jameson Irish Whiskey 750ml ..... 3
+
+3 items</pre>
+    </section>
+
+    <!-- ================= VENDOR 2 — copied-confirmation state ================= -->
+    <section>
+      <h2 class="demo-heading" style="border-bottom:none; padding-bottom:0; margin-bottom:0.75rem;">State &mdash; just tapped Copy (confirmation)</h2>
+      <div class="vendor-head">
+        <h2>Breakthru Beverage</h2>
+        <div class="vendor-actions">
+          <span class="toast" role="status">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Copied to clipboard
+          </span>
+          <button class="btn copied" type="button" id="copy-btn-2" onclick="copyOrder('btb-text', 'copy-btn-2')" aria-label="Copy Breakthru Beverage order to clipboard">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span id="copy-btn-2-label">Copied!</span>
+          </button>
+          <button class="btn" type="button" onclick="window.print()" aria-label="Print Breakthru Beverage order">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M7 8V4h10v4M7 17h10v4H7z" stroke-linecap="round" stroke-linejoin="round"/><rect x="4" y="8" width="16" height="8" rx="1.5"/></svg>
+            Print
+          </button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Product</th>
+              <th scope="col" class="right">On hand</th>
+              <th scope="col" class="right">Par</th>
+              <th scope="col" class="right">Order</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Coors Light 12oz &middot; case <span class="muted text-caption">Bottled beer</span></td>
+              <td class="right muted text-numeral-sm">3</td>
+              <td class="right muted text-numeral-sm">10</td>
+              <td class="right text-numeral-sm">7</td>
+            </tr>
+            <tr>
+              <td>Modelo Especial 12oz &middot; case <span class="muted text-caption">Bottled beer</span></td>
+              <td class="right muted text-numeral-sm">2</td>
+              <td class="right muted text-numeral-sm">8</td>
+              <td class="right text-numeral-sm">6</td>
+            </tr>
+            <tr>
+              <td>Corona Extra 12oz &middot; case <span class="muted text-caption">Bottled beer</span></td>
+              <td class="right muted text-numeral-sm">4</td>
+              <td class="right muted text-numeral-sm">8</td>
+              <td class="right text-numeral-sm">4</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="clip-label">
+        <p>Exact text a Copy tap places on the clipboard:</p>
+      </div>
+      <pre class="clip" id="btb-text">Order — Breakthru Beverage
+Truestock · Count #1246799 · Aug 11, 2026
+
+Coors Light 12oz (case of 24) ... 7 cases
+Modelo Especial 12oz (case of 24) . 6 cases
+Corona Extra 12oz (case of 24) ... 4 cases
+
+3 items</pre>
+    </section>
+
+  </div>
+
+</div>
+
+<script>
+  // Tiny demo script — real clipboard write, then a 2s toggle back to idle.
+  // This is the only interactivity in the mockup; every state above is also
+  // rendered statically so a reviewer never has to click to see it.
+  function copyOrder(preId, btnId) {
+    var text = document.getElementById(preId).textContent;
+    var label = document.getElementById(btnId + '-label');
+    var original = label.textContent;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(function () {});
+    }
+    label.textContent = 'Copied!';
+    setTimeout(function () { label.textContent = original; }, 2000);
+  }
+</script>
+
+</body>
+</html>

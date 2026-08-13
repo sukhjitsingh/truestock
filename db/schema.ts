@@ -349,6 +349,11 @@ export const location = mysqlTable(
     // here."). Nullable, additive, doesn't touch any invariant — dropping it
     // would just throw away seed data the spreadsheet already gives us.
     notes: text("notes"),
+    // Invariant 6's sibling: never hard-deleted, only deactivated. Mirrors
+    // `product.active` exactly (Gate 2 Decision 2, 2026-08-12). A retired
+    // location's name stays taken — see `location_organization_name_unique`
+    // below, deliberately left unfiltered by this column (Decision 1).
+    active: boolean("active").notNull().default(true),
     ...auditColumns,
   },
   // Per-organization, not global. Every bar has a "Storeroom"; the second
@@ -358,6 +363,9 @@ export const location = mysqlTable(
     // Target of `product_par`'s composite tenant FK — see `vendor`'s
     // equivalent. Schema audit 2026-07-27 (B1).
     uniqueIndex("location_organization_id_id_unique").on(table.organizationId, table.id),
+    // Mirrors `product_organization_active_idx` — the management screen and
+    // scan-picker both filter organization_id together with active.
+    index("location_organization_active_idx").on(table.organizationId, table.active),
   ],
 );
 

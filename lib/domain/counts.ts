@@ -82,6 +82,7 @@ import { canSeeCost } from "@/lib/authz";
 import {
   ClosedCountError,
   CountNotWritableError,
+  DomainError,
   InvalidCountTransitionError,
   NotFoundError,
 } from "@/lib/domain/errors";
@@ -295,6 +296,39 @@ async function upsertCountLineRow(
   tx: Tx,
   params: UpsertCountLineParams,
 ): Promise<CountLineRecord> {
+  // The location must belong to us (invariant 9 — see the ownership check
+  // below, moved up from the insert-only branch it used to live in) AND
+  // still be active. This runs unconditionally, before the existing-line
+  // lookup, so it also blocks a write into a line that already exists —
+  // not just the first write to a new one. A location's `active` flag is
+  // NOT re-checked by the client between page load and this write: the
+  // scan screen fetches `locations` once per leg and never refetches
+  // (`app/(count)/count/[countId]/scan/page.tsx`), so a location retired
+  // mid-leg (`deactivateLocation`, lib/domain/catalog.ts) must be refused
+  // here, at the only point that is guaranteed to run per write. Gate 2's
+  // Risk 1 ("a retired location keeps accepting real scans") was defended
+  // only on the read side (`listLocationsAction` excludes inactive rows);
+  // this is the write-side half of that same guarantee.
+  const [locationRow] = await tx
+    .select({ id: location.id, active: location.active })
+    .from(location)
+    .where(
+      and(
+        eq(location.id, params.locationId),
+        eq(location.organizationId, params.organizationId),
+      ),
+    )
+    .limit(1);
+  if (!locationRow) {
+    throw new NotFoundError("Location");
+  }
+  if (!locationRow.active) {
+    throw new DomainError(
+      "LOCATION_RETIRED",
+      "This location has been retired and can no longer be counted into. Refresh to pick a different location.",
+    );
+  }
+
   const [existing] = await tx
     .select()
     .from(countLine)
@@ -346,28 +380,16 @@ async function upsertCountLineRow(
     throw new NotFoundError("Product");
   }
 
-  // The location must belong to us too. `location_id` arrives from the client
+  // Location ownership + active are already asserted above, unconditionally,
+  // before the existing-line lookup. `location_id` arrives from the client
   // and its foreign key only proves the row EXISTS, not whose it is — unlike
   // `count_id`, whose composite FK makes cross-tenant linkage structurally
-  // impossible. Without this check a caller could attach another
+  // impossible. Without that check a caller could attach another
   // organization's location to their own count line: the line's own
   // organization_id is still stamped from the actor so no data of theirs is
   // reachable, but the location NAME comes back in `getCount`/`countSummary`,
   // and "this id is real" versus "this id exists nowhere" becomes a
   // distinguishable answer across tenants. Found in review, 2026-07-27.
-  const [locationRow] = await tx
-    .select({ id: location.id })
-    .from(location)
-    .where(
-      and(
-        eq(location.id, params.locationId),
-        eq(location.organizationId, params.organizationId),
-      ),
-    )
-    .limit(1);
-  if (!locationRow) {
-    throw new NotFoundError("Location");
-  }
 
   try {
     const [inserted] = await tx

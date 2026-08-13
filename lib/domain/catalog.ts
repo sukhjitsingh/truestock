@@ -9,12 +9,12 @@
  * fetches the column, so there is no code path where it could accidentally
  * end up in a response to them.
  */
-import { and, eq, inArray, isNull, like, or, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNull, like, ne, or, count as countRows, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { product, productBarcode, productPar, vendor, location } from "@/db/schema";
+import { product, productBarcode, productPar, vendor, location, count, countLine } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
 import { canSeeCost, canManageCost } from "@/lib/authz";
-import { ConflictError, NotFoundError } from "@/lib/domain/errors";
+import { ConflictError, DomainError, NotFoundError } from "@/lib/domain/errors";
 import { isDuplicateKeyError } from "@/lib/domain/db-errors";
 import { getOnHandSnapshot } from "@/lib/domain/on-hand";
 import { isCountedByCase } from "@/lib/pack-level";
@@ -26,6 +26,8 @@ import type {
   VendorCreateInput,
   VendorUpdateInput,
   AssignVendorToProductsInput,
+  LocationCreateInput,
+  LocationUpdateInput,
 } from "@/lib/validation/catalog";
 
 // ---------------------------------------------------------------------------
@@ -787,8 +789,68 @@ export async function deactivateProduct(actor: Actor, productId: number): Promis
 }
 
 // ---------------------------------------------------------------------------
-// Locations — read-only list (no CRUD surface in the MVP build list; the
-// seed already populates them, see db/README.md)
+// Dashboard aggregate read (#14, docs/open-items.md) — Slice 5.
+//
+// The dashboard's old "Catalog health" tile counted `products.length` off a
+// capped `searchProducts({ limit: 100 })` read, so it silently read 100 with
+// 101 rows in the catalog — a plausible-but-wrong number, AGENTS.md's worst
+// failure mode. The fix is a dedicated `COUNT(*)` with no row cap, not a
+// bigger limit (02-architecture.md Decision 10).
+//
+// Amendment 1 (2026-08-12): this returns ONLY `activeCount` and an
+// owner-gated `unpricedCount` — no `incompleteCount`. The dashboard has no
+// "incomplete" tile to back one, and hand-writing a SQL predicate here would
+// duplicate `incompleteReasons` above and drift from it silently. The
+// catalog table's own "needs attention" view keeps calling `incompleteReasons`
+// directly on a real row read, unchanged.
+// ---------------------------------------------------------------------------
+
+export interface CatalogHealth {
+  activeCount: number;
+  /** Null — and never queried — for a non-owner caller (invariant 8, Decision 12). */
+  unpricedCount: number | null;
+}
+
+/**
+ * No role restriction of its own — the action layer gates owner/manager
+ * (invariant 7 defence in depth); this function further gates
+ * `unpricedCount` on `canSeeCost(actor.role)` by skipping the query
+ * entirely for a caller who can't see cost, not by computing it and
+ * withholding the field afterward.
+ */
+export async function getCatalogHealth(actor: Actor): Promise<CatalogHealth> {
+  const [[activeRow], unpricedRow] = await Promise.all([
+    db
+      .select({ n: countRows() })
+      .from(product)
+      .where(and(eq(product.organizationId, actor.organizationId), eq(product.active, true))),
+    canSeeCost(actor.role)
+      ? db
+          .select({ n: countRows() })
+          .from(product)
+          .where(
+            and(
+              eq(product.organizationId, actor.organizationId),
+              eq(product.active, true),
+              isNull(product.currentUnitCost),
+            ),
+          )
+      : Promise.resolve(null),
+  ]);
+
+  return {
+    activeCount: activeRow?.n ?? 0,
+    unpricedCount: unpricedRow ? unpricedRow[0]?.n ?? 0 : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Locations — CRUD (rename/re-mode/create) from the management screen
+// (`/office/locations`), plus the read every counting role uses to populate
+// the scan-picker. See docs/plans/phase-1-to-1.5/02-architecture.md Decision
+// 5: `listLocationsAction` (the scan-picker consumer) must keep calling this
+// with its default, active-only behavior — a retired location that still
+// appears there would keep accepting real scans with zero errors anywhere.
 // ---------------------------------------------------------------------------
 
 export interface LocationSummary {
@@ -798,20 +860,280 @@ export interface LocationSummary {
   /** Which input the counting screen offers here — see `locationCountModeEnum`. */
   countMode: (typeof location.$inferSelect)["countMode"];
   notes: string | null;
+  /** Migration 0003. Never hard-deleted (invariant 6) — set false to retire. */
+  active: boolean;
 }
 
-export async function listLocations(actor: Actor): Promise<LocationSummary[]> {
+const LOCATION_SUMMARY_COLUMNS = {
+  id: location.id,
+  name: location.name,
+  sortOrder: location.sortOrder,
+  countMode: location.countMode,
+  notes: location.notes,
+  active: location.active,
+};
+
+/**
+ * `includeInactive` defaults to false. `listLocationsAction` (the
+ * scan-picker consumer, every role) always calls this with the default —
+ * Decision 5. `listAllLocationsAction` (owner/manager, the management
+ * screen) is the only caller that passes `true`.
+ */
+export async function listLocations(
+  actor: Actor,
+  options?: { includeInactive?: boolean },
+): Promise<LocationSummary[]> {
+  const includeInactive = options?.includeInactive ?? false;
   return db
-    .select({
-      id: location.id,
-      name: location.name,
-      sortOrder: location.sortOrder,
-      countMode: location.countMode,
-      notes: location.notes,
-    })
+    .select(LOCATION_SUMMARY_COLUMNS)
     .from(location)
-    .where(eq(location.organizationId, actor.organizationId))
+    .where(
+      and(
+        eq(location.organizationId, actor.organizationId),
+        includeInactive ? undefined : eq(location.active, true),
+      ),
+    )
     .orderBy(location.sortOrder, location.name);
+}
+
+/**
+ * Invariant 9: a cross-tenant id is answered as NotFound, never an answer
+ * that confirms the row is real. Returns the row (not just a boolean)
+ * because `updateLocation`'s count-mode guard needs `countMode` to detect a
+ * real change.
+ */
+async function assertLocationOwned(
+  runner: Runner,
+  organizationId: number,
+  locationId: number,
+): Promise<{ id: number; countMode: (typeof location.$inferSelect)["countMode"] }> {
+  const [owned] = await runner
+    .select({ id: location.id, countMode: location.countMode })
+    .from(location)
+    .where(and(eq(location.id, locationId), eq(location.organizationId, organizationId)))
+    .limit(1);
+  if (!owned) {
+    throw new NotFoundError("Location");
+  }
+  return owned;
+}
+
+/**
+ * True if this location has at least one `count_line` row on a count whose
+ * `status <> 'closed'`. Shared by `updateLocation`'s count-mode-change guard
+ * (Decision 3) and `deactivateLocation`'s guard (Decision 4, slice 3) — same
+ * predicate, applied unconditionally in one case and only on a `countMode`
+ * diff in the other.
+ *
+ * NOTE: `<> 'closed'` is intentionally tied to `countStatusEnum`
+ * (`db/schema.ts`). If that enum ever gains another terminal,
+ * effectively-immutable status, this predicate must widen to match — see
+ * Gate 3's "least confident decisions" item 4.
+ */
+async function hasOpenCountLines(
+  runner: Runner,
+  organizationId: number,
+  locationId: number,
+): Promise<boolean> {
+  const [row] = await runner
+    .select({ id: countLine.id })
+    .from(countLine)
+    .innerJoin(
+      count,
+      and(eq(count.id, countLine.countId), eq(count.organizationId, countLine.organizationId)),
+    )
+    .where(
+      and(
+        eq(countLine.organizationId, organizationId),
+        eq(countLine.locationId, locationId),
+        ne(count.status, "closed"),
+      ),
+    )
+    .limit(1);
+  return !!row;
+}
+
+/**
+ * Owner/manager only (enforced in the action). Always inserts `active:
+ * true`. Duplicate `(organization_id, name)` — active or retired — raises
+ * ConflictError (Decision 1: a retired location's name stays taken).
+ */
+export async function createLocation(
+  actor: Actor,
+  input: LocationCreateInput,
+): Promise<LocationSummary> {
+  let insertedId: number;
+  try {
+    const [inserted] = await db
+      .insert(location)
+      .values({
+        organizationId: actor.organizationId,
+        name: input.name,
+        countMode: input.countMode,
+        notes: input.notes ?? null,
+        active: true,
+        ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
+      })
+      .$returningId();
+    insertedId = inserted.id;
+  } catch (err) {
+    if (isDuplicateKeyError(err)) {
+      throw new ConflictError("A location with this name already exists.");
+    }
+    throw err;
+  }
+
+  const rows = await db
+    .select(LOCATION_SUMMARY_COLUMNS)
+    .from(location)
+    .where(eq(location.id, insertedId))
+    .limit(1);
+
+  const result = rows[0];
+  if (!result) {
+    throw new NotFoundError("Location");
+  }
+  return result;
+}
+
+/**
+ * Owner/manager only (enforced in the action). One transaction:
+ * `assertLocationOwned` first, then — only if `countMode` is present AND
+ * differs from the current row — run `hasOpenCountLines` and refuse with
+ * `DomainError("LOCATION_MODE_LOCKED", …)` if true (Decision 3). Then the
+ * patch write.
+ */
+export async function updateLocation(
+  actor: Actor,
+  input: LocationUpdateInput,
+): Promise<LocationSummary> {
+  await db.transaction(async (tx) => {
+    const current = await assertLocationOwned(tx, actor.organizationId, input.locationId);
+
+    // Decision 3: the guard fires only when count_mode is actually changing,
+    // and only when the location has count_line rows on a non-closed count.
+    // Closed counts are immutable (invariant 1), so a location used only by
+    // closed counts is safe to re-mode.
+    if (input.countMode !== undefined && input.countMode !== current.countMode) {
+      const openLines = await hasOpenCountLines(tx, actor.organizationId, input.locationId);
+      if (openLines) {
+        throw new DomainError(
+          "LOCATION_MODE_LOCKED",
+          "This location has counted lines on an open count. Finish or close that count before changing its counting mode.",
+        );
+      }
+    }
+
+    const patch: Partial<typeof location.$inferInsert> = {};
+    if (input.name !== undefined) patch.name = input.name;
+    if (input.countMode !== undefined) patch.countMode = input.countMode;
+    if (input.sortOrder !== undefined) patch.sortOrder = input.sortOrder;
+    if (input.notes !== undefined) patch.notes = input.notes;
+
+    if (Object.keys(patch).length > 0) {
+      try {
+        await tx
+          .update(location)
+          .set(patch)
+          .where(
+            and(eq(location.id, input.locationId), eq(location.organizationId, actor.organizationId)),
+          );
+      } catch (err) {
+        if (isDuplicateKeyError(err)) {
+          throw new ConflictError("A location with this name already exists.");
+        }
+        throw err;
+      }
+    }
+  });
+
+  const rows = await db
+    .select(LOCATION_SUMMARY_COLUMNS)
+    .from(location)
+    .where(
+      and(eq(location.id, input.locationId), eq(location.organizationId, actor.organizationId)),
+    )
+    .limit(1);
+
+  const result = rows[0];
+  if (!result) {
+    throw new NotFoundError("Location");
+  }
+  return result;
+}
+
+/**
+ * Count of the org's other ACTIVE locations, excluding `excludingLocationId`.
+ * Mirrors `countActiveOwners` (`lib/domain/users.ts:81-97`) — same shape,
+ * same reason: `deactivateLocation`'s last-active-location guard (Decision
+ * 6) needs "how many would be left," not just a boolean.
+ */
+async function countActiveLocationsExcluding(
+  runner: Runner,
+  organizationId: number,
+  excludingLocationId: number,
+): Promise<number> {
+  const [row] = await runner
+    .select({ n: countRows() })
+    .from(location)
+    .where(
+      and(
+        eq(location.organizationId, organizationId),
+        eq(location.active, true),
+        ne(location.id, excludingLocationId),
+      ),
+    );
+  return row?.n ?? 0;
+}
+
+/**
+ * Retire a location. Owner/manager only (enforced in the action). Never a
+ * DELETE — invariant 6, and the mirror of `setUserActive`
+ * (`lib/domain/users.ts:110-155`) that this function's shape follows: one
+ * transaction, ownership first, then two independent refusals, then the
+ * write.
+ *
+ *   1. `assertLocationOwned` — cross-tenant id -> NotFoundError.
+ *   2. Count the org's other active locations; refuse with
+ *      `DomainError("LAST_ACTIVE_LOCATION", …)` if zero remain (Decision 6).
+ *      The counting screen must always have at least one place to scan into.
+ *   3. `hasOpenCountLines`, applied UNCONDITIONALLY (unlike
+ *      `updateLocation`'s count-mode guard, which only fires on a diff) —
+ *      refuse with `DomainError("LOCATION_IN_USE", …)` if true (Decision 4).
+ *      A location whose only lines are on a closed count is safe to retire;
+ *      closed counts are immutable regardless of what the location is
+ *      configured to do today (invariant 1).
+ *   4. `UPDATE location SET active = false WHERE id = ? AND organization_id = ?`.
+ */
+export async function deactivateLocation(actor: Actor, locationId: number): Promise<void> {
+  await db.transaction(async (tx) => {
+    await assertLocationOwned(tx, actor.organizationId, locationId);
+
+    const remainingActive = await countActiveLocationsExcluding(
+      tx,
+      actor.organizationId,
+      locationId,
+    );
+    if (remainingActive === 0) {
+      throw new DomainError(
+        "LAST_ACTIVE_LOCATION",
+        "Cannot retire the last active location. The counting screen needs at least one place to scan into.",
+      );
+    }
+
+    const openLines = await hasOpenCountLines(tx, actor.organizationId, locationId);
+    if (openLines) {
+      throw new DomainError(
+        "LOCATION_IN_USE",
+        "This location has counted lines on an open count. Finish or close that count before retiring it.",
+      );
+    }
+
+    await tx
+      .update(location)
+      .set({ active: false })
+      .where(and(eq(location.id, locationId), eq(location.organizationId, actor.organizationId)));
+  });
 }
 
 // ---------------------------------------------------------------------------

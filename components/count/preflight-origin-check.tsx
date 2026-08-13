@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import { Card } from "@/components/ui/card";
 import { StatusPill } from "@/components/ui/status-pill";
-import { parseDevOriginHosts } from "@/lib/dev-origins";
+import { isDevOriginAllowed } from "@/lib/dev-origins";
 
 /**
  * Server-rendered origin check for the dev LAN setup.
@@ -17,6 +17,14 @@ import { parseDevOriginHosts } from "@/lib/dev-origins";
  * JavaScript runs at all, and any check implemented as a React effect or fetch
  * simply never executes. So this must be server-rendered and work with zero
  * client-side code.
+ *
+ * That constraint is why open item 26's false alarm was fixed in the *allowlist*
+ * rather than by having this component observe a real `/_next/*` fetch, which
+ * was the first idea. Observing the outcome would be strictly more accurate and
+ * strictly useless: in the failure case there is no JavaScript to do the
+ * observing. The verdict has to be derivable on the server, so the only correct
+ * fix is for the server-side predicate to know everything Next knows — including
+ * the `localhost` allowance that no configuration expresses.
  *
  * Production is inert: dev-only logic lives in next.config.ts's `allowedDevOrigins`,
  * which does not exist in production builds. There is no secure origin restriction
@@ -38,12 +46,17 @@ export async function PreflightOriginCheck() {
 
   const headerList = await headers();
   const host = headerList.get("host");
-  const allowedHosts = parseDevOriginHosts();
 
   // Parse the hostname from Host header. The header includes the port
   // (e.g., "192.168.1.10:3443"), but the allowlist is bare hostnames.
   const requestHostname = host?.split(":")[0] ?? "";
-  const isAllowed = allowedHosts.includes(requestHostname);
+
+  // `isDevOriginAllowed`, not `parseDevOriginHosts().includes(...)` — Next
+  // allows `localhost` and `*.localhost` without them appearing in any config,
+  // and checking the configured list alone reported a catastrophic failure on
+  // plain `localhost:3000` while the page was demonstrably working. See open
+  // item 26 and the reasoning in lib/dev-origins.ts.
+  const isAllowed = isDevOriginAllowed(requestHostname);
 
   return (
     <Card>

@@ -20,6 +20,9 @@ import {
   vendorCreateSchema,
   vendorUpdateSchema,
   assignVendorToProductsSchema,
+  locationCreateSchema,
+  locationUpdateSchema,
+  locationDeactivateSchema,
 } from "@/lib/validation/catalog";
 
 /**
@@ -122,11 +125,86 @@ export async function deactivateProductAction(
   });
 }
 
-/** Needed by every role to pick a location while counting. */
+/**
+ * Dashboard "Catalog health" tile (#14). Owner/manager only, matching the
+ * rest of the dashboard's aggregate reads — `catalog.getCatalogHealth`
+ * further gates `unpricedCount` to owner only (invariant 8).
+ */
+export async function catalogHealthAction(): Promise<ActionResult<catalog.CatalogHealth>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    return catalog.getCatalogHealth(actor);
+  });
+}
+
+/**
+ * Needed by every role to pick a location while counting. Active-only,
+ * UNCHANGED signature and behavior (Decision 5, 02-architecture.md) — the
+ * single highest risk in the locations bundle is a retired location
+ * leaking into this picker, where it would keep accepting real scans with
+ * zero errors anywhere. `listAllLocationsAction` below is the only caller
+ * that ever passes `includeInactive: true`.
+ */
 export async function listLocationsAction(): Promise<ActionResult<catalog.LocationSummary[]>> {
   return runAction(async () => {
     const actor = await requireRole("owner", "manager", "staff");
     return catalog.listLocations(actor);
+  });
+}
+
+/** Owner/manager only — the management screen; includes retired locations. */
+export async function listAllLocationsAction(): Promise<ActionResult<catalog.LocationSummary[]>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    return catalog.listLocations(actor, { includeInactive: true });
+  });
+}
+
+/**
+ * Create a location. Owner/manager only. Duplicate `(organization_id,
+ * name)` — active or retired — is refused with ConflictError in the domain
+ * layer.
+ */
+export async function createLocationAction(
+  input: unknown,
+): Promise<ActionResult<catalog.LocationSummary>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = locationCreateSchema.parse(input);
+    return catalog.createLocation(actor, parsed);
+  });
+}
+
+/**
+ * Rename / re-mode / re-order / re-note a location. Owner/manager only.
+ * Ownership of `locationId` and the count-mode-change guard (Gate 2
+ * Decision 3) are both checked in the domain layer.
+ */
+export async function updateLocationAction(
+  input: unknown,
+): Promise<ActionResult<catalog.LocationSummary>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = locationUpdateSchema.parse(input);
+    return catalog.updateLocation(actor, parsed);
+  });
+}
+
+/**
+ * Retire a location. Owner/manager only. Invariant 6: never a hard delete —
+ * sets `active = false`. Refused with a `DomainError` (surfaced via
+ * `result.error.message`) when it is the org's last active location, or
+ * when it has count lines on a non-closed count — both checked in the
+ * domain layer (Gate 2 Decisions 4 and 6).
+ */
+export async function deactivateLocationAction(
+  input: unknown,
+): Promise<ActionResult<{ locationId: number }>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = locationDeactivateSchema.parse(input);
+    await catalog.deactivateLocation(actor, parsed.locationId);
+    return { locationId: parsed.locationId };
   });
 }
 

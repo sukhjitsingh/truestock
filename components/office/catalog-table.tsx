@@ -7,8 +7,10 @@ import { cn, formatUnits } from "@/lib/utils";
 import { Money } from "@/components/ui/money";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
-import { assignVendorToProductsAction } from "@/app/actions/catalog";
+import { assignVendorToProductsAction, updateProductAction } from "@/app/actions/catalog";
 import type { ProductSummary, ProductIncompleteReason, VendorSummary } from "@/lib/domain/catalog";
+import { unitCostSchema } from "@/lib/validation/catalog";
+import { isCountedByCase } from "@/lib/pack-level";
 
 const REASON_LABEL: Record<ProductIncompleteReason, string> = {
   needs_producer: "Needs producer",
@@ -41,6 +43,7 @@ export function CatalogTable({
   query,
   view,
   canSeeCost,
+  canEditCost,
   vendors,
   userRole,
 }: {
@@ -48,6 +51,10 @@ export function CatalogTable({
   query: string;
   view: "all" | "attention";
   canSeeCost: boolean;
+  /** Owner-only, same predicate as `canSeeCost` today — gates whether the
+   * cost cell renders as an editable input or read-only Money (Gate 3
+   * "changed props"). Case-size edit ability reuses `canManage` below. */
+  canEditCost: boolean;
   vendors: VendorSummary[];
   userRole: "owner" | "manager" | "staff";
 }) {
@@ -60,12 +67,37 @@ export function CatalogTable({
   const [assignError, setAssignError] = useState<string | null>(null);
   const [assignSuccess, setAssignSuccess] = useState(false);
 
+  /**
+   * A client-owned copy of `products`, patched one row at a time from a
+   * cell's saved response (Amendment 2, 2026-08-12). This is what NOT calling
+   * `router.refresh()` per cell requires: the table's own state, not the
+   * server-rendered prop, is what a cell save updates. Re-synced from
+   * `products` whenever a real navigation (search, view, or an explicit
+   * refresh) hands down a fresh array — see the effect below.
+   */
+  const [rows, setRows] = useState<ProductSummary[]>(products);
+  // Adjust state on a prop change during render, per React's own guidance —
+  // NOT in a `useEffect`, which would cascade an extra render for the same
+  // update (react-hooks/set-state-in-effect). `prevProducts` is the "value
+  // from a previous render" marker that makes this reset conditional rather
+  // than unconditional.
+  const [prevProducts, setPrevProducts] = useState(products);
+  if (products !== prevProducts) {
+    setPrevProducts(products);
+    setRows(products);
+  }
+
+  /** Bubbled up from an editable cell on a successful save — patches only that row. */
+  function patchRow(updated: ProductSummary) {
+    setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+  }
+
   const canManage = userRole === "owner" || userRole === "manager";
 
   // Track which products are currently visible (after filtering by search/view).
   // Use a derived check rather than a stored list so the UI stays in sync.
   // Wrapped in useMemo to keep dependency stable in useEffect below.
-  const visibleIds = useMemo(() => new Set(products.map((p) => p.id)), [products]);
+  const visibleIds = useMemo(() => new Set(rows.map((p) => p.id)), [rows]);
 
   // When the product list changes (search query, view filter, navigation), prune
   // selectedIds to only include products still visible. This prevents a bulk
@@ -219,7 +251,7 @@ export function CatalogTable({
         </p>
       )}
 
-      {products.length === 0 ? (
+      {rows.length === 0 ? (
         <p className="mt-6 text-row-subtitle text-muted-foreground">
           {view === "attention"
             ? "Nothing needs attention."
@@ -261,10 +293,18 @@ export function CatalogTable({
                       Unit cost
                     </th>
                   ) : null}
+                  {canManage ? (
+                    <th
+                      scope="col"
+                      className="py-2 text-right text-label uppercase text-muted-foreground"
+                    >
+                      Case size
+                    </th>
+                  ) : null}
                 </tr>
               </thead>
               <tbody>
-                {products.map((product) => (
+                {rows.map((product) => (
                   <tr key={product.id} className="border-b border-border align-top">
                     {canManage ? (
                       <td className="py-3 px-1 text-center">
@@ -306,10 +346,40 @@ export function CatalogTable({
                     </td>
                     {canSeeCost ? (
                       <td className="py-3 text-right">
-                        {product.currentUnitCost ? (
+                        {canEditCost ? (
+                          <EditableProductCell
+                            productId={product.id}
+                            field="currentUnitCost"
+                            value={product.currentUnitCost ?? ""}
+                            placeholder="Enter cost"
+                            ariaLabel={`Unit cost for ${product.name}`}
+                            onSaved={patchRow}
+                          />
+                        ) : product.currentUnitCost ? (
                           <Money value={Number(product.currentUnitCost)} />
                         ) : (
                           <span className="text-caption text-muted-foreground">not set</span>
+                        )}
+                      </td>
+                    ) : null}
+                    {canManage ? (
+                      <td className="py-3 text-right">
+                        {isCountedByCase(product) ? (
+                          <EditableProductCell
+                            productId={product.id}
+                            field="caseSize"
+                            value={product.caseSize == null ? "" : String(product.caseSize)}
+                            placeholder="Case size"
+                            ariaLabel={`Case size for ${product.name}`}
+                            onSaved={patchRow}
+                          />
+                        ) : (
+                          <span
+                            className="inline-block min-h-tap-min px-2 text-caption text-muted-foreground"
+                            aria-label={`Case size is not applicable for ${product.name} — not counted by the case`}
+                          >
+                            n/a
+                          </span>
                         )}
                       </td>
                     ) : null}
@@ -453,6 +523,173 @@ function StockCell({ product }: { product: ProductSummary }) {
           </span>
           <span className="text-caption text-muted-foreground">par {stock.parLevel}</span>
         </>
+      ) : null}
+    </div>
+  );
+}
+
+type EditableField = "currentUnitCost" | "caseSize";
+
+/**
+ * One inline cost or case-size cell — Slice 4
+ * (docs/plans/phase-1-to-1.5/mockups/catalog-inline-cost.html has every
+ * state this renders). One `updateProductAction` call per commit, reused
+ * VERBATIM (Gate 2 Decision 7) — this component adds no new endpoint.
+ *
+ * Cells commit on blur/Enter, one at a time, and on a successful save patch
+ * ONLY this row via `onSaved`, from the ACTION'S RETURNED value — never from
+ * the locally-typed string (Risk 6/Amendment 2, 02-architecture.md). That
+ * matters twice: the server is the authority on normalization (a leading-zero
+ * or over-precise entry settles on the DB's stored string), and if a
+ * non-owner request ever reached here with cost silently stripped, the cell
+ * would visibly snap back instead of showing a value that was never saved.
+ * No `router.refresh()` anywhere in this component.
+ */
+function EditableProductCell({
+  productId,
+  field,
+  value,
+  placeholder,
+  ariaLabel,
+  onSaved,
+}: {
+  productId: number;
+  field: EditableField;
+  /** The server's last-known value for this field, "" for null/empty. */
+  value: string;
+  placeholder: string;
+  ariaLabel: string;
+  onSaved: (updated: ProductSummary) => void;
+}) {
+  const [text, setText] = useState(value);
+  const [status, setStatus] = useState<"idle" | "dirty" | "saving" | "saved" | "error">("idle");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const savedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Re-sync from the server-confirmed value when it changes underneath this
+  // cell — e.g. a fresh `products` prop after real navigation (Amendment 2:
+  // that's the only time a full refresh happens). Adjusted during render per
+  // React's guidance (not a `useEffect`, which would cost an extra cascaded
+  // render for the same update), and skipped while the cell is mid-edit so an
+  // in-flight keystroke or save is never clobbered.
+  const [prevValue, setPrevValue] = useState(value);
+  if (value !== prevValue && status !== "dirty" && status !== "saving") {
+    setPrevValue(value);
+    setText(value);
+    setStatus("idle");
+    setErrorMsg(null);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (savedTimeoutRef.current) clearTimeout(savedTimeoutRef.current);
+    };
+  }, []);
+
+  function handleChange(next: string) {
+    setText(next);
+    setErrorMsg(null);
+    setStatus(next === value ? "idle" : "dirty");
+  }
+
+  async function commit() {
+    if (status !== "dirty") return;
+
+    const trimmed = text.trim();
+    // Empty is honest; never coerce to 0/"" reaching the database (AGENTS.md
+    // "Draft beer" note on plausible-but-wrong defaults; Risk 5).
+    let payloadValue: string | number | null;
+
+    if (trimmed === "") {
+      payloadValue = null;
+    } else if (field === "currentUnitCost") {
+      // Same regex the server enforces (lib/validation/catalog.ts) for
+      // instant feedback — the server call remains the source of truth.
+      if (!unitCostSchema.safeParse(trimmed).success) {
+        setStatus("error");
+        setErrorMsg("Enter a dollar amount, like 21.50");
+        return;
+      }
+      payloadValue = trimmed;
+    } else {
+      if (!/^\d+$/.test(trimmed) || Number(trimmed) <= 0) {
+        setStatus("error");
+        setErrorMsg("Case size must be a positive whole number");
+        return;
+      }
+      payloadValue = Number(trimmed);
+    }
+
+    setStatus("saving");
+    setErrorMsg(null);
+
+    try {
+      const payload: Record<string, unknown> = { productId };
+      payload[field] = payloadValue;
+      const result = await updateProductAction(payload);
+
+      if (!result.ok) {
+        setStatus("error");
+        setErrorMsg(result.error.fieldErrors?.[field] ?? result.error.message);
+        setText(value); // revert to the last known-good value on a server-side refusal
+        return;
+      }
+
+      onSaved(result.data);
+      const settled =
+        field === "currentUnitCost"
+          ? result.data.currentUnitCost ?? ""
+          : result.data.caseSize == null
+            ? ""
+            : String(result.data.caseSize);
+      setText(settled);
+      setStatus("saved");
+      savedTimeoutRef.current = setTimeout(() => setStatus("idle"), 2000);
+    } catch (err) {
+      setStatus("error");
+      setErrorMsg(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setText(value);
+    }
+  }
+
+  const errorId = errorMsg ? `cell-error-${field}-${productId}` : undefined;
+
+  return (
+    <div className="inline-flex flex-col items-end gap-1">
+      <input
+        type="text"
+        inputMode={field === "currentUnitCost" ? "decimal" : "numeric"}
+        value={text}
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        aria-invalid={status === "error" ? true : undefined}
+        aria-describedby={errorId}
+        disabled={status === "saving"}
+        onChange={(e) => handleChange(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.currentTarget.blur();
+          }
+        }}
+        className={cn(
+          "min-h-tap-min w-28 rounded-md border border-input bg-card px-2 text-right text-body text-foreground placeholder:italic placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent",
+          status === "dirty" && "border-accent",
+          status === "saving" && "bg-muted text-muted-foreground",
+          status === "error" && "border-negative",
+        )}
+      />
+      {status === "dirty" ? (
+        <span className="text-caption text-accent">Unsaved</span>
+      ) : status === "saving" ? (
+        <span className="text-caption text-muted-foreground">Saving…</span>
+      ) : status === "saved" ? (
+        <span className="text-caption text-muted-foreground">Saved</span>
+      ) : status === "error" && errorMsg ? (
+        <span id={errorId} role="alert" className="max-w-[9rem] text-right text-caption text-negative">
+          {errorMsg}
+        </span>
       ) : null}
     </div>
   );

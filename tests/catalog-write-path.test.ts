@@ -19,7 +19,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test";
 import { and, eq, isNull } from "drizzle-orm";
 import { db, closePool } from "@/db";
-import { productBarcode, productPar } from "@/db/schema";
+import { product, productBarcode, productPar } from "@/db/schema";
 import {
   linkBarcodeToProduct,
   resolveBarcode,
@@ -399,5 +399,73 @@ describe("the reorder list", () => {
         ),
       );
     expect(rows).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slice 4 — inline cost/case-size editing in the catalog table.
+//
+// This is a UI-only slice (Gate 2 Decision 7): `updateProductAction` and
+// `productUpdateSchema` are reused UNCHANGED, one call per cell commit. There
+// is no new domain code to exercise here — these tests call `updateProduct`
+// directly, the same domain function the existing par-level tests above
+// already cover, with the specific per-cell shapes the inline editor sends
+// (a single field at a time) and the role split (cost owner-only, case size
+// owner+manager) that the client component's column visibility depends on.
+// ---------------------------------------------------------------------------
+
+describe("inline cost/case-size editing (per-cell updateProductAction)", () => {
+  test("owner's cost edit lands in the database", async () => {
+    const updated = await updateProduct(fx.owner, {
+      productId: fx.unpricedProductId,
+      currentUnitCost: "12.3400",
+    });
+    expect(updated.currentUnitCost).toBe("12.3400");
+
+    const [row] = await db.select().from(product).where(eq(product.id, fx.unpricedProductId));
+    expect(row.currentUnitCost).toBe("12.3400");
+  });
+
+  test("manager's cost edit is silently stripped while other fields in the same call still save", async () => {
+    const updated = await updateProduct(fx.manager, {
+      productId: fx.unpricedProductId,
+      name: "House Infusion (Batch 2)",
+      currentUnitCost: "9.9900",
+    });
+
+    // The name half of the same call landed...
+    expect(updated.name).toBe("House Infusion (Batch 2)");
+    // ...but a manager's ProductSummary never carries `currentUnitCost` at
+    // all (invariant 8) — check the actual row instead of the response.
+    expect(updated).not.toHaveProperty("currentUnitCost");
+
+    const [row] = await db.select().from(product).where(eq(product.id, fx.unpricedProductId));
+    expect(row.currentUnitCost).toBeNull();
+  });
+
+  test("manager's case-size edit lands — case size is owner+manager, cost is owner-only, in the same row", async () => {
+    const updated = await updateProduct(fx.manager, {
+      productId: fx.pricedProductId,
+      caseSize: 24,
+      // Sent in the same call as the case-size edit on purpose — a manager's
+      // request that also includes a cost field must still save the
+      // case-size half, not be refused wholesale.
+      currentUnitCost: "1.2300",
+    });
+
+    expect(updated.caseSize).toBe(24);
+
+    const [row] = await db.select().from(product).where(eq(product.id, fx.pricedProductId));
+    expect(row.caseSize).toBe(24);
+    // The fixture's original cost ("24.5000") is untouched — the manager's
+    // "1.2300" never reached the database.
+    expect(row.currentUnitCost).toBe("24.5000");
+  });
+
+  test("submitting currentUnitCost: null clears the column to NULL, never 0.00", async () => {
+    await updateProduct(fx.owner, { productId: fx.pricedProductId, currentUnitCost: null });
+
+    const [row] = await db.select().from(product).where(eq(product.id, fx.pricedProductId));
+    expect(row.currentUnitCost).toBeNull();
   });
 });
