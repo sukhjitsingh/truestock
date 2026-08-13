@@ -1008,10 +1008,23 @@ fine and returned 200 (`curl https://192.168.12.33:3443/login`, the whole
 time it was broken) while the app was completely unusable on the device it
 was built for. See `STATE.md`'s "every gate stayed green" paragraph.
 
-## 25. `docker:down` does not stop the TLS proxy, so a LAN session never fully ends
+## ~~25. `docker:down` does not stop the TLS proxy, so a LAN session never fully ends~~ — **CLOSED 2026-08-12**
 
-**Trigger: immediately, for anyone following item 24's guard message. Its
-suggested fix does not fully work today.**
+**Closed by making both teardowns profile-aware:** `docker:down` is now
+`docker compose --profile tls down`, and `docker:reset`'s leading `down -v`
+likewise. Compose accepts `--profile` on `down` (verified on v2.23.0).
+
+**Verified by reproducing it, both directions**, rather than by reading the
+flag's documentation. `docker compose --profile tls create tls` (create, not
+up, so no port is bound), then plain `docker compose down` — `truestock-tls`
+survives, which is the bug. Then `docker compose --profile tls down` — removed.
+
+Nothing else needed changing: `dev-lan.sh`, `prod-lan.sh`, `README.md`,
+`docs/phone-count-test.md` and item 24's guard message all already document the
+teardown as `bun run docker:down && bun run docker:up`. That instruction was
+simply not true before, and now is.
+
+The finding, for the record:
 
 Found 2026-08-12 while proving item 24's new `docker:up` guard, on Docker
 Compose v2.23.0.
@@ -1038,11 +1051,31 @@ This is a documentation-versus-reality gap as much as a script bug: the
 teardown sequence is documented in several places as `docker:down &&
 docker:up`, and that sequence has never fully worked for a LAN session.
 
-## 26. The preflight origin banner cries wolf on plain `localhost`
+## ~~26. The preflight origin banner cries wolf on plain `localhost`~~ — **CLOSED 2026-08-12**
 
-**Trigger: before anyone other than the owner sees this screen. A diagnostic
-that reports a catastrophic failure while the page works fine is one people
-learn to ignore — which is exactly when it stops being able to warn them.**
+**Closed by fixing the predicate, not by moving the check client-side.**
+`lib/dev-origins.ts` gained `isDevOriginAllowed(hostname)`, which knows what
+`parseDevOriginHosts()` cannot: Next allows `localhost` and `*.localhost` on its
+own, and no configuration file expresses that. `PreflightOriginCheck` now calls
+it instead of testing membership in the configured list.
+
+**The close note in this item originally proposed having the banner confirm a
+real `/_next/*` fetch. That idea was wrong and was dropped.** The component's
+own docblock already explains why: in the failure case being detected, no client
+JavaScript runs at all, so there is nothing left to do the observing. The
+verdict has to be derivable on the server. Strictly more accurate and strictly
+useless.
+
+Covered by `tests/dev-origins.test.ts` — 10 pure tests, no database, no browser
+— and **mutation-checked**: deleting the `localhost` allowance makes exactly two
+of them fail (`localhost is allowed…` and `a .localhost subdomain is allowed…`)
+and leaves the other eight green. `notlocalhost` is asserted NOT to match, since
+a `.endsWith("localhost")` implementation would wrongly allow it. There is also
+a browser check in `verify:browser` asserting the rendered banner reads *Yes*
+and does not contain "no JavaScript runs", because what a human reads is the
+thing that was wrong.
+
+The finding, for the record:
 
 Found 2026-08-12 in a real browser on `http://localhost:3000/login`, brought up
 with a plain `bun run docker:up`.

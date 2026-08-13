@@ -28,3 +28,28 @@ export function parseDevOriginHosts(): string[] {
   // for the full reasoning.
   return [...new Set(["127.0.0.1", ...devLanHosts])];
 }
+
+/**
+ * Will Next actually serve `/_next/*` to this hostname in dev?
+ *
+ * This is deliberately NOT the same question as "is it in
+ * `parseDevOriginHosts()`", and conflating the two produced a false alarm that
+ * cost real trust (open item 26). `allowedDevOrigins` is only the *configured*
+ * half; Next allows `localhost` and `*.localhost` on its own, without them
+ * appearing in any list. So the preflight check reported "Origin allowed: NO"
+ * on plain `http://localhost:3000` — and went on to claim no JavaScript runs —
+ * while the page was fully hydrated and working.
+ *
+ * That direction of error is the expensive one. A warning that fires when
+ * nothing is wrong is one people learn to scroll past, which is exactly when it
+ * stops being able to warn them about the LAN misconfiguration it exists for.
+ *
+ * Kept as a pure function of the hostname so it can be tested without a
+ * browser, a request, or a running dev server.
+ */
+export function isDevOriginAllowed(hostname: string): boolean {
+  if (!hostname) return false;
+  // Next's built-in dev allowance, which no configuration expresses.
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) return true;
+  return parseDevOriginHosts().includes(hostname);
+}

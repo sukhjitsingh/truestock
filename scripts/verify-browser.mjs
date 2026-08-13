@@ -143,6 +143,28 @@ try {
   await waitForHydration(page, "form");
   record("login form hydrates (React attached to the form)", true);
 
+  /**
+   * Open item 26: the preflight banner used to report "Origin allowed: No" on
+   * plain localhost and claim no JavaScript would run — on a page that had just
+   * demonstrably hydrated, two lines above. Asserted here rather than in the
+   * unit tests because the unit tests can only check the predicate; this checks
+   * what a human actually reads. Only meaningful when the run targets a host
+   * Next allows natively.
+   */
+  const baseHost = new URL(BASE).hostname;
+  if (baseHost === "localhost" || baseHost === "127.0.0.1" || baseHost.endsWith(".localhost")) {
+    const banner = await page
+      .getByText(/Origin allowed/i)
+      .locator("xpath=ancestor::div[1]")
+      .innerText()
+      .catch(() => "");
+    record(
+      "the preflight origin banner does not cry wolf on localhost",
+      /\bYes\b/i.test(banner) && !/no JavaScript runs/i.test(banner),
+      banner ? banner.replace(/\s+/g, " ").slice(0, 140) : "(banner not rendered)",
+    );
+  }
+
   await page.fill('input[type="email"]', EMAIL);
   await page.fill('input[type="password"]', PASSWORD);
 
