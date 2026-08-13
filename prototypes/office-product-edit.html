@@ -70,7 +70,7 @@
   .uppercase { text-transform: uppercase; } .italic { font-style: italic; }
 
   .rounded-sm { border-radius: var(--radius-sm); } .rounded-md { border-radius: var(--radius-md); }
-  .rounded-lg { border-radius: var(--radius-lg); } .rounded-full { border-radius: 9999px; }
+  .rounded-lg { border-radius: var(--radius-lg); } .rounded-full { border-radius: var(--radius-full); }
   .border { border: 1px solid var(--border); }
 
   .bg-card { background: var(--card); } .bg-muted { background: var(--muted); }
@@ -114,7 +114,7 @@
 
   /* ---- product header block ---- */
   .product-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
-  .status-pill { display: inline-flex; align-items: center; padding: .1875rem .625rem; border-radius: 9999px; font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .status-pill { display: inline-flex; align-items: center; padding: .1875rem .625rem; border-radius: var(--radius-full); font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
   .status-pill.active { background: var(--muted); color: var(--foreground); }
   .status-pill.inactive { background: var(--muted); color: var(--muted-foreground); }
   .btn-primary { display: inline-flex; align-items: center; gap: .5rem; height: 36px; padding: 0 1rem; border-radius: var(--radius-md);
@@ -153,7 +153,7 @@
   .barcode-table td { padding: .5rem; border-bottom: 1px solid var(--border); font-size: .875rem; vertical-align: middle; }
   .barcode-table tr:last-child td { border-bottom: none; }
   .barcode-table input, .barcode-table select { height: 34px; border-radius: var(--radius-sm); border: 1px solid var(--input); padding: 0 .5rem; font-size: .8125rem; width: 100%; }
-  .pill-mini { display: inline-flex; align-items: center; padding: .0625rem .5rem; border-radius: 9999px; font-size: .6875rem; font-weight: 600; background: var(--muted); color: var(--foreground); }
+  .pill-mini { display: inline-flex; align-items: center; padding: .0625rem .5rem; border-radius: var(--radius-full); font-size: .6875rem; font-weight: 600; background: var(--muted); color: var(--foreground); }
   .pill-mini.primary { background: var(--accent); color: var(--accent-foreground); }
   .icon-btn-sm { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); color: var(--muted-foreground); }
   .icon-btn-sm:hover { background: var(--muted); }

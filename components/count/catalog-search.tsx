@@ -40,7 +40,7 @@ export function CountCatalogSearch() {
 
   return (
     <div className="mt-section-gap">
-      <div className="flex h-tap-min items-center gap-2 rounded-md border border-input bg-card px-4">
+      <div className="flex h-tap-min items-center gap-2 rounded-md border border-input bg-card px-4 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50">
         <Search className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
         <input
           type="search"

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireOfficeUser } from "@/lib/current-user";
 import { OfficeNav } from "@/components/office/office-nav";
+import { AccountMenu } from "@/components/office/account-menu";
 
 /**
  * The back office: desk use, full daylight, and therefore LIGHT — no `.dark`
@@ -26,9 +27,7 @@ export default async function OfficeLayout({
             Truestock
           </Link>
           <OfficeNav role={user.role} />
-          <div className="hidden shrink-0 text-caption text-muted-foreground sm:block">
-            {user.name} &middot; {user.role}
-          </div>
+          <AccountMenu name={user.name} email={user.email} role={user.role} />
         </div>
       </header>
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 sm:py-8">{children}</main>

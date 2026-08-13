@@ -80,11 +80,27 @@
   --header: #0a0a0a;
   --header-foreground: #ffffff; /* 19.68:1 */
 
+  /* --chart-1 is real (brand blue, already computed, no collision with
+     status). --chart-2 through --chart-5 are OWED — see
+     docs/design-system.md §2 "Chart palette (owed)" and
+     docs/plans/phase-2-ui-redesign/ui-spec-web.md §8: no hue may be chosen
+     without the WCAG relative-luminance contrast method (against BOTH
+     --background and --card, in BOTH themes) plus a colour-vision-deficiency
+     simulator pass, and none may read as adjacent to --success/--warning/
+     --negative. The values these previously held (byte-identical to
+     --success/--warning/--negative) were the defect §8 exists to fix — a
+     categorical series in those hues would put a green wedge and a red
+     wedge on a stock dashboard where those colors already mean something.
+     Left intentionally EMPTY (not a placeholder hex) so any accidental
+     consumer breaks visibly instead of silently rendering a
+     looks-fine-but-wrong color. NO CHART MAY BE DRAWN against these until
+     they are filled in via the computation above — none is drawn this
+     phase. */
   --chart-1: #2563eb;
-  --chart-2: #1f7a3d;
-  --chart-3: #92600a;
-  --chart-4: #b8305a;
-  --chart-5: #6b6b6b;
+  --chart-2: /* owed */ ;
+  --chart-3: /* owed */ ;
+  --chart-4: /* owed */ ;
+  --chart-5: /* owed */ ;
 }
 
 .dark {
@@ -132,11 +148,16 @@
   --header: #121317; /* 17.02:1 foreground contrast, but visually near-black */
   --header-foreground: #f5f5f4;
 
+  /* Same OWED marker as :root above — see the comment there. --chart-1 is
+     the dark-theme brand blue (already computed). --chart-2 through
+     --chart-5 must go through the same contrast + CVD computation for THIS
+     theme independently — a hue that clears WCAG in light does not
+     automatically clear it in dark. */
   --chart-1: #60a5fa;
-  --chart-2: #6fcf8e;
-  --chart-3: #f0b429;
-  --chart-4: #f0718a;
-  --chart-5: #a8a8a5;
+  --chart-2: /* owed */ ;
+  --chart-3: /* owed */ ;
+  --chart-4: /* owed */ ;
+  --chart-5: /* owed */ ;
 }
 
 @theme inline {
@@ -248,6 +269,24 @@
     2×16px bar padding + 8px breathing room. Use as `pb-action-bar` on the
     scroll container; never eyeball a pb-* value per screen, or the last row
     ends up half-hidden on exactly one of them. */
+
+  /* safe-area insets (ui-spec-mobile.md §11) — every fixed top/bottom chrome
+     element (bottom action bar, barcode scanner header/footer, and any
+     future fixed element on the counting surface) uses `pt-safe-top` /
+     `pb-safe-bottom` instead of a hand-computed inline `style=` attribute.
+     Ends the 96px-in-four-files/110px-in-one drift the audit found (P2.13)
+     by making every fixed element derive the same value by construction. */
+  --spacing-safe-top: max(0px, env(safe-area-inset-top));
+  --spacing-safe-bottom: max(var(--spacing-bar-pad), env(safe-area-inset-bottom));
+
+  /* back-office table row height (ui-spec-web.md §1 "Structural
+     requirements on every table") — one token, applied everywhere, ending
+     the 57px/48px/52px drift the audit found (P1.8) across prototypes.
+     Matches the reference and the one shipped catalog table. Use as
+     `h-row-office` / `min-h-row-office` on table rows; cell padding is never
+     zero vertical inside it — pair with `py-2` (8px) minimum so two-line
+     cells (stock cell, product-name-plus-SKU) get real clearance. */
+  --spacing-row-office: 3.5625rem; /* 57px */
 }
 
 @layer base {
@@ -290,6 +329,18 @@
     outline: 2px solid var(--color-ring);
     outline-offset: 2px;
   }
+}
+
+/* `.num` — back-office table numeric-column alignment (ui-spec-web.md §1
+   "Structural requirements on every table"). Right-align ONLY. Do not add
+   `font-variant-numeric: tabular-nums` here — that is already global on
+   `body` above, and re-declaring it here would make `.num` look like the
+   thing that guarantees tabular figures when it doesn't (the audit's P1.6
+   finding). Apply to every genuinely numeric column (Stock, Unit cost,
+   Size, Case, Started/Closed dates, Total value) and never to an actions
+   column. */
+@utility num {
+  text-align: right;
 }
 
 /* Print scoping (Gate 4 slice 6, `/office/reorder`'s per-vendor Print).

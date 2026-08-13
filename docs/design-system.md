@@ -113,6 +113,43 @@ deep, slightly cooler-than-background surface; identity comes from the `--accent
 icon and the bright `--header-foreground` text, not from raw brightness. The light theme
 keeps the literal reference treatment because a desk in daylight has no glare problem.
 
+### Chart palette (owed) — blocking prerequisite for any chart, in either theme
+
+`--chart-1` is real (brand blue, `#2563EB` light / `#60A5FA` dark) — already computed,
+already collision-free with status. **`--chart-2` through `--chart-5` are deliberately
+left with an empty value in `app/globals.css`** (`--chart-2: /* owed */ ;`, same pattern
+in `.dark`), not a placeholder hex. They previously held byte-identical copies of
+`--success`/`--warning`/`--negative`, which is the defect this owes fixes: a categorical
+series in those hues would put a green wedge and a red wedge on a stock-inventory
+dashboard, where green and red already mean "in stock" and "86'd" — this project's
+signature failure mode, a value that renders fine, looks right, and means something
+other than what it says.
+
+**No chart, sparkline series, or any other component may consume `--chart-2` through
+`--chart-5` until a value is computed for each, in both themes, against every rule
+below** — this is a requirement and a method, not a proposed set of hexes; picking
+plausible-looking values without running the computation is exactly the failure this
+section exists to prevent:
+
+- Five or more hues total (including `--chart-1`), mutually distinguishable from each
+  other.
+- Distinguishable in both `:root` (light) and `.dark` — computed independently per
+  theme; a hue that clears the bar in light does not automatically clear it in dark.
+- Distinguishable under protanopia, deuteranopia, and tritanopia — checked with a
+  simulator, not eyeballed.
+- Does not reuse, and does not read as adjacent to, `--success` / `--warning` /
+  `--negative` in either theme.
+- Contrast computed against **both** `--background` and `--card`, in **both** themes,
+  using the same WCAG relative-luminance method as every other color in §2 — not
+  eyeballed.
+- Color reinforces, never carries alone — a direct label or pattern fill differentiates
+  series first; color confirms.
+
+None of the primitives in §9 (meter, sparkline, stat tile) consume a `--chart-*` token
+by default — their color comes from a status token or `--foreground`/
+`--muted-foreground`. Only a genuine multi-series chart needs this palette, and no
+chart is built this phase (Phase 4, per `library-comparison.md`).
+
 ---
 
 ## 3. Brand vs status — the binding rule
@@ -160,6 +197,17 @@ hand-tune leading or tracking next to it.
 All numerals render with `tabular-nums` by default (set globally on `body` in
 `globals.css`) — never opt in per component, columns must line up everywhere quantities
 or money appear.
+
+**Capitalization — binding convention.** Always write label copy in sentence case in
+source; the `uppercase` utility that already rides along with `text-label` and
+`text-screen-title` handles the visual capitalization. **Never hardcode literal caps in
+JSX or HTML** (`"Just counted"`, not `"JUST COUNTED"`). Two reasons this is binding, not
+a style preference: copy that needs changing later changes in exactly one place — the
+string — rather than needing a second check of whether the string itself is already
+shouting; and a screen reader announces `JUST COUNTED` as a shouted, acronym-like
+string, while `text-transform: uppercase` is presentation-only and does not change how
+assistive tech announces the text underneath it. This applies everywhere `text-label`
+or `text-screen-title` is used, on both surfaces.
 
 ---
 
@@ -227,6 +275,33 @@ exceptions, both functional rather than decorative:
   `tap-min` — the 44px target is invisible; the circle can stay visually small. Never
   ship a visually-and-functionally-32px tap target.
 
+### Back-office density (web only) — a different floor, not a relaxed one
+
+The 44/56px rules above are a **phone** rule (one-handed, wet-hand, holding-a-bottle)
+and do not apply to the back office, which is used at a desk. The back office has its
+own, lower floor — restated here so it isn't confused with "no floor":
+
+- **36px** is the minimum for any back-office interactive control that lives inside a
+  dense data surface — a table row's Edit button, a row-overflow `⋯` trigger, a
+  destructive icon button (Remove barcode, etc.). Being destructive does not justify
+  going smaller than a neutral control at the same spot.
+- **44px (`size-tap-min`)** is still the floor for anything that is identity or primary
+  navigation rather than a dense row control — the account/avatar menu button (§9) is
+  the concrete example: it is the only place in the back office a user signs out, so it
+  gets the same floor as the counting surface's tab bar, not the table's 36px.
+- **57px (`--spacing-row-office`, `app/globals.css`)** is the one table-row-height
+  token, used everywhere a back-office table renders a row — see §9's Table spec. Cell
+  padding inside it is never zero vertical; pair with `py-2` (8px) minimum so two-line
+  cells (the stock cell, the product-name-plus-SKU cell) get real clearance.
+- Full keyboard navigation and visible focus rings apply identically to the back
+  office — §7 below is unconditional in both themes and on both surfaces, and the
+  reference shot's total absence of visible focus states is not adopted.
+- The office route uses the standard responsive viewport
+  (`width=device-width, initial-scale=1`, the Next.js App Router default) — never a
+  fixed-width `<meta viewport>` or a `min-width` on `body` that blocks pinch-zoom.
+  Below a density breakpoint, a table gains horizontal scroll inside its own container
+  rather than the page blocking zoom to preserve a fixed desktop layout.
+
 ---
 
 ## 7. Accessibility floor
@@ -237,12 +312,20 @@ exceptions, both functional rather than decorative:
 - **Every interactive element has a visible focus state.** `app/globals.css` sets a
   global `:focus-visible` outline (`2px solid var(--color-ring)`, 2px offset) as a floor
   under whatever shadcn's own component focus rings add later — don't remove it.
+  **No component may set `outline: none` (or otherwise suppress the visible focus
+  indicator) without providing a substitute that is at least as visible — never zero
+  substitutes.** A `border-color` change plus an inset ring is an acceptable substitute
+  pattern; a bare `outline: none` on a form field with nothing replacing it is not,
+  regardless of how minor the field looks.
 - **Every interactive element has an accessible label.** Icon-only buttons (scan trigger,
   close/X, overflow menu, chevron-as-button) need `aria-label`; decorative icons that sit
   next to visible text need `aria-hidden="true"` so screen readers don't double-announce.
 - Motion is functional only — a scan confirmation, a value change, a saved-state pulse.
   Never a decorative transition. If you can't say what state change a motion is
   confirming, don't add it.
+- **A screen never blocks pinch-zoom or reflow.** No fixed-width `<meta viewport>`, no
+  `min-width` on `body` — see §6's back-office density note for the concrete rule this
+  replaces.
 
 ---
 
@@ -292,6 +375,21 @@ entirely for `staff` — they arrive as `undefined`, not `0`. The UI contract:
    If the value is in the DOM at all for a `staff` request, that's a server bug, not a
    styling one — the component contract above only works because the prop is genuinely
    absent.
+5. **"No value" is not one case — classify which of these four it is before choosing a
+   treatment.** Role-gating (points 1–4 above) is one of four structurally different
+   reasons a value can be missing, and collapsing them to one word or one style would be
+   wrong. Any future absent-value component classifies itself against this list; see
+   §9's Null-value spec for the exact rendering per case.
+   1. **Structurally not applicable** — the field does not exist for this row's *type*,
+      by design (`case_size` on a spirit). Renders as `—` (em dash).
+   2. **Applicable but not yet entered** — the field should exist for this row
+      eventually but hasn't been captured yet (an uncosted product's unit cost, a
+      product with no par). Renders as `Not entered`.
+   3. **Role-gated** — the viewer is not permitted to see it (this section, points
+      1–4). Renders as nothing — no word, no dash, no styled box.
+   4. **No basis exists yet to derive it** — e.g. on-hand/valuation when no count has
+      ever closed. Not a cell value at all; a full sentence in the Empty state pattern
+      (§9), e.g. "No count has closed yet — on-hand unknown."
 
 ---
 
@@ -323,6 +421,23 @@ extending this document, not inventing inline.
 </article>
 ```
 Cards stack with `gap-card-gap` (12px) between them — never a joined/divided list.
+
+**Interaction contract — binding, exact both ways.** A card is either **passive** (no
+chevron, does not navigate) or **active** (has a chevron, and the chevron — or an
+equivalently sized, equivalently labelled control occupying the same visual slot — is
+the real, focusable `<button>` or `<Link>` that does the navigating). **The card's
+`<article>` container is never itself wrapped in an `<a>`, and never carries an
+`onClick`** — that nests the heading inside a link (the heading text becomes the link's
+accessible name) and concatenates the row's entire visible content into one unreadable
+accessible name. Concretely:
+- The chevron, when present, carries its own `min-w-tap-min` hit area and
+  `aria-label="View {product name}"` (name the destination, not the icon) — it is what
+  carries the `href`/`onClick`. The rest of the card's text stays presentational.
+- A card with no chevron renders no navigation affordance of any kind — no
+  `cursor: pointer`, no hover treatment implying tap-ability.
+- This is the same principle as the back office's row-click ban (a table `<tr>` never
+  carries the edit affordance — see the Table spec below): an explicit control over an
+  implicit, whole-container one.
 
 ### Detail header (black/inverted block)
 ```html
@@ -493,18 +608,362 @@ vs muted-foreground is the active/inactive signal, not color.
 Paired fields (e.g. case size + case cost) sit in a `grid grid-cols-2 gap-3` row, per the
 reference's half-width paired numeric fields.
 
+### Sync indicator
+
+Already built and correct as built — `SyncIndicator` in
+`components/count/count-leg.tsx`. Documented here so future screens reach for the
+existing pattern instead of reinventing a sync pill.
+```tsx
+<div
+  className={cn(
+    "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-label uppercase",
+    pending > 0 ? "bg-warning-bg text-warning" : "bg-success-bg text-success",
+  )}
+  aria-live="polite"
+>
+  {pending > 0 ? <><CloudOff className="size-3.5" aria-hidden="true" /> {pending} pending</>
+               : <><Check className="size-3.5" aria-hidden="true" /> Synced</>}
+</div>
+```
+Non-interactive (a status display, not a tap target — exempt from the 44/56px floors).
+`aria-live="polite"` and always visible, not only on failure — a dropped access point
+must be seen, not silent. Never shrink below its current footprint to "declutter"; that
+is exactly the 32px `.sync-pill` defect the audit found.
+
+### Sheet
+
+**No sheet ships in the product today, and this phase does not add one.** The
+location-switcher sheet from `prototypes/count-scan.html` is explicitly not built — the
+shipped `LocationPicker` (full-screen) plus the `StrayPicker` escape hatch already
+satisfy "pick a location once per leg," and re-introducing a free location switch next
+to the scan button is a locked-location violation (`AGENTS.md`), not a styling gap.
+
+**If any sheet/modal is introduced later** (an overflow-actions sheet, a confirmation
+sheet), it must, when closed:
+- Not be reachable by Tab — `inert` on the container, or `display: none`, never
+  `transform: translateY(100%)` alone (an off-screen but still-in-the-tab-order sheet is
+  the exact defect this rule exists to prevent).
+- Trap focus while open; restore focus to the trigger on close.
+- Close on Escape, not click-only.
+- Carry a heading naming its subject (`Edit Speed Rail`, not `Edit location` — the same
+  rule as every other edit surface).
+
+```html
+<div class="fixed inset-0 z-50 bg-foreground/40" aria-hidden="true"><!-- scrim --></div>
+<div role="dialog" aria-modal="true" aria-labelledby="sheet-title"
+     class="fixed inset-x-0 bottom-0 z-50 rounded-t-xl border-t border-border bg-card p-card-pad">
+  <div class="flex items-center justify-between">
+    <h2 id="sheet-title" class="text-row-title text-card-foreground">Sheet title</h2>
+    <button aria-label="Close" class="flex size-11 items-center justify-center rounded-full text-muted-foreground">
+      <svg class="size-5" aria-hidden="true"><!-- x --></svg>
+    </button>
+  </div>
+  <!-- content -->
+</div>
+```
+No shadow (§5) — depth comes from the `--card`/`--background` step and the scrim, not a
+drop shadow.
+
+### Table
+
+The catalog table (`components/office/catalog-table.tsx`) is the first TanStack Table
+migration; every table after it follows this spec.
+- **Columns are a per-role array built at call time — never `columnVisibility`.**
+  `columnVisibility` keeps the column in the table model, so a role that shouldn't see
+  it can still find it in the DOM; that is the exact P0.5 defect this bans.
+  ```ts
+  const columns = [
+    productColumn,
+    categoryColumn,
+    onHandColumn,
+    ...(canSeeCost ? [unitCostColumn] : []),
+    ...(canManage ? [caseSizeColumn, editColumn] : []),
+  ];
+  ```
+- `scope="col"` on every `<th>`.
+- An accessible name via `<caption className="sr-only">` (e.g. "Catalog, 99 active
+  products") — never silent.
+- A real empty state in `<tbody>` when there are no rows (see Empty state below) —
+  never an absent `<tbody>`.
+- Row height: `h-row-office` / `min-h-row-office` (57px, `--spacing-row-office`), one
+  token everywhere a table renders a row. Cell padding is never zero vertical — `py-2`
+  (8px) minimum, so two-line cells get real clearance.
+- Hover: `hover:bg-muted` on `<tr>` — reuses the existing token, no new color.
+- Zebra, if used: alternating `bg-card` / `bg-muted` on `<tr>` — same reuse. Pick one of
+  hover or zebra per table, not neither; don't combine them on the same table unless the
+  hover state is still visually distinct from the zebra stripe.
+- Numeric columns get `.num` (`text-align: right` only — `font-variant-numeric:
+  tabular-nums` is already global on `body`, `.num` must never re-declare it). Apply to
+  every genuinely numeric column (Stock, Unit cost, Size, Case, Started/Closed dates,
+  Total value); never to an actions column.
+- Truncated cells (`.truncate`) carry a `title` attribute with the untruncated value.
+  Cells that should never wrap (the count-summary product column) get `max-width` +
+  `.truncate` instead of being left to wrap and breaking the fixed row height.
+- The row-level Edit button is a real, labelled `<button>` (`Edit`, or an icon +
+  `aria-label="Edit {row name}"`), at least 36px (§6's back-office floor) — never the
+  first item inside a hidden overflow menu, never a bare text link. Its edit form's
+  heading names the row (`Edit Speed Rail`).
+- A `⋯` overflow menu for secondary, non-Edit row actions tracks real open/closed state
+  in `aria-expanded`, supports Escape and arrow-key navigation inside `role="menu"`,
+  moves focus in on open and restores it to the trigger on close, and renders inside a
+  container whose `overflow` does not clip it.
+
+### Pagination
+
+Required on every table, not optional polish — TanStack Table's pagination row model.
+```html
+<div class="flex items-center justify-between border-t border-border px-card-pad py-3">
+  <p class="text-caption text-muted-foreground">Showing 1–20 of 99</p>
+  <div class="flex items-center gap-2">
+    <button aria-label="Previous page" class="flex h-9 min-w-9 items-center justify-center rounded-md border border-input px-2 text-caption text-foreground disabled:opacity-40" disabled>
+      <svg class="size-4" aria-hidden="true"><!-- chevron-left --></svg>
+    </button>
+    <span class="text-caption text-foreground">Page 1 of 5</span>
+    <button aria-label="Next page" class="flex h-9 min-w-9 items-center justify-center rounded-md border border-input px-2 text-caption text-foreground">
+      <svg class="size-4" aria-hidden="true"><!-- chevron-right --></svg>
+    </button>
+  </div>
+</div>
+```
+`h-9` (36px) meets the back-office floor (§6). Disabled state is `disabled` +
+`disabled:opacity-40`, never a click handler that silently no-ops.
+
+### Sort control
+
+A real `<button>` inside each sortable `<th>` — never a decorative `<span
+aria-hidden="true">` with `cursor: pointer` and no handler.
+```html
+<th scope="col" class="py-2 text-left">
+  <button type="button" aria-sort="ascending" class="inline-flex items-center gap-1 text-label uppercase text-foreground">
+    Unit cost
+    <svg class="size-3.5" aria-hidden="true"><!-- up/down/neutral arrow, matches aria-sort --></svg>
+  </button>
+</th>
+```
+`aria-sort` (`"ascending"` / `"descending"` / `"none"`) lives on the `<th>` and is
+updated live to match the button's state. Every column that plausibly benefits from
+sorting gets it — not an inconsistent subset.
+
+### Empty state
+
+One pattern, reused everywhere a table or a derived figure has nothing to show.
+```html
+<div class="flex flex-col items-center gap-2 py-section-gap text-center">
+  <p class="text-row-subtitle text-muted-foreground">No count has closed yet — on-hand unknown.</p>
+  <button class="mt-2 inline-flex h-9 items-center rounded-md bg-primary px-4 text-label uppercase text-primary-foreground">
+    Start a count
+  </button>
+</div>
+```
+`py-section-gap` (24px) vertical padding — not 64px, which is disproportionate to every
+other spacing value in the system. A short sentence states *why*, not just "no
+results"; a primary action renders where one exists ("Add a location," "Set a par
+level"). This is also the pattern for the §8-point-5 "no basis exists yet" null-value
+case (asOfCountId === null) and for a table's empty `<tbody>` (see Table above).
+
+### Avatar / account menu
+
+A real `<button>`, never a decorative `<div>` — the account button is the *only* place
+in the back office a user signs out, and it is the parity equivalent of `/count/account`
+on the counting surface.
+```html
+<button aria-label="Account menu" class="flex size-tap-min items-center justify-center rounded-full bg-muted text-label text-foreground">
+  JM
+</button>
+<!-- opens a menu (role="menu") containing: signed-in name, email, role, Sign out -->
+```
+`size-tap-min` (44px) even though it sits inside the back office's otherwise 36px
+density — this is identity + navigation, not a dense data-row control (§6). Initials
+render `bg-muted text-foreground`, the same single neutral treatment as every other
+identity tile in the product — no color-coded identity (see Chip/identity note below).
+Never `aria-hidden="true"` on this control; it is the only user-identity element on the
+screen.
+
+### Filter pill
+
+```html
+<!-- applied -->
+<button aria-pressed="true" class="inline-flex h-9 items-center rounded-full bg-primary px-3 text-label uppercase text-primary-foreground">
+  Category: Spirits
+</button>
+<!-- unapplied -->
+<button aria-pressed="false" class="inline-flex h-9 items-center rounded-full border border-input px-3 text-label uppercase text-foreground">
+  Status: Active
+</button>
+```
+**Facet-named, not value-named** — `Category: Spirits`, never a bare `Full counts` —
+this is the one binding convention across every filterable screen, chosen because it
+scales to filters this phase doesn't enumerate without inventing a new copy pattern per
+screen. Applied = filled solid; unapplied = outline, no fill.
+
+### View tab
+
+Used where a screen has more than one view of the same data (e.g. Catalog / Needs
+attention).
+```html
+<nav class="flex gap-6 border-b border-border" aria-label="View">
+  <button aria-current="page" class="border-b-2 border-foreground pb-2 text-label font-semibold uppercase text-foreground">
+    All products
+  </button>
+  <button class="border-b-2 border-transparent pb-2 text-label uppercase text-muted-foreground">
+    Needs attention
+  </button>
+</nav>
+```
+Active = underline (`border-b-2 border-foreground`) + bold weight — **never a color
+change.** Mirrors the counting app's tab-bar rule: selection is a
+weight/underline/icon-fill change, color stays reserved for status/brand (§3).
+
+### Banner
+
+A persistent, inline notification strip — distinct from a Toast (transient,
+auto-dismissing) and a Sheet (a blocking overlay). Used for standing context a screen
+needs visible the whole time it's open: the "as of count #N" confirmation, the
+excluded-lines honesty note on a count summary, a closed-count explanation.
+```html
+<div class="flex items-start gap-2.5 rounded-md border border-border bg-warning-bg p-3 text-warning">
+  <svg class="mt-0.5 size-4 shrink-0" aria-hidden="true"><!-- info/warning glyph --></svg>
+  <p class="text-row-subtitle">7 of 49 lines are unpriced and excluded from this total.</p>
+</div>
+```
+Tone follows the status tokens: `bg-warning-bg text-warning` for something the viewer
+should notice before trusting the number above it (excluded lines, a preview built from
+mock data); `bg-success-bg text-success` for a closed/confirmed state (a closed-count
+explanation); `bg-muted text-foreground` for a neutral, no-judgment note (an "as of
+count #N" line that isn't itself good or bad news). Never `--accent` — a banner states a
+fact about data, it is not a brand touchpoint. No shadow (§5). If a banner's presence or
+content changes without a page reload, wrap it in `aria-live="polite"`, the same pattern
+as the Sync indicator; a static banner present at initial render needs no live region.
+
+### Popover
+
+Used for a row's `⋯` overflow menu and similar transient, anchored controls.
+```html
+<div role="menu" class="min-w-40 rounded-md border border-border bg-popover p-1 text-popover-foreground">
+  <button role="menuitem" class="flex w-full items-center rounded-sm px-2 py-2 text-left text-row-subtitle hover:bg-muted">
+    Audit stock
+  </button>
+</div>
+```
+**No shadow** — this is the one place this spec diverges from the raw reference shot,
+which shadows its row-overflow popover; §5's no-shadow policy applies here too. Depth
+comes from the `--popover`/`--popover-foreground` tokens plus a `border-border`
+hairline. Tracks real `aria-expanded` state (never hardcoded `"false"`), supports
+Escape and arrow-key navigation, moves focus in on open and restores it to the trigger
+on close, and renders inside a container whose `overflow` does not clip it.
+
+### Tooltip
+
+```html
+<span role="tooltip" class="rounded-md border border-border bg-popover px-2 py-1 text-caption text-popover-foreground">
+  Excluded — no cost on file
+</span>
+```
+Triggered on hover **and** keyboard focus (never hover-only — a keyboard user needs the
+same information), dismissible with Escape, no shadow. Reserved for supplementary
+explanation (why a value is excluded, what an abbreviation means) — never the only
+place a required label lives; a tooltip that duplicates an already-visible label is
+decoration, not a component.
+
+### Toast
+
+A transient, auto-dismissing notification for feedback that doesn't need to stay on
+screen — not a substitute for the SET/ADD consequence line (which is a persistent
+button-label change, not a toast) and not a substitute for a Banner (which is
+standing, not transient).
+```html
+<div role="status" aria-live="polite" class="flex items-center gap-2 rounded-md border border-border bg-card p-3 text-card-foreground">
+  <svg class="size-4 shrink-0 text-success" aria-hidden="true"><!-- check --></svg>
+  <p class="text-row-subtitle">Location saved</p>
+</div>
+```
+`role="status"` + `aria-live="polite"` for confirmations; `role="alert"` for errors
+(interrupts immediately, does not wait for a pause). No shadow. Never used to deliver
+information the user needs to act on later — that belongs in a Banner or an inline
+field error, since a toast that has already dismissed itself cannot be re-read.
+
+### Hover
+
+`hover:bg-muted` is the one binding hover treatment for a genuinely interactive row
+(a table `<tr>` with an Edit button, a menu item) — reuses the existing `--muted` token,
+no new color. **A passive card (§9 Card row, no chevron) gets no hover treatment at
+all** — hover implying tap-ability on a non-interactive surface is the same defect as a
+`cursor: pointer` on a passive card.
+
+### Zebra
+
+Alternating `bg-card` / `bg-muted` on a table's `<tr>` elements — same token reuse as
+Hover, no new color. Optional per table; when used, pick it *or* hover, not neither, and
+keep the two visually distinguishable from each other if a table uses both (hover on an
+already-`bg-muted` zebra row needs a state that still reads as "hovered").
+
+### Chip
+
+The `StatusPill` component (see Status pill above), reused for a second purpose: a
+reason/action label rather than a stock/count status — e.g. `REASON_LABEL` in
+`catalog-table.tsx` (`Needs producer`, `Needs case size`, `Needs cost`, `Needs par`),
+rendered with `tone="warning"`. Same component, same visual shape
+(`rounded-full px-3 py-1 text-label uppercase`) — this entry documents the second use
+that §3's original Status pill spec didn't name, it does not introduce a new component.
+`tone="neutral"` (`bg-muted text-muted-foreground`) is the chip treatment for a
+non-judgment label (a location name, a size) that must not borrow a status tint to look
+lively.
+
+### Null-value
+
+Renders the classification from §8 point 5 — the treatment is picked by *which* of the
+four cases applies, not by a single shared style:
+```html
+<!-- 1. structurally not applicable -->
+<span class="text-row-subtitle text-muted-foreground">—</span>
+<!-- 2. applicable, not yet entered — same size as the data around it, never smaller -->
+<span class="text-row-subtitle text-muted-foreground">Not entered</span>
+<!-- 3. role-gated — nothing renders; the Money/value component returns null -->
+<!-- 4. no basis exists yet — a full sentence via the Empty state pattern, not a cell value -->
+```
+**Never** italic, and never `text-caption` (13px) for case 2 — that was the P3.4 defect:
+"Not entered" is information a manager acts on (it's what drives the "needs attention"
+view), so it reads at the same weight as the data around it, not smaller/quieter than
+it. Case 1 and case 2 are both `text-muted-foreground` but are not interchangeable
+strings — a NULL `case_size` on a spirit is never "Not entered" (nothing will ever be
+entered there), and a genuinely missing unit cost is never `—` (something should exist
+and doesn't yet).
+
 ---
 
 ## 10. What the next two agents must not invent
 
 - No new color outside §2's tokens. No new hex values, no `text-gray-500`-style raw
   Tailwind color utilities — every color reference goes through the tokens above.
-- No `shadow-*` on cards, sheets, or modals — see §5.
-- No tap target under 44px anywhere; nothing under 56px on the primary count loop.
+- No `shadow-*` on cards, sheets, popovers, or modals — see §5 and §9's Popover spec.
+- No tap target under 44px anywhere on the counting surface; nothing under 56px on the
+  primary count loop. The back office has its own, lower, *not relaxed* floor — see §6's
+  "Back-office density" subsection (36px dense-control floor, 44px for
+  identity/navigation controls) — do not apply the phone floor to a table row, and do
+  not apply the office's 36px floor to anything on the counting surface.
 - No rendering of `$0.00`, `—`, or a blank reserved column for a role-gated value that is
-  `undefined` — see §8, this is a correctness rule, not a style rule.
+  `undefined` — see §8, this is a correctness rule, not a style rule. See §8 point 5 and
+  §9's Null-value spec for the other three "no value" cases and their own required
+  treatment — collapsing all four to one word or one style is also wrong.
 - No forking a component per theme — one component, two token sets, `.dark` class only.
 - Green/amber/red stay status-only; brand stays blue-only — see §3.
+- No `columnVisibility` for a role-gated table column — the column array is built per
+  role at call time, or the column does not exist in the model at all. See §9's Table
+  spec.
+- No color-coded vendor/person identity. One neutral treatment
+  (`bg-muted text-foreground`, initials) for every vendor and every person, everywhere —
+  see §9's Avatar/account menu and Chip specs.
+- No literal caps in JSX/HTML source (`"JUST COUNTED"`) — sentence case in source, the
+  `uppercase` utility does the visual work. See §4.
+- No chart, sparkline series, or any component drawn against `--chart-2` through
+  `--chart-5` until each is computed per §2's "Chart palette (owed)" method — `--chart-1`
+  is the only chart token safe to use today.
+- No invented type size (a raw `14px`/`12px` etc.) and no invented letter-spacing
+  (`.04em`) outside §4's defined scale — round to the nearest defined step
+  (`text-caption` for the smaller cluster, `text-row-subtitle` for the larger) rather
+  than adding a new size.
+- No fixed-width `<meta viewport>` or a `min-width` on `body` that blocks pinch-zoom —
+  see §6 and §7.
 
 ---
 

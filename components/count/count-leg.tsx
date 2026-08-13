@@ -841,7 +841,7 @@ export function CountLeg({
       </div>
 
       <div className="px-bar-pad pt-4">
-        <div className="flex h-tap-min items-center gap-2 rounded-md border border-input bg-card px-4">
+        <div className="flex h-tap-min items-center gap-2 rounded-md border border-input bg-card px-4 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50">
           <Search className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
           <input
             type="search"
@@ -930,10 +930,7 @@ export function CountLeg({
         />
       </div>
 
-      <div
-        className="fixed inset-x-0 bottom-0 z-40 flex gap-3 border-t border-border bg-background px-bar-pad pt-bar-pad"
-        style={{ paddingBottom: "max(var(--spacing-bar-pad), env(safe-area-inset-bottom))" }}
-      >
+      <div className="fixed inset-x-0 bottom-0 z-40 flex gap-3 border-t border-border bg-background px-bar-pad pt-bar-pad pb-safe-bottom">
         <Button
           variant="outline"
           size="primary"

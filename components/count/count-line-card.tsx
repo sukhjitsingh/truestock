@@ -113,7 +113,13 @@ export function CountLineCard({
         ) : null}
 
         {highlight ? (
-          <p className="mt-2 flex items-center gap-1.5 text-caption text-success">{highlight}</p>
+          <p
+            role="status"
+            aria-live="polite"
+            className="mt-2 flex items-center gap-1.5 text-caption text-success"
+          >
+            {highlight}
+          </p>
         ) : null}
       </div>
     </article>

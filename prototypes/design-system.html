@@ -14,100 +14,21 @@
   Toggle button (top right) flips `.dark` on <html>, exactly the mechanism described
   in docs/design-system.md §1 — one component tree, two token sets, no forking.
 -->
+<link rel="stylesheet" href="tokens.css" />
 <style>
   /* ===================================================================
-     TOKENS — mirrors app/globals.css exactly. If you change a value here,
-     change it there too (and vice versa); they must never drift apart.
+     Design tokens (colors, radius, spacing, type scale) come from
+     tokens.css, generated from app/globals.css — see
+     prototypes/generate-tokens.mjs and
+     docs/plans/phase-2-ui-redesign/ui-audit.md P2.7. This file keeps only
+     the hand-rolled utility-class layer that has no equivalent there:
+     layout (flex/grid), spacing, sizing, border, and background-color
+     utilities. Production uses real Tailwind v4; these class names
+     deliberately match the ones in docs/design-system.md so the mapping
+     to real Tailwind is 1:1 and self-evident.
      =================================================================== */
-  :root {
-    --radius: 1rem;
-
-    --background: #f7f7f5;
-    --foreground: #111111;
-    --card: #ffffff;
-    --card-foreground: #111111;
-    --muted: #efefec;
-    --muted-foreground: #6b6b6b;
-    --primary: #0a0a0a;
-    --primary-foreground: #ffffff;
-    --secondary: #efefec;
-    --secondary-foreground: #111111;
-    --accent: #2563eb;
-    --accent-foreground: #ffffff;
-    --destructive: #c4304f;
-    --destructive-foreground: #ffffff;
-    --border: #e4e4e1;
-    --input: #8c8c8c;
-    --ring: #2563eb;
-    --header: #0a0a0a;
-    --header-foreground: #ffffff;
-    --success: #1f7a3d;
-    --success-bg: #e4f5e6;
-    --warning: #92600a;
-    --warning-bg: #fdf0dc;
-    --negative: #b8305a;
-    --negative-bg: #fde8ec;
-
-    --radius-sm: calc(var(--radius) - 4px);
-    --radius-md: calc(var(--radius) - 2px);
-    --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) + 4px);
-
-    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  }
-
-  html.dark {
-    --background: #0b0b0c;
-    --foreground: #f5f5f4;
-    --card: #17181a;
-    --card-foreground: #f5f5f4;
-    --muted: #131315;
-    --muted-foreground: #a8a8a5;
-    --primary: #f5f5f4;
-    --primary-foreground: #0a0a0a;
-    --secondary: #1e1e21;
-    --secondary-foreground: #f5f5f4;
-    --accent: #60a5fa;
-    --accent-foreground: #0a0a0a;
-    --destructive: #d33039;
-    --destructive-foreground: #ffffff;
-    --border: #232326;
-    --input: #6b6b6b;
-    --ring: #60a5fa;
-    --header: #121317;
-    --header-foreground: #f5f5f4;
-    --success: #6fcf8e;
-    --success-bg: #14301f;
-    --warning: #f0b429;
-    --warning-bg: #3a2a10;
-    --negative: #f0718a;
-    --negative-bg: #3a1620;
-  }
-
-  /* ===================================================================
-     RESET + BASE
-     =================================================================== */
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
   body {
-    background: var(--background);
-    color: var(--foreground);
-    font-family: var(--font-sans);
-    font-variant-numeric: tabular-nums;
-    -webkit-font-smoothing: antialiased;
     transition: background-color 0.15s ease, color 0.15s ease;
-  }
-  h1, h2, h3, p, ol, ul { margin: 0; padding: 0; list-style: none; }
-  button, input { font: inherit; color: inherit; }
-  button { cursor: pointer; background: none; border: none; }
-  svg { display: block; }
-
-  a, button, input, [role="button"], [tabindex] {
-    outline-offset: 2px;
-  }
-  a:focus-visible, button:focus-visible, input:focus-visible, [role="button"]:focus-visible {
-    outline: 2px solid var(--ring);
-    outline-offset: 2px;
   }
 
   /* ===================================================================
@@ -181,7 +102,7 @@
   .rounded-md { border-radius: var(--radius-md); }
   .rounded-lg { border-radius: var(--radius-lg); }
   .rounded-xl { border-radius: var(--radius-xl); }
-  .rounded-full { border-radius: 9999px; }
+  .rounded-full { border-radius: var(--radius-full); }
   .rounded-b-xl { border-bottom-left-radius: var(--radius-xl); border-bottom-right-radius: var(--radius-xl); }
 
   .border { border: 1px solid var(--border); }
@@ -288,7 +209,7 @@
   .swatch-meta { padding: 0.75rem; font-size: 0.8125rem; }
   .swatch-meta .name { font-weight: 600; margin-bottom: 0.125rem; }
   .swatch-meta .hex { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; opacity: 0.75; }
-  .swatch-meta .ratio { margin-top: 0.375rem; display: inline-block; padding: 0.125rem 0.5rem; border-radius: 9999px; font-size: 0.6875rem; font-weight: 600; }
+  .swatch-meta .ratio { margin-top: 0.375rem; display: inline-block; padding: 0.125rem 0.5rem; border-radius: var(--radius-full); font-size: 0.6875rem; font-weight: 600; }
   .ratio-pass { background: #e4f5e6; color: #1f7a3d; }
   .ratio-note { background: #fdf0dc; color: #92600a; }
 
