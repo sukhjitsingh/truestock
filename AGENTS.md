@@ -142,6 +142,17 @@ catalog cannot drift apart silently again.
 5. **`client_line_id` (UUID) makes writes idempotent.** A retried submit must not create
    a duplicate row.
 6. **Never hard-delete a product.** Set `active = false`. History references it.
+   **And `active = false` must be enforced on the WRITE path, not only excluded
+   from reads.** Excluding a row from a list query does not stop writes to it: a
+   client that loaded the row before it was deactivated still holds a valid id,
+   and its next write succeeds silently. This shipped for locations on 2026-08-12
+   and was caught in review — retiring a location removed it from the scan picker
+   on a *fresh fetch*, but the scan screen fetches locations once and holds them
+   per leg by design, so a counter mid-session kept writing into a retired
+   location with no error anywhere. The `active` check belongs in the write path,
+   **above** any existing-row lookup so it runs on every write and not just the
+   insert. A "refuses retirement while in use" guard is not a substitute — a
+   client that has loaded the row but not yet written leaves nothing to detect.
 7. **Authorization is checked in every server action and route handler**, not only in
    middleware. Several Next.js CVEs are middleware bypasses; defence in depth makes them
    non-events.
@@ -274,6 +285,19 @@ Draft is simpler than it looks and should not be special-cased:
   make every legitimate second scan of a bottle a silently swallowed no-op — the count
   comes out short with no error anywhere, which is quieter and worse than the
   double-count this ledger replaced.
+- **Row-level edit is a real `<button>`, never an `onClick` on the `<tr>`.** Both
+  the locations and vendors tables shipped with the row itself as the edit
+  affordance and were fixed on 2026-08-12. Three defects at once: it is
+  unreachable by keyboard and invisible to a screen reader (`tabIndex: -1`, no
+  role) while every other control on the screen is a button; nothing on screen
+  says the row is clickable; and because the inline form opens *above* the table,
+  every row below it reflows, so a click aimed at one row lands on another. That
+  last one put a real location — Speed Rail — into the edit form, one confirm from
+  a renamed location and a changed `count_mode`, with nothing looking wrong
+  afterwards. **The fix is an explicit Edit button with the row's `onClick`
+  removed**, not a `role`/`tabIndex` bolted onto the `<tr>` — that fixes the
+  accessibility third and leaves the wrong-target hazard. Any edit form must also
+  name its subject in the heading (`Edit Speed Rail`, not `Edit location`).
 - **Dim-bar UI.** High contrast, large tap targets, dark mode, one-handed operation.
   The other hand is holding a bottle.
 - **Any form whose submit is handled in JavaScript carries `method="post"`.**

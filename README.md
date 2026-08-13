@@ -13,8 +13,8 @@ MVP foundation built: schema and migrations, auth, the counting app, the back of
 deployed — no production database has been migrated.
 
 The schema, the auth path and the count write path are verified against a real
-MariaDB 11.8 in Docker by a 121-test suite wired into CI, and the back office has
-been driven in a browser. **The counting loop has now run on a real phone too**
+MariaDB 11.8 in Docker by a 173-test suite wired into CI, and the back office has
+been driven in a browser and by a 35-check Playwright harness. **The counting loop has now run on a real phone too**
 (2026-08-12) — a barcode decoded by the WASM polyfill and enrolled, fill levels
 tapped in tenths, sealed quantities entered, a count closed at a valuation that
 reconciles to the cent in SQL, and the offline write queue draining on reconnect,
@@ -24,7 +24,7 @@ the last of those under the production CSP.
 between them. Nothing has been timed against the sub-20-minute target the design is
 justified by, no pass has covered all five locations, rapid-scan mode has never
 faced a real camera, and 90 of 99 active products are unpriced. Those measurements
-are deferred to Phase 1.9 by a deliberate decision — see `ROADMAP.md`.
+are deferred to Phase 2.9 by a deliberate decision — see `ROADMAP.md`.
 
 - [`STATE.md`](STATE.md) — what is proven, what is merely built, what is next
 - [`ROADMAP.md`](ROADMAP.md) — the phases after the MVP
@@ -81,6 +81,35 @@ and rebuilds from empty; `bun run db:shell` opens a SQL prompt.
 
 To run against the database without the app container, copy `.env.example` to
 `.env.local` and point `DATABASE_URL` at `127.0.0.1:3307`.
+
+### Verifying in a browser
+
+```bash
+bun run test:docker      # integration tests against real MariaDB
+bun run verify:browser   # drives a real Chrome against the running dev server
+```
+
+**Both are required — neither substitutes for the other.** This project has three
+times shipped a defect that every status code, build and test passed: a static CSP
+that stopped all hydration, a dev cross-origin 403, and a wrapped driver error.
+**A 200 is not evidence that a page works.**
+
+`verify:browser` reads `CHECK_EMAIL` / `CHECK_PASSWORD` from the gitignored
+`.env.local` (via Node's own `--env-file`, so credentials stay out of your shell
+history) and drives the Chrome already installed on the machine — Playwright's own
+browser is deliberately not downloaded. It restores every value it overwrites and
+deletes every row it creates.
+
+Some checks need data the dev database does not have by default and are reported
+as **SKIPPED** rather than passing when it is missing: a `manager` and `staff`
+account (`CHECK_MANAGER_*` / `CHECK_STAFF_*`), at least one vendor, and a par level
+on a product in a closed count. Create the last two as throwaway fixtures and
+remove them afterwards — a par level or vendor nobody chose is exactly the
+plausible-but-wrong data this project is built to avoid.
+
+Note that it runs against `next dev`. The CSP failure above was a *production*
+config problem, so a clean CSP result here is not a production result — use
+`bun run docker:up:prod` for that.
 
 ### Counting from a real phone
 

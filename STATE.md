@@ -32,10 +32,13 @@ read as saying more than that.
 **Also as of 2026-08-12, the app sets itself up.** Phases 1 and 1.5 shipped:
 locations are manageable from the app rather than by SQL, cost and case size are
 editable in place, the dashboard counts in the database instead of off a capped
-array, and a per-vendor order copies or prints. 163 integration tests and 28
-browser checks pass. **This changes what is buildable, not what is measured** —
-the binding constraint on closing Phase 1 is now the owner entering 90 costs and
-some par levels, which no amount of code can do.
+array, and a per-vendor order copies or prints. **173 integration tests and 35
+browser checks pass** (`bun run verify:browser`), and the work is open as PR #11.
+**This changes what is buildable, not what is measured** — the binding constraint
+on closing Phase 1 is now the owner entering 90 costs and some par levels, which
+no amount of code can do. Confirmed in MariaDB 2026-08-12: 9 of 99 active products
+costed, **0** with a `case_size`, **0** par rows, **0** vendors. The reorder screen
+cannot produce a row until that changes.
 
 **Corrected 2026-08-11.** The paragraph that stood here described a 2026-07-31
 session against a volume that no longer exists — the database has been reset
@@ -114,6 +117,10 @@ Verified means *observed running*, not reviewed or typechecked.
 | **The camera, on a real device** | Counts 3 and 4, 2026-08-12. Two real barcodes decoded and enrolled — `X004YKHTYX` (Code 128) and `855553008153` (UPC-A) — by the **WASM polyfill**, since the handset has no native `BarcodeDetector`. The "last inch" open since 2026-07-28 |
 | **The offline write queue** | Count 4, 2026-08-12. Airplane mode → submit → chip **`1 pending`**; airplane mode off → chip **`Synced`** unaided, so the `online` listener fires and `flush()` drains. Database after: one line, one ledger row, **8 distinct `client_line_id`s across all four counts** — the queued write applied exactly once |
 | **The production CSP** | 2026-08-12, in a browser. `script-src 'self' 'nonce-…' 'wasm-unsafe-eval'` (no `'unsafe-eval'`), `connect-src 'self'` (no `ws:`); 16/16 scripts nonced, React hydrated, console clean, and a UPC decoded under it. The single highest-risk item on `docs/go-live.md` |
+
+**173 tests across 16 files**, all green, as of 2026-08-12, plus **35 browser
+checks** via `bun run verify:browser`. The paragraph below describes the
+2026-07-31 state and its reasoning, which still holds — only the counts moved.
 
 **94 tests across 7 files**, all green, as of 2026-07-31 — `bun run
 test:docker` against MariaDB 11.8 in Docker, 381 assertions, 0 failures. The 16
@@ -287,6 +294,27 @@ Written, reviewed, typechecked — never observed working.
   Rail** and prefilled its name; one more click would have renamed the bar's
   speed rail and flipped its count mode, with nothing on screen looking wrong
   afterwards. Caught only by reading the prefilled value before typing.
+
+  **Browser verification became a committed harness**, not a one-off:
+  `bun run verify:browser` (`scripts/verify-browser.mjs`) drives the *installed*
+  Chrome through Playwright's `channel: "chrome"`, restores every value it
+  overwrites, deletes every row it creates, and reports unmet preconditions as
+  SKIPPED rather than passing. Two of its checks exist because only a browser can
+  make them: a manager's served HTML must contain no `Unit cost for` at all —
+  the action tests prove the *payload* omits cost, but only the DOM separates
+  "never sent" from "sent and hidden in CSS" — and the positive control (a manager
+  *can* still edit case size) returns exactly **16**, which independently confirms
+  the beer-only-cases catalog rule.
+
+  **Two more open items were closed the same day**, both found while verifying
+  rather than while building: `docker:down` never stopped the TLS proxy (item 25 —
+  Compose ignores containers in profiles it was not told about, so item 24's brand
+  new guard kept refusing right after the user ran the teardown it recommended),
+  and the preflight banner reported "no JavaScript runs" on plain `localhost`
+  while the page was demonstrably hydrated (item 26). Item 26's own proposed fix
+  was dropped as wrong: having the banner confirm a real `/_next/*` fetch cannot
+  work, because in the failure case there is no JavaScript left to do the
+  observing. Merged view: PR #11.
 
   **What is still not measured:** the owner's data entry. 90 unit costs, 16 case
   sizes, par levels, vendors and 5 wine producers are all still absent, and
@@ -781,8 +809,10 @@ references them).
 **Re-sequenced 2026-08-12 by owner decision — see `ROADMAP.md`.** The three
 items that stood here (a timed count, rapid mode against a camera, and the
 standalone entrypoint) are all **measurement**, and all three were deliberately
-deferred to the new **Phase 1.9**. They are not abandoned and nothing about
-their risk has changed; they are simply not next. The new order also moves
+deferred to the field-validation phase — **which moved again on 2026-08-13, from
+1.9 to 2.9**, so it now sits after the UI redesign and OCR invoice automation
+rather than before them. They are not abandoned and nothing about their risk has
+changed; they are simply not next. The new order also moves
 go-live to **Phase 3**, behind a UI redesign (Phase 2) and OCR invoice
 automation (Phase 2.5).
 
@@ -805,21 +835,35 @@ way to test the CSP behaviour that broke this project once, because that failure
 was a production config problem. A clean CSP result under `next dev` is not a
 production result.
 
-1. **The owner's data entry** (open item #4), and nothing here can do it for
-   him. 90 unit costs, 16 case sizes, par levels, vendors and 5 wine producers.
-   **Phase 1 cannot close until this exists**: valuation is proven but nearly
-   empty, and the reorder screen literally cannot produce a row — proving its
-   copy/print worked at all required fixturing in a par level and a vendor,
-   because the database has zero of each. Gate 1's success metric is this
-   sitting: all 90 costs, unaided, under 45 minutes.
-2. **Phase 1.9's measurement.** A timed count and a full five-location walk.
-   Every mechanism is proven; nothing is measured. 8 count lines across four
-   sessions is not a count.
-3. **Two small fixes found while verifying, both in `docs/open-items.md`.**
-   Item 25: `docker:down` does not stop the TLS proxy, so the teardown command
-   item 24's new guard tells you to run does not fully work. Item 26: the
-   preflight origin banner reports a catastrophic failure on plain `localhost`
-   while the page works fine — a diagnostic people learn to ignore.
+**Re-sequenced 2026-08-13 by owner decision: Phase 1 is closed and Phase 2 is
+next.** The owner's data entry moved out of Phase 1 into the new **Phase 2.9**,
+together with the measurements it was always coupled to. See `ROADMAP.md`.
+
+1. **Phase 2 — the UI redesign.** Mobile layout and design flow. Start from
+   `docs/design-system.md` and `docs/design-reference.md`, which are binding
+   rather than suggestions.
+   **Know what you are giving up:** this phase used to be *fed* by the timed
+   measurements, and under the new order it ships before any of them exist. So it
+   will be designed from judgement, not from evidence about where time actually
+   goes — count 2 showed 29s and 102s between two kegs on the same screen with no
+   leg switch, and nobody knows why. Prefer changes that are cheap to revisit, and
+   leave the leg model alone: Phase 2.9 is the first thing that will genuinely
+   test it.
+2. **Phase 2.5 — OCR invoice automation.** Settle the xtraCHEF question first
+   (one hour of testing decides how much needs building). This is also the phase
+   that should shrink Phase 2.9's typing, since invoice capture is the automated
+   version of entering 90 costs by hand.
+3. **Phase 2.9 — the data and the measurements, together.** 90 unit costs, 16 case
+   sizes, par levels, vendors, 5 wine producers; then the timed count, the
+   five-location walk, and rapid mode against a real camera. They were merged
+   because a timed count against an uncosted catalog measures the wrong thing:
+   the reorder list cannot produce a row and valuation stays near-empty, so "are
+   the numbers worth acting on" is unanswerable until the data exists. Verified
+   2026-08-12: 9 of 99 active products costed, 0 with a `case_size`, 0 par rows,
+   0 vendors.
+
+**No open items remain from Phases 1 and 1.5.** Items 25 and 26, both found while
+verifying, were fixed 2026-08-12 and are closed in `docs/open-items.md`.
 
 The two entries that used to stand here, both now done:
 

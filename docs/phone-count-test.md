@@ -296,9 +296,10 @@ reset the volume.
 
 ---
 
-## 6. When Phase 1.9 is done
+## 6. When Phase 2.9 is done
 
-**This file is Phase 1.9's protocol.** Re-sequenced 2026-08-12: these runs used
+**This file is Phase 2.9's protocol.** Re-sequenced 2026-08-12 and again
+2026-08-13 (1.9 → 2.9, now after the UI redesign and OCR): these runs used
 to be Phase 1's exit criteria, and were deferred to a phase of their own so
 Phase 1 could close on construction. Nothing about the runs changed — only when
 they happen. From `ROADMAP.md`, and none of it is a code question:
