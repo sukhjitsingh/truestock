@@ -47,6 +47,59 @@ The durable lesson, worth remembering beyond this feature: **excluding a row
 from a list is not the same as refusing a write to it.** Any future
 "deactivate" affordance needs both halves.
 
+## Browser verification, 2026-08-12 — partial
+
+Run against a real Chrome with a real owner session, `next dev` in Docker.
+
+**Verified:**
+- **Slice 1.** `/office/locations` server-renders all six seeded locations with
+  name, mode, sort order and status; React attaches (`__reactFiber$` on the
+  table); the nav link is present.
+- **Slice 2.** Creating a location shows it immediately with **no document
+  navigation** — measured, via a `window` marker that a hard load would destroy
+  plus an `_rsc` request count: exactly one soft `router.refresh()`, zero hard
+  loads. Renaming it and changing its `count_mode` persisted, confirmed in
+  MariaDB rather than from the screen.
+- The login form is `method="post"` and hydrates; no CSP violations on
+  `/login`. (`securitypolicyviolation` is watched, not just the console —
+  Chrome does not report CSP breaks through the console API.)
+
+**Not yet verified** (the Chrome extension dropped its connection mid-run):
+retire → disappears from `/count`'s picker; the dashboard tile against
+`SELECT COUNT(*)` (the truth it must match is **99 active of 101**); per-cell
+cost editing with navigation measured at zero; clipboard contents; print
+scoping. `bun run verify:browser` performs all of these unattended — it needs
+a working `CHECK_PASSWORD` in `.env.local`. The value there now is rejected by
+the auth API directly (`401 INVALID_EMAIL_OR_PASSWORD`, verified outside the
+browser, so it is not a harness fault).
+
+### Finding: the locations edit affordance is invisible and unlabelled
+
+Not a slice bug — the slice works — but it nearly caused real damage during
+verification and should be fixed before the owner touches this screen.
+
+Editing a location is done by clicking **the row itself**. That row is a `<tr>`
+with an `onClick`, `tabIndex: -1`, no `role`, and no `aria-label`. Three
+consequences:
+
+1. **Keyboard and screen-reader users cannot edit a location at all.** Every
+   other action on the screen is a real `<button>`; this one is not.
+2. **Nothing on screen says the row is clickable.** There is a visible RETIRE
+   button and no EDIT button, so the affordance is discoverable only by
+   hovering and noticing the cursor change.
+3. **The edit form does not name the location it is editing.** Its heading is
+   the generic "EDIT LOCATION". Because the whole row is the target and rows
+   reflow when the inline form opens and closes, a click aimed at one row
+   landed on **Speed Rail** during this run and prefilled its name — one more
+   click would have renamed the bar's real speed rail and flipped its count
+   mode to `quantity`. Nothing on screen would have looked wrong afterwards,
+   which is this project's signature failure mode (see invariant 10's preamble
+   and the locked-active-location rationale). It was caught only by reading the
+   form's prefilled value before typing.
+
+Smallest fix that closes all three: a real `<button>` labelled Edit in the row,
+and the location's name in the form heading so the form states its own subject.
+
 **Browser proof is still owed and no agent can supply it.** Every slice
 returned its own list of browser checks; the ones that matter most:
 - Slice 3: retire a location, confirm it disappears from `/count`'s picker
