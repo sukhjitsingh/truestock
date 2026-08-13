@@ -47,7 +47,30 @@ The durable lesson, worth remembering beyond this feature: **excluding a row
 from a list is not the same as refusing a write to it.** Any future
 "deactivate" affordance needs both halves.
 
-## Browser verification, 2026-08-12 — 28/28, complete
+## Browser verification, 2026-08-12 — 34/34, no skips
+
+Final state: **every check runs and passes, nothing is skipped.** A manager and
+a staff account now exist (3 users), which closed the last two gaps.
+
+**The two role-gating checks, which are the ones that needed a browser at all:**
+
+- **A manager's catalog has no cost column anywhere in the DOM** — 0 cost
+  inputs, 0 cost column headers, and the string `Unit cost for` does not appear
+  in the served HTML. That last part is the point: the action-layer tests prove
+  the *payload* omits cost, but only the DOM can distinguish "never sent" from
+  "sent and hidden with CSS", and the second is a leak.
+- **A manager CAN still edit case size — 16 inputs**, the positive control.
+  Without it the check above would pass just as happily against a page that
+  failed to render a table. And 16 is exactly right: only the 16 bottled beers
+  carry a `case_size`, so this incidentally confirms the catalog rule that a
+  NULL case size on the 62 spirits is correct data rather than missing data.
+- **Staff are redirected off `/office/locations`** — landed on `/count` — and
+  see **0** links to it.
+
+Each role signs in in its own browser context, so no cookie leaks between
+roles.
+
+## Earlier snapshot: 28/28
 
 `bun run verify:browser` against a real Chrome with a real owner session,
 `next dev` in Docker. Every check below failed at least once during
@@ -90,10 +113,24 @@ vendor, a product→vendor link) because the dev catalog has none, and all of
 them were removed afterwards. Verified back to the original state: 0 par rows,
 0 vendors, 9 costed products, 6 locations all active.
 
-**Still not verified: the two role-gating checks, because this database has
-exactly one user.** The checks themselves are written and will run as soon as
-the accounts exist — create a manager and a staff user with
-`bun run create-user`, then add to `.env.local`:
+**Reproducing a full 34/34 from a cold clone** needs three things the dev
+database does not have by default, and the harness reports each as SKIPPED
+rather than passing when they are missing:
+
+1. A manager and a staff account (`bun run create-user`), plus their
+   credentials in `.env.local`.
+2. At least one vendor, for the `/office/vendors` Edit check.
+3. A par level on a product that appears in a closed count, for the reorder
+   copy/print checks — without one the reorder screen cannot produce a row at
+   all, and says so in its own empty state.
+
+Items 2 and 3 are created by hand and torn down again around a verification
+run; **do not leave them in the database**, because a par level and a vendor
+that nobody chose are exactly the plausible-but-wrong data this project keeps
+warning about. Verified back to baseline after each run: 0 par rows, 0 vendors,
+9 costed products, 6 active locations.
+
+The account credentials go in `.env.local` as:
 
 ```
 CHECK_MANAGER_EMAIL=…      CHECK_MANAGER_PASSWORD=…
@@ -108,9 +145,8 @@ the payload all along. It carries a positive control (a manager *can* still
 edit case size), without which the check would also pass against a page that
 failed to render a table at all.
 
-Both are covered at the action layer in `tests/catalog-write-path.test.ts` and
-`tests/location-write-path.test.ts`. Until the accounts exist the harness
-prints both under NOT VERIFIED on every run, so they cannot pass silently.
+Both are also covered at the action layer in `tests/catalog-write-path.test.ts`
+and `tests/location-write-path.test.ts`; the browser adds the DOM half.
 
 Two harness bugs were fixed along the way, both worth remembering because both
 reported the wrong cause: it filled the login form before React attached, so
