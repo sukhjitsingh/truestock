@@ -235,10 +235,19 @@ Run B  total ___min   Speed Rail ___  Back Bar ___  Wine ___  Walk-In ___  Store
        time not counting: ___min   what caused it:
 Run C  1 ☐  2 ☐  3 ☐  4 ☐    duplicate rows found: ___
 
+Bet 1  enroll field set fits 20s      held ☐  failed ☐   which field ate it: ___
+Bet 2  SET/ADD consequence line       held ☐  failed ☐   unintended SETs in ledger: ___
+Bet 3  persistent sync pill           held ☐  failed ☐   did you ever look at it: ___
+Bet 4  one card per product           held ☐  failed ☐   scroll-backs per leg: ___
+
 Broke:
 Slow but worked:
 Wanted and missing:
 ```
+
+The four bets are §6 — read what each one is actually asking before the run, and
+what the *permitted* fix is if it fails. Two of them have a fix that is
+explicitly ruled out in advance.
 
 ---
 
@@ -296,7 +305,75 @@ reset the volume.
 
 ---
 
-## 6. When Phase 2.9 is done
+## 6. The four Phase 2 bets these runs settle
+
+**Added 2026-08-14, at the close of Phase 2 (PR #13).** The UI redesign shipped
+*before* any of the measurements below existed — that was the deliberate cost of
+re-sequencing field validation from Phase 1.9 to 2.9. Phase 2's Gate 1 required
+that every design decision which is really a **bet about where count time goes**
+be written down here before the phase closed, so these runs settle them instead
+of the next person re-arguing them from scratch. All four are presentation-layer
+by construction: none touches the schema, the write path, or the leg model, so
+falsifying any of them costs a component or a copy change, never a migration.
+
+Record the verdict for each one in §3 alongside the timings. "Felt fine" is not
+a verdict; say what you observed.
+
+**Bet 1 — the enroll form's field set fits the 20-second budget.**
+The form uses preset lists (size, category, unit type) rather than free text,
+and the bet is that the current field count is achievable in 20 seconds without
+cutting anything. **Run A settles it** — that is exactly what Run A measures.
+*If it comes in over budget, the fix is cutting a field or widening a preset
+list. It is never adding a free-text field.* A free-text size box accepts a
+plausible wrong answer from someone who is not expected to check it, which is
+the draft-keg-default lesson in `AGENTS.md` — and the reason there is
+deliberately no "Other…" escape on the size list today. Also note *which* field
+the time actually goes into; the assumption is that it is the search step added
+on 2026-07-30, and that has never been checked.
+
+**Bet 2 — a visible consequence line is enough friction on SET/ADD.**
+The submit button states the outcome as you type (`SET TO 3 EA / was 12 ea ·
+−9`, or `ADD 3 EA / 12 → 15`) instead of putting a confirmation dialog in front
+of it. The bet is that seeing the consequence catches the mistake without
+costing a tap. **Run B settles it** — deliberately do a SET on a line that
+already has a quantity, mid-count, at pace, and see whether you read the button.
+Better: check the ledger afterwards for a SET whose delta you did not intend.
+*If mis-taps happen, the fix is copy or emphasis — not a modal.* A dialog on a
+control used 150 times a count gets clicked through blind inside a week, which is
+worse than no guard because it feels like one (`AGENTS.md`).
+
+**Bet 3 — a persistent sync pill beats a toast.**
+Pending-write state shows as a pill that is always on screen (`Synced`,
+`1 pending`) rather than a toast that appears and leaves. The bet is that a
+counter needs sync state available at a glance without it stealing attention
+from the count. **Run C settles it**: the question is not whether the pill is
+*correct* — that was observed working on 2026-08-12 — but whether anyone
+actually looks at it while counting, and whether a number that sits at
+`3 pending` for a minute reads as "working" or as "broken". If it is ignored
+entirely, that is a finding, not a null result.
+
+**Bet 4 — one card per scanned product is worth its vertical space.**
+"Just counted" is a list of cards separated by `card-gap`, not a dense table
+row. The bet is that browsing what you just counted as cards is worth the
+scrolling it costs across a five-location walk. **Run B settles it**, and the
+signal is specific: how often you scroll back to check something you already
+counted, and how far. This one interacts with the floating bottom bar — the bar
+exists precisely *because* this list grows past a viewport — so judge them
+together rather than separately.
+
+**One thing that is not a bet, and is simply unverified.** The entire redesigned
+counting surface has never been opened on a phone. `count-leg.tsx`,
+`fill-entry.tsx`, `quantity-entry.tsx`, `count-line-card.tsx`,
+`barcode-scanner.tsx`, `catalog-search.tsx` and `tab-bar.tsx` all changed in
+Phase 2, and the only thing anyone has looked at is a desktop browser window
+narrowed to 400 px. Every phone-verified fact in `STATE.md` — the fill pad, the
+camera enrolments, the offline chip — predates this rebuild and is evidence
+about the mechanisms underneath, not about the screens that ship today. Open
+item **#20** carries the full list of what to exercise.
+
+---
+
+## 7. When Phase 2.9 is done
 
 **This file is Phase 2.9's protocol.** Re-sequenced 2026-08-12 and again
 2026-08-13 (1.9 → 2.9, now after the UI redesign and OCR): these runs used
