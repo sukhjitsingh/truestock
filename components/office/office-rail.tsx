@@ -187,6 +187,29 @@ export function OfficeRail({
         expanded ? "w-52" : "w-16 items-center",
       )}
     >
+      {/* The toggle leads the rail; it must NOT sit at the bottom.
+          It shipped in the bottom-left corner and was unclickable there — the
+          handler fired fine when the event was dispatched at the node, and a
+          real click never reached it, because the bottom-left corner of the
+          viewport is the busiest real estate in a browser window. Next's
+          dev-tools indicator (`<nextjs-portal>`) parks there in every dev
+          session and swallowed the click outright, and Chrome draws its
+          link-hover status bubble in the same spot, so in production merely
+          hovering any rail link covers the control. The rail's own state was
+          never the bug, which is why it looked like the cookie was broken.
+          Keep it top-anchored. */}
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={expanded}
+        aria-label={expanded ? "Collapse sidebar" : "Expand sidebar"}
+        className={cn(itemClass, "cursor-pointer")}
+      >
+        <ChevronIcon className={cn("size-4 shrink-0 transition-transform", expanded && "rotate-180")} />
+        {expanded ? <span className="truncate text-label uppercase">Collapse</span> : null}
+      </button>
+      <hr className="my-1 w-full border-t border-border" />
+
       {links.map((link) => {
         const active = link.exact ? pathname === link.href : pathname.startsWith(link.href);
         const Icon = link.icon;
@@ -209,13 +232,17 @@ export function OfficeRail({
         );
       })}
 
-      <div className="flex-1" />
-
       {/* The counting app is a link out, not a section — a different surface,
           on a different device, in a different theme. A real separator element
           rather than a top border on the link itself, so the rule spans the
           rail rather than only the 44px item, and so it does not fight the
-          transparent border every item reserves. */}
+          transparent border every item reserves.
+
+          There is deliberately no `flex-1` spacer above this. Pinning the last
+          item to the bottom of the rail puts an interactive control in the
+          bottom-left corner, which is the exact position that made the toggle
+          unclickable (see the comment on it). Nothing in this rail should end
+          up there again. */}
       <hr className="my-1 w-full border-t border-border" />
       <Link
         href="/count"
@@ -226,17 +253,6 @@ export function OfficeRail({
         <CountAppIcon className="size-5 shrink-0" />
         {expanded ? <span className="truncate text-label uppercase">Count</span> : null}
       </Link>
-
-      <button
-        type="button"
-        onClick={toggle}
-        aria-expanded={expanded}
-        aria-label={expanded ? "Collapse sidebar" : "Expand sidebar"}
-        className={cn(itemClass, "cursor-pointer")}
-      >
-        <ChevronIcon className={cn("size-4 shrink-0 transition-transform", expanded && "rotate-180")} />
-        {expanded ? <span className="truncate text-label uppercase">Collapse</span> : null}
-      </button>
     </nav>
   );
 }
