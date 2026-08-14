@@ -13,14 +13,21 @@ MVP foundation built: schema and migrations, auth, the counting app, the back of
 deployed — no production database has been migrated.
 
 The schema, the auth path and the count write path are verified against a real
-MariaDB 11.8 in Docker by a 173-test suite wired into CI, and the back office has
-been driven in a browser and by a 35-check Playwright harness. **The counting loop has now run on a real phone too**
+MariaDB 11.8 in Docker by a 210-test suite wired into CI, and the back office has
+been driven in a browser and by a 45-check Playwright harness. **The counting loop has run on a real phone**
 (2026-08-12) — a barcode decoded by the WASM polyfill and enrolled, fill levels
 tapped in tenths, sealed quantities entered, a count closed at a valuation that
 reconciles to the cent in SQL, and the offline write queue draining on reconnect,
 the last of those under the production CSP.
 
-**What is unproven is scale, not mechanism.** Four sessions produced 8 count lines
+**Phase 2, the UI redesign, shipped 2026-08-14.** Design tokens and a component
+set, the mobile counting surface rebuilt, the back office on a left icon rail with
+the catalog on TanStack Table v8 and per-role column sets. The back office half was
+verified screen by screen in a real browser; **the redesigned counting screens have
+not been opened on a phone**, so every phone-verified fact above predates the
+surface that ships today.
+
+**What is unproven is scale, not mechanism.** Five sessions produced 13 count lines
 between them. Nothing has been timed against the sub-20-minute target the design is
 justified by, no pass has covered all five locations, rapid-scan mode has never
 faced a real camera, and 90 of 99 active products are unpriced. Those measurements
@@ -94,11 +101,19 @@ times shipped a defect that every status code, build and test passed: a static C
 that stopped all hydration, a dev cross-origin 403, and a wrapped driver error.
 **A 200 is not evidence that a page works.**
 
-`verify:browser` reads `CHECK_EMAIL` / `CHECK_PASSWORD` from the gitignored
+`verify:browser` reads `CHECK_EMAIL` / `CHECK_PASSWORD` — plus `CHECK_MANAGER_*`
+and `CHECK_STAFF_*` for the role-gating checks — from the gitignored
 `.env.local` (via Node's own `--env-file`, so credentials stay out of your shell
 history) and drives the Chrome already installed on the machine — Playwright's own
 browser is deliberately not downloaded. It restores every value it overwrites and
 deletes every row it creates.
+
+**A check it could not run is printed as SKIPPED and listed under NOT VERIFIED —
+never as a pass.** Two are permanently skipped against the current dev data
+(`/office/vendors` needs a vendor row; reorder copy/print needs a par level), so
+a "44 passed" line is not 44 checks that ran. It also detects a production target
+from the served CSP, which matters because the CSP break this harness exists to
+catch only reproduces in a production build.
 
 Some checks need data the dev database does not have by default and are reported
 as **SKIPPED** rather than passing when it is missing: a `manager` and `staff`

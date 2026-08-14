@@ -751,6 +751,37 @@ The other two halves of finding H stay as they were: users are CLI-only (item
 **Trigger: the first phone test — fold into `docs/phone-count-test.md` rather
 than doing separately.**
 
+**Widened 2026-08-14 by Phase 2.** This item was written about six changes made
+on 2026-07-30. The UI redesign then rebuilt the whole counting surface —
+`app/(count)/count/page.tsx`, `count-leg.tsx`, `count-line-card.tsx`,
+`fill-entry.tsx`, `quantity-entry.tsx`, `barcode-scanner.tsx`,
+`catalog-search.tsx`, `tab-bar.tsx` — so the item's scope is now *every*
+counting screen, not six changes on it. What is genuinely new and needs
+watching first:
+
+- **The floating bottom bar** (search · scan · finish section), which replaced
+  the single *Finish section* button. It exists because scan and search live at
+  the top of a screen that grows to several viewports during a leg, so reaching
+  them meant scrolling back with the hand not holding a bottle. **It has only
+  ever been looked at in a desktop browser window narrowed to 400 px.** That
+  proves the layout and nothing about the thumb. Three things to check in the
+  hand: that Scan is reachable one-handed without a grip change, that the icon-
+  only Search button is discoverable at all (it is a 44 px icon beside a wide
+  accent button — if counters never find it, the fallback path for damaged
+  labels is effectively gone), and that *Finish section* is hard enough to hit
+  by accident that a leg does not end mid-count.
+- **Search from the bar focuses the field at the top rather than opening its
+  own input**, deliberately, so there is exactly one search box on the screen.
+  Confirm the scroll-and-focus actually lands and the keyboard opens — this is
+  the kind of thing that works in a desktop browser and fails on a phone
+  keyboard.
+- **The four bets Phase 2 wrote down** are §6 of `docs/phone-count-test.md` and
+  overlap this item heavily. Do them in the same sitting.
+
+The 2026-07-30 material below is still owed and still accurate about *what* to
+exercise; just be aware the screens it names have been rebuilt since it was
+written, so a described control may have moved.
+
 Six of the 2026-07-30 changes are UI on the counting leg, and every one of them
 is backed by domain tests plus a browser hydration check, not by anyone actually
 scanning a bottle. Nothing in this repo's test suite imports a React component,
@@ -1141,3 +1172,114 @@ and the vendor's name in the form heading so the form states its own subject.
 
 `users-list.tsx` and `catalog-table.tsx` were checked and do **not** have this
 pattern — both use explicit controls.
+
+---
+
+## 28. The `--chart-2..5` series palette is owed, not chosen
+
+**Trigger: the first chart drawn — Phase 4. Not before, and drawing one before
+filling these in is the failure this item exists to prevent.**
+
+Opened 2026-08-14 at the close of Phase 2. `--chart-1` is real (the brand blue,
+already contrast-computed, no collision with any status token). `--chart-2`
+through `--chart-5` are **deliberately empty** in both themes:
+
+```css
+--chart-2: /* owed */ ;
+```
+
+Empty rather than a placeholder hex, on purpose — an accidental consumer breaks
+visibly instead of silently rendering a looks-fine-but-wrong colour. That choice
+is the whole point, so do not "tidy" these into provisional values.
+
+**What they used to be is the reason this is an item at all.** They were
+byte-identical to `--success` / `--warning` / `--negative`. A categorical series
+in those hues puts a green wedge and a red wedge on a stock dashboard where
+green and red already carry meaning — a chart that reads as a health signal
+while actually encoding nothing but series order. That is a plausible-but-wrong
+default in a place nobody would think to check, which is the class of defect
+`AGENTS.md` opens with.
+
+**How to close it**, per `docs/design-system.md` §2 and
+`docs/plans/phase-2-ui-redesign/ui-spec-web.md` §8 — all four conditions, not a
+subset:
+
+1. WCAG relative-luminance contrast computed (not eyeballed) against **both**
+   `--background` and `--card`, in **both** themes.
+2. A colour-vision-deficiency simulator pass over the full series together, not
+   swatch by swatch.
+3. No hue that reads as adjacent to `--success`, `--warning` or `--negative`.
+4. Values written into `app/globals.css` in both the `:root` and `.dark` blocks,
+   then `prototypes/tokens.css` regenerated via
+   `prototypes/generate-tokens.mjs` so the prototypes cannot drift from the app
+   again (the audit's P2.7 finding).
+
+Phase 2 satisfied Gate 1 by marking these owed and drawing **no chart at all** —
+`library-comparison.md` names visx for Phase 4, against a catalog that by then
+should actually have costs, pars and vendors in it. A chart built today against
+9-of-99-costed data and 0 par rows would render empty and prove nothing.
+
+**The check that this is still safe:** `grep -rn "chart-[2-5]" app components`
+should return hits in `app/globals.css` — the two token blocks and their `@theme`
+aliases — plus exactly one line of `components/ui/meter.tsx`, a comment
+explaining why the meter does not reach for these. Anything else is a component
+consuming an empty custom property. Verified 2026-08-14.
+
+---
+
+## 29. The accessibility floor is asserted on one screen out of about a dozen
+
+**Trigger: the next time any office screen is opened for another reason — and
+before Phase 3 go-live for the counting screens.**
+
+Opened 2026-08-14 at the close of Phase 2, as the honest half of a Gate 1
+criterion that read "every screen, checked in a real browser".
+`scripts/verify-browser.mjs` has three real assertions for this —
+`assertFocusVisible`, `assertNoHeadingSkips`, and the icon-button-accessible-name
+check — and each is invoked exactly once, for `/office/catalog`. The other office
+routes were opened in a browser and looked at; they were not walked for tab
+stops, heading order, or unlabelled icon controls. `/count` is driven only far
+enough to confirm it loads.
+
+**Why this is worth an item rather than a shrug.** The one screen that was walked
+is the screen where a bare `focus:outline-none` was found — and it was found only
+after the harness itself was fixed, because `assertFocusVisible` had been
+resuming its tab walk from wherever the previous assertion's click left focus,
+deep inside the table, and reported "25 tab stops, none bare" having never
+visited the bare control sitting above its starting point. The evidence says:
+run this check on a screen and it finds something. It has been run on one screen.
+
+**How to close it:** `assertFocusVisible(path, mustReach)` already takes a path
+and a must-reach pattern, so extending it over `/office`, `/office/counts`,
+`/office/vendors`, `/office/locations`, `/office/users` and `/office/reorder` is
+a loop, not new machinery. Always pass `mustReach` — a coverage count with no
+named element is the exact shape of the false pass above. The counting screens
+need a phone and belong with item #20.
+
+---
+
+## 30. Three of seven table surfaces never moved onto the shared primitives
+
+**Trigger: the next time `vendors-list.tsx`, `locations-table.tsx` or
+`users-list.tsx` is opened for any reason. Not worth a dedicated pass.**
+
+Opened 2026-08-14 at the close of Phase 2. `catalog-table.tsx`,
+`reorder-vendor-block.tsx` and both `counts` pages use `components/ui/table.tsx`;
+the other three still hand-roll `<table>`. Concretely:
+
+- **`users-list.tsx` has no `scope="col"` on any header and no `<caption>`** —
+  0 and 0. This is the one with real consequence: a screen reader gets no column
+  association at all on the user-management table.
+- `vendors-list.tsx` and `locations-table.tsx` have `scope="col"` (5 each) but no
+  caption.
+- `vendors-list.tsx:166,169,172` renders three ad-hoc `"—"` strings for null
+  contact, order method and lead time instead of `<NullValue>`. That is the same
+  null-value drift removed from counts-list in `dd9fda4`, surviving on a screen
+  that commit did not touch — and the distinction `NullValue` exists to carry is
+  real here: a vendor with no lead time recorded is `not-entered`, not
+  `not-applicable`.
+
+None of this is a hazard, and none of it is a data-correctness risk — it is a
+migration that reached four of seven surfaces. Recorded so it is not mistaken for
+a decision. The whole-row-click hazard, which *was* a hazard, is gone everywhere:
+no `<tr>` in the codebase carries an `onClick` (item #27, closed 2026-08-12).

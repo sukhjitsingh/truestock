@@ -1,6 +1,6 @@
 # Truestock — current state
 
-Where the project actually is. Updated 2026-08-12.
+Where the project actually is. Updated 2026-08-14.
 
 This file answers one question: **what is proven, what is merely built, and what
 is next.** The distinction matters more here than the feature list, because this
@@ -29,11 +29,22 @@ five-location walk, 90 of 101 products unpriced. The project moved from "does it
 work at all" to "does it work at scale" in one day, and this file should not be
 read as saying more than that.
 
+**Phase 2 — the UI redesign — shipped 2026-08-14** (PR #13, merge `9cbf64b`).
+Nine implementation commits behind the Gate 1 approval: design tokens and
+sixteen new component specs, the mobile counting
+surface rebuilt to `ui-spec-mobile.md`, the back office moved onto a 64 px left
+icon rail with a shared `PageHeader` and Table primitives, the catalog table
+migrated to TanStack Table v8 with per-role column sets, two-level category
+filters, type-ahead search, and `prototypes/*.html` regenerated from
+`app/globals.css` instead of eleven hand-drifted copies. **Every screen it
+touched in the back office was opened in a real browser; not one of the
+redesigned mobile counting screens has been on a phone.** That asymmetry is the
+main thing this file now has to say — see "What is built but unproven".
+
 **Also as of 2026-08-12, the app sets itself up.** Phases 1 and 1.5 shipped:
 locations are manageable from the app rather than by SQL, cost and case size are
 editable in place, the dashboard counts in the database instead of off a capped
-array, and a per-vendor order copies or prints. **173 integration tests and 35
-browser checks pass** (`bun run verify:browser`), and the work is open as PR #11.
+array, and a per-vendor order copies or prints. That work merged as PR #11.
 **This changes what is buildable, not what is measured** — the binding constraint
 on closing Phase 1 is now the owner entering 90 costs and some par levels, which
 no amount of code can do. Confirmed in MariaDB 2026-08-12: 9 of 99 active products
@@ -117,9 +128,28 @@ Verified means *observed running*, not reviewed or typechecked.
 | **The camera, on a real device** | Counts 3 and 4, 2026-08-12. Two real barcodes decoded and enrolled — `X004YKHTYX` (Code 128) and `855553008153` (UPC-A) — by the **WASM polyfill**, since the handset has no native `BarcodeDetector`. The "last inch" open since 2026-07-28 |
 | **The offline write queue** | Count 4, 2026-08-12. Airplane mode → submit → chip **`1 pending`**; airplane mode off → chip **`Synced`** unaided, so the `online` listener fires and `flush()` drains. Database after: one line, one ledger row, **8 distinct `client_line_id`s across all four counts** — the queued write applied exactly once |
 | **The production CSP** | 2026-08-12, in a browser. `script-src 'self' 'nonce-…' 'wasm-unsafe-eval'` (no `'unsafe-eval'`), `connect-src 'self'` (no `ws:`); 16/16 scripts nonced, React hydrated, console clean, and a UPC decoded under it. The single highest-risk item on `docs/go-live.md` |
+| **The redesigned back office, in a browser** | Phase 2, 2026-08-13/14. All seven office routes plus two detail routes opened in Chrome. The left icon rail expands 64 → 208 px on an *ordinary hit-tested click*, writes its cookie, and is still expanded after a full reload; two-level category filters resolve Spirits → six type pills → 11 tequila rows matching the 11 in the database; type-ahead search reaches `?q=…` with zero history growth; costs render `82.00`/`144.00` |
+| **Role gating survives the TanStack migration** | `bun run verify:browser` asserts a manager's rendered DOM contains **no** `Unit cost for` string and zero cost inputs, with an owner positive control that must find it — so the check cannot pass by failing to render. Columns are built per role at call time, never `columnVisibility` |
+| **The catalog table's own behaviour** | Same harness: clicking a sortable header changes `aria-sort` **and** reorders the rows; pagination advances `Showing 1–20 of 99` → `21–40 of 99` and changes which rows show; a product with no par level renders **no** stock bar (15 rows, 0 meters); clicking a non-interactive cell does not navigate |
+| **The accessibility floor, on `/office/catalog`** | Same harness: 30 tab stops walked, none bare; every icon-only control has an accessible name; no heading-level skips; opening the account menu moves focus into it and Escape returns focus to the trigger. Both focus guards are mutation-checked — reverting either fails loudly |
 
-**173 tests across 16 files**, all green, as of 2026-08-12, plus **35 browser
-checks** via `bun run verify:browser`. The paragraph below describes the
+**210 tests across 21 files**, all green — **re-run 2026-08-14 against MariaDB
+11.8 in Docker: 210 pass, 0 fail, 612 assertions, 31.7s.** Plus **45 browser
+checks** via `bun run verify:browser`.
+
+**Read that browser number carefully, because two of its digits are not what
+they look like.** The 2026-08-14 run against the dev server was **44 pass, 1
+fail, of 45** — and of the 44, **two are skips** (`/office/vendors`' Edit button
+needs a vendor row; the reorder copy/print check needs a par level and a closed
+count) which the script prints but explicitly labels *Not a pass*. So 42 checks
+actually executed. The one failure is a `Performance.measure` negative-timestamp
+`TypeError` from Next's **dev** instrumentation, not app code; the same harness
+reported **44/44 against a production build** on 2026-08-14 (`585d2b6`), which
+is where the CSP-sensitive checks belong anyway. Neither number has been re-run
+since. The two skips are printed as NOT VERIFIED on every run so they cannot
+pass silently.
+
+The paragraph below describes the
 2026-07-31 state and its reasoning, which still holds — only the counts moved.
 
 **94 tests across 7 files**, all green, as of 2026-07-31 — `bun run
@@ -163,6 +193,25 @@ orphaning a real product.
 
 Written, reviewed, typechecked — never observed working.
 
+- **The entire redesigned mobile counting surface (Phase 2, 2026-08-14).**
+  This is the biggest unproven thing in the project right now, and it is
+  unproven in a specific way: the back office half of Phase 2 was verified
+  screen by screen in a real browser, and the counting half was not opened on a
+  phone at all. `app/(count)/count/page.tsx`, `count-leg.tsx`,
+  `count-line-card.tsx`, `fill-entry.tsx`, `quantity-entry.tsx`,
+  `barcode-scanner.tsx`, `catalog-search.tsx` and `tab-bar.tsx` all changed;
+  the new floating bottom bar (search · scan · finish section) replaced the
+  single *Finish section* button and the list gained padding to clear it. The
+  bottom bar was checked at 400 px wide in a desktop browser — which proves the
+  layout, not the reach, not the thumb, and not the dim bar.
+  **Every phone-verified fact in this file predates the redesign.** The fill pad
+  driven on 2026-08-12, the camera enrolments, the offline chip — all of those
+  were observed on screens that have since been rebuilt. They are evidence about
+  the mechanisms underneath, which did not change (no schema, no write path, no
+  leg model), and they are **not** evidence about the surface that ships today.
+  That is exactly the shape of failure this file exists to name, so treat the
+  counting app as re-entering "never been on a phone" until Phase 2.9 puts it
+  there.
 - **The counting app on a phone, AT SCALE.** Scan, tenths, sealed quantities,
   scan-to-enroll and the locked-location leg have each now run on a handset
   (2026-08-12) — so this entry is no longer "does it work" but "does it hold
@@ -248,6 +297,13 @@ Written, reviewed, typechecked — never observed working.
   standalone" configuration`. It gave us what was needed — no HMR, the real CSP
   — but Hostinger runs `node .next/standalone/server.js`, which has still never
   been started. On the go-live list, not closed by 2026-08-12.
+  **Still true after Phase 2, and one commit message says otherwise.** `585d2b6`
+  reports the browser harness running "end to end against the standalone build —
+  44/44". What it actually ran against was a production-mode server started the
+  same way as before: `docker-compose.prod.yml` runs `npm run build && npm run
+  start`, and its own header comment says it is *not* the real production image.
+  The CSP that run exercised is real and the 44/44 stands; the word "standalone"
+  in that message does not. Nothing has yet executed `.next/standalone/server.js`.
 - **Concurrency.** The gap-lock deadlock and `withLockRetry` were reproduced by
   hand against MySQL — never against MariaDB, never as a test.
 - **Valuation at catalog scale.** The *mechanism* is proven as of 2026-08-12 —
@@ -262,6 +318,64 @@ Written, reviewed, typechecked — never observed working.
 - **The deploy pipeline.** Built, never run against a real host.
 
 ## Recent history
+
+- **2026-08-14** — **Phase 2 shipped: the UI redesign, merged as PR #13
+  (`9cbf64b`).** Nine implementation commits over two days behind one Gate 1
+  approval (`43f2927`), planned as a Gate-1-only variant of
+  the 4-gate workflow because the phase touches no schema, no endpoint and no
+  business logic — `docs/plans/phase-2-ui-redesign/` carries the reasoning and
+  `00-status.md` the criteria-by-criteria close-out. What landed: design tokens
+  (safe-area insets, `--spacing-row-office`, `.num`), sixteen new component
+  specs in `docs/design-system.md`, the `components/ui` primitives they name
+  (null-value, meter, sparkline, stat-tile, stock-cell, empty-state,
+  filter-pill, the table set), the mobile counting surface rebuilt to
+  `ui-spec-mobile.md`, the back office moved onto a 64 px left icon rail with a
+  shared `PageHeader` and the tables migrated to the shared primitives, the
+  catalog table migrated to **TanStack Table v8 with per-role `columns` built at
+  call time**, two-level category filters, debounced type-ahead search, and
+  `prototypes/*.html` regenerated from `app/globals.css` by
+  `prototypes/generate-tokens.mjs`.
+
+  **Four defects found by looking at the running app rather than by any gate**,
+  which is the pattern this file keeps recording. (1) The rail's collapse toggle
+  was pinned to the **bottom-left corner of the viewport**, where Next's
+  dev-tools portal intercepts pointer events and Chrome paints its link-hover
+  bubble — the button hydrated, `aria-expanded` was right, the cookie write was
+  right, and a real click never reached it, so the rail read as permanently
+  icon-only. The diagnostic that separates "dead control" from "broken cookie"
+  is running the same click three ways: real click, `force: true` (also fails —
+  force skips actionability checks, not browser hit-testing), and
+  `dispatchEvent` (works). (2) `RAIL_COOKIE` was exported from a `"use client"`
+  module, so `cookies().get(RAIL_COOKIE)` in the server layout was looking up a
+  client-reference proxy and returning `undefined` on every request — a failure
+  indistinguishable from the cookie not being set, since the write succeeds and
+  `getAll()` lists it by name. Moved to `lib/ui-cookies.ts`. (3) The catalog
+  search field was `method="get"` with **no `name`**, so a pre-hydration Enter
+  navigated to a bare `?` and lost the query — the mirror image of the
+  `method="post"` rule's failure, silent wrong result instead of a leak. (4) The
+  catalog search input carried `focus:outline-none` with no substitute, and
+  **the harness had been hiding it**: `assertFocusVisible` resumed tabbing from
+  wherever the previous assertion's click left focus, deep in the table, and
+  reported "25 tab stops, none bare" having never visited the bare control above
+  its starting point. It now re-navigates to reset the tab origin and takes a
+  `mustReach` pattern so losing coverage fails loudly. Both focus fixes are
+  mutation-checked.
+
+  **The harness also could not test the artifact we deploy, and now can.**
+  `waitForHydration` used `page.waitForFunction`, which evaluates a string in the
+  page — the production CSP has no `'unsafe-eval'`, so it died with `EvalError`
+  in the second and later browser contexts (the first rides on Playwright's
+  pre-installed script, which bypasses CSP). The login check at the top passed
+  while the role loop three hundred lines down threw, against the same server and
+  the same policy. Polling `page.evaluate` from Node is CSP-safe everywhere. The
+  harness gained a real `skip()` at the same time, because the skip was first
+  written as `record(..., true)` — a green PASS line for a check that never ran,
+  which is precisely the failure mode the rest of that file is written against.
+
+  Gate at close: typecheck clean, lint 0 errors (2 known warnings), `next build`
+  exit 0, **210 tests / 612 assertions / 0 fail**, browser 44/45 against dev
+  (1 dev-only console-error failure, 2 skips) and 44/44 against a production
+  build. **No part of the redesigned counting surface has been on a phone.**
 
 - **2026-08-13** — **The catalog page's "hang" was Drizzle in the browser
   bundle, and the back office got the left rail it was specified with.**
@@ -715,6 +829,21 @@ Written, reviewed, typechecked — never observed working.
 and well covered. But the app's entire reason to exist is being faster than a
 clipboard in a dim bar, one-handed, and no part of that claim has been tested.
 
+**Phase 2 sharpened this rather than closing it, and in a way worth stating
+exactly.** The back office is now the best-verified surface in the project — 45
+browser checks, mutation-checked focus guards, role gating proven against the
+rendered DOM. The counting app got a *larger* rebuild than the back office did
+and received **none** of that: no test in this repo imports a React component,
+`verify:browser` drives `/count` only far enough to confirm the page loads and
+that locations are server-rendered, and no phone has opened any of it. So the
+project now has a verified back office wrapped around an unverified product.
+Four of Phase 2's own defects — a control in a corner the browser owns, a cookie
+read through a client-reference proxy, an unnamed search field, and a focus ring
+the harness was structurally unable to see — were all found by *looking at the
+running app*, and three of the four would have passed any conceivable
+server-side check. There is no reason to think the counting surface is cleaner
+than the one that produced four; there is only less evidence about it.
+
 The CSP incident is the cautionary tale: the failure was total — no interactive
 element anywhere in the app — and it passed CI, `next build`, the `/ship` gate,
 and every status-code assertion. **Server-side confidence does not transfer to
@@ -780,21 +909,38 @@ hour:
 4. **Accounts do not survive `docker:reset`.** Recreate with `bun run
    create-user`. There is no public signup, deliberately.
 
-Local database state, **queried 2026-08-11** rather than remembered. The volume
-has been reset since the 2026-07-31 numbers that stood here, so several of them
-moved:
+Local database state, **queried 2026-08-14** rather than remembered. Same volume
+as the 2026-08-11 numbers that stood here; what moved, moved because the Phase 2
+browser verification ran against it:
 
-| | 2026-07-31 | **now** |
+| | 2026-08-11 | **now (2026-08-14)** |
 |---|---|---|
-| Users | owner, manager, + 2 throwaways | **1** — `owner@truestock.local` only |
-| Counts | draft #1 open | **4, all `closed`** — no open count |
-| Count lines | 0 | **8** — 4 sealed-quantity, **4 tenths** |
-| Ledger rows | 0 | **8**, all `client_line_id`s distinct |
-| Products | 98 | **101** |
-| Barcodes | 1 | **4** |
-| Locations | 5 | **6** — `Tap 1` added 2026-08-12 |
+| Users | 1 — `owner@truestock.local` only | **3** — owner, manager, staff, all active |
+| Counts | 4, all `closed` | **5** — 4 closed, **#5 `in_progress` since 2026-08-13** |
+| Count lines | 8 | **13** |
+| Ledger rows | 8, all distinct | **21**, all 21 `client_line_id`s distinct |
+| Products | 101 (99 active) | **101** (99 active) |
+| Costed products | 9 of 99 | **9 of 99** |
+| `case_size` set | 0 | **0** |
+| Barcodes | 4 | **4** |
+| Locations | 6 | **6**, all active |
 | Par levels | 0 | **0** |
 | Vendors | 0 | **0** |
+
+Three of those changes are worth knowing before you trust a screen:
+
+- **`manager@truestock.local` and `staff@truestock.local` exist again**, created
+  for Phase 2's role-gating browser checks. That closes the two checks the
+  2026-08-12 notes listed as blocked on a missing account — the manager's
+  cost-free DOM and the staff redirect off `/office/locations` both now run and
+  pass. It also means the database no longer matches the "owner is the only
+  account" sentence that used to stand here.
+- **Count #5 is open.** The next phone pass does *not* have to start by opening
+  one, and if you want a clean run you should close or ignore it deliberately
+  rather than discover it mid-count.
+- **Nothing about the data problem moved.** Still 9 of 99 costed, 0 case sizes,
+  0 pars, 0 vendors. Every screen that needs those still degrades to its empty
+  state, which is why two browser checks are permanent skips.
 
 Two of the three newest products are test artifacts, not stock: product 100
 `Testing A New Barcode Prod` and product 101 `Propane fuel`, both enrolled to
@@ -805,8 +951,9 @@ invariant 6 says never hard-delete.
 
 Four of those are the ones that bite:
 
-- **No open count.** The next pass starts by opening one, which the 2026-07-31
-  notes did not have to account for.
+- **Count #5 is already open.** The next pass does not start by opening one —
+  the 2026-07-31 and 2026-08-11 notes both said the opposite, and both are now
+  wrong. Decide deliberately whether to count into it or close it first.
 - **0 pars** — the reorder list is *able* to produce rows as of 2026-07-30 and
   still won't until a par is set on something. Nothing is broken; nothing is
   configured.
@@ -818,12 +965,16 @@ Four of those are the ones that bite:
   same symptom as before #19 was closed, now with a cause that is one form away.
 - **2 barcodes of 99 products** — a phone pass is still essentially all-enroll.
 
-**The throwaway accounts are gone with the volume, and so is the manager.**
-`tester@truestock.local`, `browsercheck@truestock.local` and
-`manager@truestock.local` no longer exist; **`owner@truestock.local` is the only
-account in the database.** If its password is not to hand, `bun run create-user`
-mints another — there is no public signup, deliberately, so a forgotten password
-is a hard stop at the login screen rather than a recoverable inconvenience.
+**All three roles now have an account** — `owner@truestock.local`,
+`manager@truestock.local` and `staff@truestock.local`, created 2026-08-13/14 for
+Phase 2's role-gating browser checks. The paragraph that stood here, saying the
+owner was the only account left after the volume reset, is out of date. If a
+password is not to hand, `bun run create-user` mints another — there is no public
+signup, deliberately, so a forgotten password is a hard stop at the login screen
+rather than a recoverable inconvenience. `verify:browser` reads `CHECK_EMAIL` /
+`CHECK_PASSWORD` plus `CHECK_MANAGER_EMAIL` / `CHECK_MANAGER_PASSWORD` and
+`CHECK_STAFF_*` from the gitignored `.env.local`; a missing pair **skips** the
+role check rather than passing it.
 
 Note there is no `delete-user` script — removing an account means SQL against
 `session` then `account` then `user`, which is also why these accumulate. Same
@@ -861,35 +1012,57 @@ way to test the CSP behaviour that broke this project once, because that failure
 was a production config problem. A clean CSP result under `next dev` is not a
 production result.
 
-**Re-sequenced 2026-08-13 by owner decision: Phase 1 is closed and Phase 2 is
-next.** The owner's data entry moved out of Phase 1 into the new **Phase 2.9**,
-together with the measurements it was always coupled to. See `ROADMAP.md`.
+**Phase 2 closed 2026-08-14 (PR #13), so Phase 2.5 is next.** Phase 1 closed
+2026-08-12; the owner's data entry moved out of it into **Phase 2.9**, together
+with the measurements it was always coupled to. See `ROADMAP.md`.
 
-1. **Phase 2 — the UI redesign.** Mobile layout and design flow. Start from
-   `docs/design-system.md` and `docs/design-reference.md`, which are binding
-   rather than suggestions.
-   **Know what you are giving up:** this phase used to be *fed* by the timed
-   measurements, and under the new order it ships before any of them exist. So it
-   will be designed from judgement, not from evidence about where time actually
-   goes — count 2 showed 29s and 102s between two kegs on the same screen with no
-   leg switch, and nobody knows why. Prefer changes that are cheap to revisit, and
-   leave the leg model alone: Phase 2.9 is the first thing that will genuinely
-   test it.
-2. **Phase 2.5 — OCR invoice automation.** Settle the xtraCHEF question first
-   (one hour of testing decides how much needs building). This is also the phase
-   that should shrink Phase 2.9's typing, since invoice capture is the automated
-   version of entering 90 costs by hand.
-3. **Phase 2.9 — the data and the measurements, together.** 90 unit costs, 16 case
+1. **Phase 2.5 — OCR invoice automation.** Costs come from supplier invoices,
+   and this is the automated version of typing 90 of them, so it is also what
+   shrinks Phase 2.9's data-entry burden. Build it in the order set out in
+   `docs/invoice-automation-research.md`; a Gate 1 PRD is drafted on the
+   `feat/phase-2.5-invoice-automation` branch and is **not on `main` yet** —
+   check that branch before re-deriving one. **This is the first phase that is
+   allowed AI and file storage** — `AGENTS.md` says invoice automation "reverses
+   two exclusions above", and it is the only thing that does. Settle the
+   xtraCHEF question before building (one hour of testing decides how much needs
+   building at all); the 2.5 branch's PRD records it as already settled in favour
+   of building the OCR pipeline, so reconcile the two rather than assume either.
+2. **Phase 2.9 — the data and the measurements, together.** 90 unit costs, 16 case
    sizes, par levels, vendors, 5 wine producers; then the timed count, the
    five-location walk, and rapid mode against a real camera. They were merged
    because a timed count against an uncosted catalog measures the wrong thing:
    the reorder list cannot produce a row and valuation stays near-empty, so "are
-   the numbers worth acting on" is unanswerable until the data exists. Verified
-   2026-08-12: 9 of 99 active products costed, 0 with a `case_size`, 0 par rows,
-   0 vendors.
+   the numbers worth acting on" is unanswerable until the data exists. Re-checked
+   2026-08-14: 9 of 99 active products costed, 0 with a `case_size`, 0 par rows,
+   0 vendors — unmoved since 2026-08-12.
+   **Phase 2 added to this phase's job rather than subtracting from it.** The
+   whole redesigned counting surface is new since anyone last held a phone, and
+   Phase 2 wrote down four explicit bets about where count time goes — they are
+   now §6 of `docs/phone-count-test.md`, and settling them is part of Run A and
+   Run B, not a separate exercise.
+3. **Phase 3 — go-live.** Behind both of the above. The two items on it that are
+   pure code and still open are the **standalone entrypoint**
+   (`node .next/standalone/server.js` has never been started, whatever
+   `585d2b6`'s commit message says) and the deploy pipeline, which is built and
+   has never run against a real host. `docs/go-live.md` is the gate.
 
 **No open items remain from Phases 1 and 1.5.** Items 25 and 26, both found while
-verifying, were fixed 2026-08-12 and are closed in `docs/open-items.md`.
+verifying, were fixed 2026-08-12 and are closed in `docs/open-items.md`. Phase 2
+opened three new ones, none of them urgent and none of them a correctness risk:
+**#28**, the owed `--chart-2..5` palette, not due until the first chart is drawn
+in Phase 4; **#29**, the accessibility floor asserted on `/office/catalog` only
+when Gate 1 asked for every screen; and **#30**, three table surfaces that never
+moved onto the shared primitives (`users-list.tsx` is the one that matters — no
+`scope="col"` on any header). #29 and #30 are the two Gate 1 criteria that came
+out **partial** when the phase was audited against its own contract; see
+`docs/plans/phase-2-ui-redesign/00-status.md` for that audit.
+
+The entry that used to stand first here, now done:
+
+1. ~~**Phase 2 — the UI redesign.**~~ Shipped 2026-08-14. It was designed from
+   judgement rather than from measurements, exactly as this section warned, and
+   the mitigation held: no schema, no write path, no leg-model change, and the
+   judgement calls written down as bets for 2.9 to settle.
 
 The two entries that used to stand here, both now done:
 
@@ -929,6 +1102,11 @@ sessions, valuation, reorder, three roles, multi-tenancy.
 **Deliberately out:** AI fill estimation, bottle photos, invoice OCR, Toast PMIX
 import, variance reporting, compliance packet. **The MVP contains no AI and no
 file storage** — if a task seems to need either, it is probably scope creep.
+
+**One exception, and only one: Phase 2.5.** Invoice OCR is out of the *MVP* and
+is the *next phase*, which reads as a contradiction and is not one — 2.5 is the
+phase that deliberately reverses the no-AI and no-file-storage exclusions, per
+`AGENTS.md`. Nothing else may reach for either on the strength of that.
 
 **Multi-tenant, but not multi-tenant yet:** `organization` is the tenant boundary
 and every query is scoped to it. Not built: users in more than one org, an org

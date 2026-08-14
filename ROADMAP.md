@@ -24,8 +24,8 @@ than left to be discovered.
 |---|---|
 | **1** | ~~MVP completion — locations screen, bulk cost entry~~ **DONE 2026-08-12** |
 | **1.5** | ~~Survive daily use — #14, #1b, #23, #24, reorder output~~ **DONE 2026-08-12** |
-| **2** | UI redesign — mobile layout and design flow ← **next** |
-| **2.5** | OCR invoice automation |
+| **2** | ~~UI redesign — mobile layout and design flow~~ **DONE 2026-08-14** (PR #13) |
+| **2.5** | OCR invoice automation ← **next** |
 | **2.9** | Field validation + the owner's data entry — the deferred measurements |
 | **3** | **Go-live — deploy to production** |
 | **4** | Reports, heatmap, back-office enhancements |
@@ -186,11 +186,44 @@ audit export means. Leave it.
 
 ---
 
-## Phase 2 — UI redesign · mobile layout and design flow
+## Phase 2 — UI redesign · mobile layout and design flow — **DONE 2026-08-14**
 
-The counting app's entire reason to exist is being faster than a clipboard in a
-dim bar, one-handed, with the other hand holding a bottle. The screens work; how
-well they work at pace is the open question.
+**Shipped as PR #13 (merge `9cbf64b`), nine commits.** Planned as a Gate-1-only
+variant of the 4-gate workflow — no schema, no endpoints, no business logic —
+with `docs/plans/phase-2-ui-redesign/gate-1-product.md` as the contract and
+`00-status.md` as the criteria-by-criteria close-out. Read `00-status.md` before
+anything else here; it is the only place that says which Gate 1 criteria were met
+in full, which were met on one screen rather than all of them, and which were
+deliberately deferred.
+
+**What landed:** design tokens (safe-area insets, `--spacing-row-office`, `.num`),
+sixteen new component specs in `docs/design-system.md` and the `components/ui`
+primitives they name, the mobile counting surface rebuilt to `ui-spec-mobile.md`
+with a floating bottom bar (search · scan · finish section), the back office on a
+64 px left icon rail with a shared `PageHeader` and the tables on shared
+primitives, the catalog on **TanStack Table v8 with per-role `columns` built at
+call time** (never `columnVisibility`), two-level category filters, debounced
+type-ahead search, and `prototypes/*.html` regenerated from `app/globals.css`.
+
+**What it owes.** The `--chart-2..5` palette is explicitly *owed* rather than
+guessed — the tokens carry a marker comment and no chart is drawn against them,
+which is what Gate 1 required; it comes due in Phase 4 (open item **#28**). And
+the four bets this phase made about where count time goes are now §6 of
+`docs/phone-count-test.md` for Phase 2.9 to settle.
+
+Two of the seven Gate 1 criteria closed **partial** rather than met, and they are
+written up as such rather than rounded up: the accessibility floor was asserted
+on `/office/catalog` alone when the criterion said every screen (**#29**), and
+three of seven table surfaces never moved onto the shared primitives (**#30**).
+Neither is a hazard; both have triggers in `docs/open-items.md`.
+
+**The honest limit on what shipped:** the back office was verified screen by
+screen in a real browser and the counting surface was not opened on a phone at
+all. Every phone-verified fact in `STATE.md` predates this rebuild. That is the
+single largest thing Phase 2.9 inherits.
+
+The framing this section carried while the phase was open is kept below, because
+the constraint it describes is what the phase was actually built under:
 
 > **This phase used to be fed by measurements, and as of 2026-08-13 it is not.**
 > The field-validation phase moved from 1.9 to **2.9**, so the redesign now happens
@@ -206,6 +239,11 @@ well they work at pace is the open question.
 > is the first thing that will actually test it. And where a change is a bet on
 > where time goes, write the bet down in `docs/phone-count-test.md` so 2.9 can
 > settle it rather than re-litigate it.
+
+**Both mitigations held.** Nothing in the phase touched the schema, the write
+path, or the leg model, and the bets are written down. Everything from here to
+the end of this section is the phase's original planning input, kept for the
+record — it is no longer a work list.
 
 **Start from what exists, which is more than it looks:** `docs/design-system.md`
 holds binding rules (two themes, one token set; the counting route hardcodes
