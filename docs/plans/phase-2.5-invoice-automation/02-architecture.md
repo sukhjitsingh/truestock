@@ -57,7 +57,7 @@ All server actions live in `app/actions/invoices.ts` and are called from client 
 |-----|----------|---------|
 | `processExtractionQueue` | Every 2 min | **Atomically claim** the next `queued` `extraction_job` (conditional update; zero rows = another worker won) → classify → text: pdf-inspector / scanned: Claude vision → write `invoice_line` drafts → update job status **[AR-6]** |
 | `offsiteSyncJob` | Daily 02:00 | Copy new object-storage files to offsite bucket (R2/S3-compatible) for redundancy |
-| `buildAuditPacketJob` | On-demand (triggered by `createAuditPacketAction`) | ZIP invoices + counts + manifest with SHA-256 per file → upload → email signed link |
+| `buildAuditPacketJob` | On-demand (triggered by `createAuditPacketAction`) | Read `organization_id` from the packet row, then scope **every** invoice, count, product and file query to it → ZIP + manifest with SHA-256 per file → assert one distinct org → upload → email signed link **[AR-3]** |
 
 ---
 
@@ -92,8 +92,14 @@ invoice_date, due_date, invoice_number, total_gross, total_discount, total_net,
 currency, retention_until, approved_at, approved_by,
 created_at, updated_at
 ```
+**Unique:** `(organization_id, id)` — required by the composite FKs that `invoice_line`,
+`extraction_job` and `product_cost_history` point at.
+**Composite tenant FK [AR-2]:** `(organization_id, vendor_id)` → `vendor`. The upload form
+supplies `vendor_id` from a client picker, so it is a client-supplied id like any other:
+without this FK an invoice can be filed against another tenant's vendor, and every archive
+and audit-packet query downstream then reports it under that vendor's name.
 **Indexes:** `(organization_id, status, invoice_date DESC)` — review queue; `(organization_id, vendor_id, invoice_date DESC)` — archive; `(organization_id, retention_until)` — retention sweep.
-**Queries:** `listInvoices(orgId, {status?, vendorId?, dateFrom?, dateTo?, page?, pageSize?})` — review queue + archive; `getInvoice(orgId, id)` — review screen; `findByNumber(orgId, vendorId, invoiceNumber)` — duplicate detection.
+**Queries:** `listInvoices(actor, {status?, vendorId?, dateFrom?, dateTo?, page?, pageSize?})` — review queue + archive; `getInvoice(actor, id)` — review screen; `findByNumber(actor, vendorId, invoiceNumber)` — duplicate detection. All take `Actor` and filter on `actor.organizationId`; a cross-tenant id returns `NotFoundError`, never an answer confirming the row exists.
 
 ### 3. `invoice_line`
 ```sql
@@ -117,7 +123,21 @@ id, organization_id, vendor_id, vendor_item_code, matched_product_id,
 confidence, created_at, updated_at
 ```
 **Unique:** `(organization_id, vendor_id, vendor_item_code)` — one alias per vendor code.
-**Queries:** `findAlias(orgId, vendorId, vendorItemCode)` — matching ladder rung 1; `upsertAlias(orgId, vendorId, code, productId)` — review correction persists.
+Plus `(organization_id, id)` for the composite FK `invoice_line.matched_vendor_alias_id`
+points at.
+**Composite tenant FKs [AR-2]:** `(organization_id, vendor_id)` → `vendor`,
+`(organization_id, matched_product_id)` → `product`.
+
+**This is the stickiest form of AR-2 and the one most worth guarding.** Both of this
+table's parent references arrive from the client: the review screen calls
+`upsertAlias(actor, vendorId, code, productId)` with ids the reviewer's browser supplied.
+Every other cross-tenant id in this phase does its damage once, on one invoice line. An
+alias is *remembered* — it is rung 1 of the matching ladder, so a bad `matched_product_id`
+written here is silently re-applied to every future invoice from that vendor, and each
+approval repoints cost at the same wrong product. The damage compounds while looking
+progressively more legitimate, because a high-confidence alias match is exactly what the
+review UI stops flagging.
+**Queries:** `findAlias(actor, vendorId, vendorItemCode)` — matching ladder rung 1; `upsertAlias(actor, vendorId, code, productId)` — review correction persists. Both take `Actor`; `upsertAlias` ownership-checks `vendorId` and `productId` before the write, in addition to the FKs.
 
 ### 5. `extraction_job`
 ```sql
@@ -152,13 +172,22 @@ will, since extraction can exceed 2 minutes — must never both claim one job.
 ```sql
 id, organization_id, status (building|ready|expired|failed), date_from, date_to, file_path, file_sha256, manifest_json, expires_at, created_at, completed_at
 ```
-**Queries:** `create(orgId, dateFrom, dateTo)` — on-demand; `get(orgId, id)` — poll + download.
+**Unique:** `(organization_id, id)` — required by `audit_packet_file`'s composite FK.
+**Queries:** `create(actor, dateFrom, dateTo)` — on-demand; `get(actor, id)` — poll + download, ownership-checked so one owner cannot poll or download another org's packet by id.
 
 ### 7. `audit_packet_file` (manifest line items)
 ```sql
 id, organization_id, audit_packet_id, source_table (invoice|count|product), source_id, file_path, sha256
 ```
 **Composite tenant FK [AR-2]:** `(organization_id, audit_packet_id)` → `audit_packet`.
+**`source_id` is polymorphic and therefore cannot be FK-guarded [AR-3].** It points into
+`invoice`, `count` or `product` depending on `source_table`, so the database cannot
+enforce that the referenced row belongs to `organization_id` the way it can everywhere
+else in this phase. This is the one place in the audit-packet path where tenant scoping
+rests on application code rather than a constraint — which is precisely where AR-3's leak
+lived. The compensating controls are the ones in flow E: every source query is filtered by
+the `orgId` read from the packet row, and the manifest asserts a single distinct
+`organization_id` before the ZIP is finalised. Both are required, not belt-and-braces.
 **Queries:** `insertBatch(actor, packetId, files[])` — job worker; `getManifest(actor, packetId)` — manifest JSON.
 
 ### 8. `product_cost_history` — **new; was referenced but never designed** [AR-5]
@@ -241,16 +270,30 @@ Client: listInvoicesAction({status: needs_review, page: 1, pageSize: 25})
 Client: getInvoiceAction(invoiceId)
   → invoice + lines + extraction_job (for badges) → review-invoice screen
 
-Client: reviewInvoiceAction(invoiceId, correctedLines[])
+Client: reviewInvoiceAction(invoiceId, correctedLines[])   // requireRole("owner")  [AR-7]
+  → getInvoice(actor, invoiceId)      // ownership-checked; cross-tenant ⇒ NotFoundError
+  → assertProductsOwned(actor, correctedLines.map(l => l.matched_product_id))   ← [AR-2]
+       // ONE batched ownership check, before any write, over every client-supplied
+       // product id in the payload. Cross-tenant or unknown ⇒ NotFoundError, whole
+       // request rejected. Not per-line inside the loop: a partial reject would leave
+       // some lines and aliases written and some not, with the invoice still in review.
   → arithmeticCheck(correctedLines, invoice.total_gross) → if fail: return exceptions
   → FOR each line:
        IF vendor_item_code extracted AND no alias:
-            upsert vendor_alias (vendorId, code, matchedProductId)
+            upsert vendor_alias (actor, vendorId, code, matchedProductId)
        IF product matched:
             update line.matched_product_id, matched_vendor_alias_id
   → update invoice.status = reviewed
   → return updated invoice
 ```
+
+**[AR-2] Why the check is here and not only at approval.** Approval is where a bad
+`matched_product_id` overwrites another tenant's cost, so it is tempting to check only
+there. But review is where the id is *persisted* — into the line and, worse, into
+`vendor_alias`, which then feeds rung 1 of the matching ladder on every later invoice.
+Checking only at approval means the poisoned alias is already saved and will be re-offered
+as a high-confidence match the reviewer is being trained to accept. The id is validated at
+the boundary it enters through.
 
 **D. Approve → Cost Flow (Phase D)** — [AR-4] [AR-5]
 

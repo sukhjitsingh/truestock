@@ -255,11 +255,22 @@ export interface VendorAlias {
   updated_at: Date;
 }
 
-export function findAlias(orgId: number, vendorId: number, vendorItemCode: string): 
+export function findAlias(actor: Actor, vendorId: number, vendorItemCode: string):
   | VendorAlias | null;
-export function upsertAlias(orgId: number, vendorId: number, vendorItemCode: string, productId: number): Promise<VendorAlias>;
-export function matchLinesToProducts(lines: InvoiceLine[], orgId: number): Promise<InvoiceLine[]>;
+// [AR-2] takes Actor, and ownership-checks BOTH client-supplied ids before writing.
+// A bare orgId is not enough here: it scopes the row being written but proves nothing
+// about vendorId or productId, which is exactly the existence-vs-ownership gap.
+export function upsertAlias(actor: Actor, vendorId: number, vendorItemCode: string, productId: number): Promise<VendorAlias>;
+export function matchLinesToProducts(actor: Actor, lines: InvoiceLine[]): Promise<InvoiceLine[]>;
 ```
+
+**[AR-2] `vendor_alias` is the highest-value target in this file.** It is rung 1 of the
+matching ladder and it persists, so a cross-tenant `productId` written once is re-applied
+to every subsequent invoice from that vendor — and re-offered to the reviewer as a
+high-confidence match. See `02-architecture.md` §4 for the full reasoning; the schema-side
+guard is a composite `(organization_id, vendor_id)` → `vendor` and
+`(organization_id, matched_product_id)` → `product` FK pair, and these signatures are the
+application-side half.
 
 ### 4. `lib/domain/cost-derivation.ts`
 
@@ -435,6 +446,9 @@ written to fail first against the uncorrected behaviour; none may be weakened to
 | `invoice_file_rejects_path_traversal` | A stored path containing `../` resolves outside `INVOICE_STORAGE_DIR` and is refused, not served | AR-1 |
 | `review_rejects_cross_tenant_product` | Org A submits a review line whose `matched_product_id` belongs to org B → `NotFoundError`; **org B's `current_unit_cost` is unchanged** | AR-2 |
 | `invoice_line_fk_refuses_cross_tenant` | Inserting an `invoice_line` with a foreign-org `matched_product_id` fails at the database (1452), with the app-layer check removed | AR-2 |
+| `alias_refuses_cross_tenant_product` | `upsertAlias` with org B's `productId` → `NotFoundError`, **and no `vendor_alias` row is written** — the alias persists, so a rejected write must leave nothing behind | AR-2 |
+| `alias_refuses_cross_tenant_vendor` | `upsertAlias` with org B's `vendorId` → `NotFoundError`; composite FK also refuses it (1452) with the app check removed | AR-2 |
+| `invoice_refuses_cross_tenant_vendor` | Uploading an invoice against org B's `vendor_id` → `NotFoundError`; the archive never lists it under that vendor | AR-2 |
 | `get_invoice_cross_tenant_is_not_found` | Org A requesting org B's `invoice_id` gets `NotFoundError` — never a response that confirms the row exists | AR-2 |
 | `audit_packet_excludes_other_tenants` | Two orgs with invoices on **overlapping dates**; org A's ZIP contains only org A's invoices, and the manifest has exactly one distinct `organization_id` | AR-3 |
 | `audit_packet_counts_are_scoped` | Counts included in the packet are org-scoped on the same predicate as invoices | AR-3 |
