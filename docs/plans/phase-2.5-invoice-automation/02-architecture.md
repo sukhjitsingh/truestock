@@ -36,27 +36,45 @@ Cites `01-product.md`, `docs/invoice-automation-research.md` (Parts 1–5), and 
 
 All server actions live in `app/actions/invoices.ts` and are called from client components via `runAction`. No REST endpoints; Next.js Server Actions are the transport.
 
-| Action | Verb (conceptual) | Purpose |
-|--------|-------------------|---------|
-| `uploadInvoiceAction` | POST | Accept file/photo/email-forward metadata + declared size/SHA-256 → create `invoice` (status `uploaded`) + `extraction_job` (status **`awaiting_upload`**, not yet claimable) → return upload URL **[AR-6]** |
-| `confirmUploadAction` | POST | **New.** Verify the stored object exists and its size + SHA-256 match what was declared → only then move `extraction_job` to `queued` **[AR-6]** |
-| `listInvoicesAction` | GET | Paginated list for review queue / archive with filters (status, vendor, date range). Owner gets monetary columns; manager gets the redacted query **[AR-7]** |
-| `getInvoiceAction` | GET | Single invoice with lines + extraction metadata for review screen. **Owner-only** — the screen is cost data **[AR-7]** |
-| `reviewInvoiceAction` | POST | **Owner** submits corrected line table → ownership-check every nested `matched_product_id` **[AR-2]** → validate arithmetic → if pass: upsert `vendor_alias` matches → update `invoice` lines, status `reviewed`; if fail: return exception list |
-| `approveInvoiceAction` | POST | Owner approves reviewed invoice → **single transaction**: compare-and-set `reviewed`→`approved`, then write `product.current_unit_cost` + `product_cost_history` **[AR-4] [AR-5]**. Replay returns the original success |
-| `GET /api/invoices/[id]/file` | GET (route handler) | **New.** The only path to invoice bytes — owner-only, ownership-checked, path-traversal-guarded, streamed from outside the web root **[AR-1]** |
-| `rejectInvoiceAction` | POST | Owner returns to vendor / re-extract → status `rejected` with reason |
-| `createAuditPacketAction` | POST | Owner requests date-range packet → create `audit_packet` (status `building`) → enqueue background job → return packet ID |
-| `getAuditPacketAction` | GET | Poll packet status → when `ready`, return signed download URL (TTL 10 min) |
-| `getExtractionStatusAction` | GET | Poll `extraction_job` status for review queue "processing" badge |
-| `resendToExtractionAction` | POST | Re-queue a failed/rejected invoice for re-extraction (different OCR path) |
+**[AR-7] Role is a column here, not a sentence in the Purpose cell.** The original
+role contract survived review because it lived in prose — one bullet at the bottom of the
+document said "manager = upload + review (no cost)" while the screen two sections above it
+rendered per-line cost. Every action below states its required role explicitly, in its own
+column, so the contract can be read down a column and checked mechanically against
+`lib/authz.ts` rather than inferred from a paragraph. **An action with no role is a bug in
+this table, not a permissive default.**
+
+| Action | Verb | Role | Purpose |
+|--------|------|------|---------|
+| `uploadInvoiceAction` | POST | owner, manager | Accept file/photo/email-forward metadata + declared size/SHA-256 → create `invoice` (status `uploaded`) + `extraction_job` (status **`awaiting_upload`**, not yet claimable) → return upload URL **[AR-6]** |
+| `confirmUploadAction` | POST | owner, manager | **New.** Verify the stored object exists and its size + SHA-256 match what was declared → only then move `extraction_job` to `queued` **[AR-6]** |
+| `listInvoicesAction` | GET | owner | Paginated list **with monetary columns** for review queue / archive **[AR-7]** |
+| `listInvoicesRedactedAction` | GET | manager | **Separate action, separate query.** Vendor, date, invoice number, status, line descriptions and quantities. Selects no monetary column — the redaction is in the SQL, not in a filter over a full row **[AR-7]** |
+| `getInvoiceAction` | GET | **owner only** | Single invoice with lines + extraction metadata for review screen. The screen *is* cost data **[AR-7]** |
+| `reviewInvoiceAction` | POST | **owner only** | Submit corrected line table → ownership-check every nested `matched_product_id` **[AR-2]** → validate arithmetic → if pass: upsert `vendor_alias` matches → update lines, CAS `needs_review`→`reviewed`; if fail: return exception list |
+| `approveInvoiceAction` | POST | **owner only** | **Single transaction**: compare-and-set `reviewed`→`approved`, then write `product.current_unit_cost` + `product_cost_history` **[AR-4] [AR-5]**. Replay returns the original success |
+| `GET /api/invoices/[id]/file` | GET (route handler) | **owner only** | **New.** The only path to invoice bytes — ownership-checked, path-traversal-guarded, streamed from outside the web root **[AR-1]** |
+| `rejectInvoiceAction` | POST | **owner only** | CAS from `needs_review` or `reviewed` → `rejected` with reason. **Never from `approved`** — see the invoice state machine below **[AR-4]** |
+| `createAuditPacketAction` | POST | **owner only** | Create `audit_packet` (status `building`) → enqueue background job → return packet ID |
+| `getAuditPacketAction` | GET | **owner only** | Poll packet status, ownership-checked → when `ready`, return signed download URL (TTL 10 min) |
+| `getExtractionStatusAction` | GET | owner, manager | Poll `extraction_job` status + `phase` for the queue's "processing" badge. Returns status only — **never `error_message`**, which can quote invoice text **[AR-7]** |
+| `resendToExtractionAction` | POST | **owner only** | Re-extract a `failed` job or a `rejected` invoice → **opens a new `extraction_job` row**, never mutates the old one **[AR-6]** |
+
+**Why `listInvoices` split into two actions [AR-7].** The earlier version was one action
+that branched on role internally. That is the shape that leaks: the monetary columns are
+already in the result set, and "manager" is a filter applied afterwards — one refactor, one
+new field added to a shared serializer, one debug log of the pre-filter row, and the cost
+data is out. Two actions calling two queries means the manager path never loads a monetary
+column into memory at all, so there is nothing to leak. Redaction that happens after the
+`SELECT` is not redaction.
 
 **Cron jobs (internal, no client call):**
 
 | Job | Schedule | Purpose |
 |-----|----------|---------|
 | `processExtractionQueue` | Every 2 min | **Atomically claim** the next `queued` `extraction_job` (conditional update; zero rows = another worker won) → classify → text: pdf-inspector / scanned: Claude vision → write `invoice_line` drafts → update job status **[AR-6]** |
-| `offsiteSyncJob` | Daily 02:00 | Copy new object-storage files to offsite bucket (R2/S3-compatible) for redundancy |
+| `reapStuckJobs` | Every 5 min | **New [AR-6].** Return jobs stuck `running` past a 15-minute claim timeout to `queued` and increment `retry_count`; at 3 attempts move to `failed` with `'worker timeout'`. Without this a crashed worker strands its invoice in "processing" forever, silently |
+| `offsiteSyncJob` | Daily 02:00 | Copy new object-storage files to offsite bucket (R2/S3-compatible) for redundancy. **Reads from `INVOICE_STORAGE_DIR`; the destination bucket must be private [AR-1]** |
 | `buildAuditPacketJob` | On-demand (triggered by `createAuditPacketAction`) | Read `organization_id` from the packet row, then scope **every** invoice, count, product and file query to it → ZIP + manifest with SHA-256 per file → assert one distinct org → upload → email signed link **[AR-3]** |
 
 ---
@@ -92,6 +110,40 @@ invoice_date, due_date, invoice_number, total_gross, total_discount, total_net,
 currency, retention_until, approved_at, approved_by,
 created_at, updated_at
 ```
+**[AR-4] The invoice status machine — declared here, once.** AR-6 forced this discipline
+onto `extraction_job` and stopped at the job table. The invoice status is the one with
+money attached, and it was left as a bare six-value enum with no transitions defined
+anywhere in any gate document. Same defect, higher stakes: the reason `ready_for_classify`
+was catchable is that someone had written the job lifecycle down to compare it against.
+
+```
+uploaded ──► processing ──► needs_review ──► reviewed ──► approved   (terminal)
+                  │               │              │
+                  │               └──────────────┴──► rejected  ──► (re-extract)
+                  └──► needs_review (extraction failed, flagged for manual entry)
+```
+
+Rules, each enforced as a compare-and-set on the transition, never a bare `SET status`:
+
+| From | To | Guard |
+|---|---|---|
+| `uploaded` | `processing` | worker claimed the job |
+| `processing` | `needs_review` | extraction wrote lines, or failed and needs manual entry |
+| `needs_review` | `reviewed` | arithmetic check passed; owner submitted **[AR-7]** |
+| `needs_review` \| `reviewed` | `rejected` | owner, with reason |
+| `reviewed` | `approved` | owner; the CAS in flow D; **the only transition that writes cost** |
+| `rejected` | `processing` | `resendToExtractionAction`, via a **new** `extraction_job` |
+
+**`approved` is terminal and nothing transitions out of it.** This is the rule most worth
+stating, because the endpoint list contained `rejectInvoiceAction` with no guard at all —
+so rejecting an already-approved invoice was reachable. The result would have been quiet
+and unrecoverable: `product_cost_history` is append-only (invariants 1, 6), so the cost
+rows stay and `product.current_unit_cost` keeps the value the invoice set, while the
+invoice itself now reads `rejected`. Every valuation downstream is then costed from a
+document the system says it refused. A correction to an approved invoice is a **new
+adjustment record**, exactly as invariant 1 requires for closed counts — never a status
+edit.
+
 **Unique:** `(organization_id, id)` — required by the composite FKs that `invoice_line`,
 `extraction_job` and `product_cost_history` point at.
 **Composite tenant FK [AR-2]:** `(organization_id, vendor_id)` → `vendor`. The upload form
@@ -99,7 +151,7 @@ supplies `vendor_id` from a client picker, so it is a client-supplied id like an
 without this FK an invoice can be filed against another tenant's vendor, and every archive
 and audit-packet query downstream then reports it under that vendor's name.
 **Indexes:** `(organization_id, status, invoice_date DESC)` — review queue; `(organization_id, vendor_id, invoice_date DESC)` — archive; `(organization_id, retention_until)` — retention sweep.
-**Queries:** `listInvoices(actor, {status?, vendorId?, dateFrom?, dateTo?, page?, pageSize?})` — review queue + archive; `getInvoice(actor, id)` — review screen; `findByNumber(actor, vendorId, invoiceNumber)` — duplicate detection. All take `Actor` and filter on `actor.organizationId`; a cross-tenant id returns `NotFoundError`, never an answer confirming the row exists.
+**Queries:** `listInvoicesForOwner(actor, filters)` and `listInvoicesRedacted(actor, filters)` — **two functions, two SELECTs; there is deliberately no role-agnostic `listInvoices`** [AR-7]; `getInvoice(actor, id)` — review screen, owner-only; `findByNumber(actor, vendorId, invoiceNumber)` — duplicate detection. All take `Actor` and filter on `actor.organizationId`; a cross-tenant id returns `NotFoundError`, never an answer confirming the row exists.
 
 ### 3. `invoice_line`
 ```sql
@@ -165,8 +217,40 @@ object's byte length and SHA-256 match what was declared at upload.
 (`SET status='running', claimed_at=NOW(), claimed_by=:worker WHERE status='queued' ... LIMIT 1`),
 and a zero-row result means another worker won. Two cron ticks overlapping — which they
 will, since extraction can exceed 2 minutes — must never both claim one job.
+**[AR-6] A claimed job that never finishes must come back.** The lifecycle as first
+corrected has no edge out of `running` except `done` or `failed`, both written by the
+worker — so if the worker dies mid-extraction (deploy, OOM on a 10-page scan, Hostinger
+restarting `lsnode`), the row stays `running` forever. Nothing re-claims it, because the
+claim predicate is `status='queued'`. The invoice sits in the queue showing "processing"
+indefinitely and no error is ever raised, which is the same silent shape as every other
+finding in this review: the feature looks busy rather than broken, and the only symptom is
+an invoice nobody notices is missing weeks later.
+
+`claimed_at` was described as making a stuck job "diagnosable". Diagnosable is not
+recoverable. The reaper is the missing edge:
+
+```
+running ──(claimed_at < NOW() - INTERVAL 15 MINUTE)──► queued   -- retry_count += 1
+running ──(same, but retry_count >= 3)──────────────► failed    -- error: 'worker timeout'
+```
+
+Reclaiming is safe because extraction is idempotent by construction: it writes
+`invoice_line` **drafts** keyed by `(invoice_id, line_number)` and the invoice has not yet
+been reviewed or approved, so a second pass overwrites drafts rather than duplicating
+anything. Nothing downstream of extraction has run.
+
+**`retry_count` is now bounded, and it is bounded here.** It was declared in the schema and
+never incremented or read by any transition — a column that looks like a safety limit and
+enforces nothing. Three attempts, then `failed` with the reason recorded, so a PDF that
+reliably kills the worker stops taking the queue down with it on every sweep.
+
+**`updateStatus` must not be a hole in the machine.** As written it accepts any status for
+any job and would happily write `done → queued` or skip `running` entirely, which defeats
+the point of declaring the lifecycle. It takes the expected current status and performs a
+conditional update; an unexpected transition is an error, not a silent write.
+
 **Composite tenant FK [AR-2]:** `(organization_id, invoice_id)` → `invoice`.
-**Queries:** `claimNextJob(workerId)` — cron worker, atomic as above; `updateStatus(id, status, data?)` — pipeline steps; `getByInvoice(actor, invoiceId)` — review queue badge.
+**Queries:** `claimNextJob(workerId)` — cron worker, atomic as above; `updateStatus(id, from, to, data?)` — pipeline steps, transition-guarded; `reapStuckJobs()` — the timeout sweep above; `getByInvoice(actor, invoiceId)` — review queue badge.
 
 ### 6. `audit_packet`
 ```sql
@@ -283,7 +367,9 @@ Client: reviewInvoiceAction(invoiceId, correctedLines[])   // requireRole("owner
             upsert vendor_alias (actor, vendorId, code, matchedProductId)
        IF product matched:
             update line.matched_product_id, matched_vendor_alias_id
-  → update invoice.status = reviewed
+  → CAS invoice.status: needs_review → reviewed        ← not a bare SET  [AR-4]
+       // zero rows ⇒ it was approved or rejected while this reviewer had the screen
+       // open ⇒ return a conflict the UI can show, never a silent overwrite
   → return updated invoice
 ```
 
@@ -324,9 +410,17 @@ Client: approveInvoiceAction(invoiceId)  // requireRole("owner") — cost write,
       FOR each line WHERE line_type = 'product' AND matched_product_id IS NOT NULL:
            unitCost = deriveUnitCost(line)   // deposits excluded — invariant
            if (unitCost === null) continue
+
+           // previous_unit_cost is READ INSIDE THE TRANSACTION, immediately before the
+           // write, from the row being updated. [AR-5]
+           prev = SELECT current_unit_cost FROM product
+                    WHERE id = line.matched_product_id
+                      AND organization_id = actor.organizationId
+                    FOR UPDATE            -- ← serialises two invoices touching one product
+
            INSERT INTO product_cost_history (
              organization_id, product_id, source_invoice_id, source_invoice_line_id,
-             unit_cost, previous_unit_cost, effective_at, created_by)
+             unit_cost, previous_unit_cost = prev, effective_at, created_by)
            -- UNIQUE(source_invoice_line_id) ⇒ a replay rolls the whole tx back
            UPDATE product SET current_unit_cost = unitCost
              WHERE id = line.matched_product_id
@@ -345,6 +439,13 @@ Four things this fixes, in order of how quietly they would have failed:
   approvals: one updates a row, the other updates zero and returns the original success.
 - **`UNIQUE(source_invoice_line_id)`** — a retry that somehow passes the CAS still cannot
   duplicate history; the insert fails and the transaction rolls back.
+- **`previous_unit_cost` is read in the transaction, `FOR UPDATE`** — the earlier version
+  listed the column in the `INSERT` and never said where the value came from. Read outside
+  the transaction it is stale, and two invoices approved close together that touch the same
+  product both record the *same* "previous" cost. The history then shows two jumps from one
+  starting price instead of a chain, and the price-jump badge — the whole reason the column
+  exists — computes against the wrong baseline. `FOR UPDATE` serialises them so the second
+  approval sees what the first actually wrote.
 
 **E. Audit Packet (Phase E — on-demand)**
 ```

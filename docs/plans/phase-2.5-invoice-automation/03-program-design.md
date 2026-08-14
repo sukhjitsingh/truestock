@@ -45,8 +45,35 @@ export type InvoiceStatus =
   | "processing" 
   | "needs_review" 
   | "reviewed" 
-  | "approved" 
+  | "approved"      // TERMINAL — nothing transitions out of it
   | "rejected";
+
+// [AR-4] The transitions are declared, not implied. AR-6 forced this on the job
+// lifecycle and stopped there; this is the status with money attached.
+// See 02-architecture.md §2 for the reasoning.
+export const INVOICE_TRANSITIONS: Record<InvoiceStatus, readonly InvoiceStatus[]> = {
+  uploaded:     ["processing"],
+  processing:   ["needs_review"],
+  needs_review: ["reviewed", "rejected"],
+  reviewed:     ["approved", "rejected"],
+  approved:     [],                        // ← terminal. Corrections are new records.
+  rejected:     ["processing"],            // re-extract opens a NEW extraction_job
+} as const;
+
+// Every status write goes through a compare-and-set on the expected current value.
+// Zero rows affected is a conflict to surface, never a silent no-op.
+export function transitionInvoice(
+  actor: Actor,
+  invoiceId: number,
+  from: InvoiceStatus | InvoiceStatus[],
+  to: InvoiceStatus,
+  tx?: Transaction,
+): Promise<{ ok: true; invoice: Invoice } | { ok: false; reason: "conflict"; actual: InvoiceStatus }>;
+
+export interface RejectInput {
+  invoice_id: number;
+  reason: string;   // required — a rejection with no reason is unauditable
+}
 
 export interface InvoiceLine {
   line_number: number;
@@ -146,7 +173,10 @@ Two structural defences, because either alone can be forgotten:
 export function getInvoice(actor: Actor, invoiceId: number): Promise<Invoice>;
 export function reviewInvoice(actor: Actor, input: ReviewInput): Promise<Invoice>;
 export function approveInvoice(actor: Actor, input: ApproveInput): Promise<Invoice>;
-export function listInvoices(actor: Actor, filters: InvoiceFilters): Promise<Page<InvoiceRow>>;
+export function rejectInvoice(actor: Actor, input: RejectInput): Promise<Invoice>;
+export function resendToExtraction(actor: Actor, invoiceId: number): Promise<ExtractionJob>;
+// NOTE: there is deliberately no plain `listInvoices`. See the AR-7 split below —
+// a single list function is what the role-branching version would be built on.
 
 // 2. Nested ids are resolved through an ownership assertion before use.
 //    Cross-tenant ⇒ NotFoundError, never a response that confirms the row exists.
@@ -233,7 +263,25 @@ export function claimNextJob(workerId: string): Promise<ExtractionJob | null>;
 // match what was declared at upload. This is the awaiting_upload → queued edge.
 export function markUploadConfirmed(actor: Actor, invoiceId: number): Promise<void>;
 
-export function updateStatus(id: number, status: ExtractionJobStatus, data?: unknown): Promise<void>;
+// [AR-6] Transition-guarded. The previous signature accepted any status for any job,
+// so `done → queued` or skipping `running` entirely were both writable — which defeats
+// the point of having declared the lifecycle at all.
+export function updateStatus(
+  id: number,
+  from: ExtractionJobStatus,
+  to: ExtractionJobStatus,
+  data?: unknown,
+): Promise<void>;   // unexpected current status ⇒ throws, never a silent write
+
+// [AR-6] The missing edge out of `running`. A worker that dies mid-extraction (deploy,
+// OOM on a 10-page scan, lsnode restart) otherwise strands its job in `running` forever:
+// the claim predicate is status='queued', so nothing ever re-claims it, and the invoice
+// shows "processing" indefinitely with no error raised anywhere.
+//   running + claimed_at < NOW() - 15 min  →  queued, retry_count += 1
+//   ...and at retry_count >= 3             →  failed, error 'worker timeout'
+// Safe to re-run: extraction writes invoice_line DRAFTS keyed (invoice_id, line_number),
+// and nothing downstream has run, so a second pass overwrites rather than duplicates.
+export function reapStuckJobs(): Promise<{ requeued: number; failed: number }>;
 export function parseLinesFromMarkdown(markdown: string): InvoiceLine[];
 export function parseLinesFromVision(json: unknown): InvoiceLine[];
 export function arithmeticCheck(lines: InvoiceLine[], expectedTotal: number): 
@@ -334,7 +382,8 @@ app/actions/invoices.ts:reviewInvoiceAction()
   → lib/validation/invoices.ts:reviewInvoiceSchema.parse()
   → lib/domain/invoices.ts:updateLines(invoiceId, correctedLines[])
   → FOR each line: lib/domain/matching.ts:upsertAlias() if vendor_item_code extracted
-  → UPDATE invoice.status = reviewed
+  → transitionInvoice(actor, id, "needs_review", "reviewed")   ← CAS, not a bare SET [AR-4]
+       // zero rows ⇒ conflict surfaced to the UI, never an overwrite of approved/rejected
   → return updated invoice
 
 app/actions/invoices.ts:approveInvoiceAction()          // [AR-4] [AR-5]
@@ -462,6 +511,16 @@ written to fail first against the uncorrected behaviour; none may be weakened to
 | `job_claim_is_atomic` | Two workers claiming concurrently: exactly one gets the job, the other gets `null` | AR-6 |
 | `job_status_enum_is_closed` | Writing `ready_for_classify` (or any undeclared value) is rejected — the value that existed only in Slice 1 | AR-6 |
 | `manager_invoice_payload_has_no_money` | The manager response object contains **no** monetary field and no price-derived badge — asserted over the serialized payload, so adding a column to the query fails the test | AR-7 |
+| `approved_invoice_cannot_be_rejected` | `rejectInvoice` on an `approved` invoice → conflict, status unchanged. Otherwise the cost rows stay (history is append-only) while the invoice reads `rejected`, and valuation is costed from a document the system says it refused | AR-4 |
+| `invoice_transition_table_is_exhaustive` | Every `(from, to)` pair not in `INVOICE_TRANSITIONS` is refused by `transitionInvoice`, asserted by iterating the full 6×6 matrix rather than spot-checking | AR-4 |
+| `review_conflicts_when_status_moved` | Reviewer holds the screen while the invoice is approved elsewhere → the review CAS affects zero rows and returns a conflict, not a silent overwrite of the approved state | AR-4 |
+| `previous_unit_cost_chains` | Two invoices approved back-to-back for one product record `previous_unit_cost` as a **chain** (A→B, B→C), not two jumps from the same baseline — the failure the `FOR UPDATE` read prevents | AR-5 |
+| `stuck_running_job_is_reaped` | A job left `running` with `claimed_at` older than the timeout returns to `queued` with `retry_count` incremented, and is then claimable again | AR-6 |
+| `reaped_job_fails_after_three_tries` | The same job reaped a 3rd time lands in `failed` with `'worker timeout'`, rather than cycling the queue forever | AR-6 |
+| `job_transition_is_guarded` | `updateStatus(id, 'done', 'queued')` and any other undeclared edge throws; the lifecycle cannot be bypassed by the pipeline's own helper | AR-6 |
+| `resend_opens_new_job` | `resendToExtraction` creates a **new** `extraction_job` row and leaves the old one's `error_message` and `retry_count` intact for diagnosis | AR-6 |
+| `extraction_status_hides_error_message` | `getExtractionStatusAction` as manager returns status and phase but never `error_message`, which can quote invoice text and therefore cost data | AR-7 |
+| `no_plain_list_invoices_export` | `lib/domain/invoices.ts` exports no role-agnostic `listInvoices` — the function a future role-branching implementation would be built on | AR-7 |
 | `manager_cannot_open_review_screen` | `getInvoiceAction` and `approveInvoiceAction` return 403 for manager | AR-7 |
 
 **Test environment:** real MariaDB (testcontainers), node:22-slim Docker, same Hostinger arch assumptions.

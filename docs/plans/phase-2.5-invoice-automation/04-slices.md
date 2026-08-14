@@ -60,20 +60,40 @@ The phase order (from research §3.8, PRD Gate 1 covers A–E; F = auto‑approv
 - `app/actions/invoices.ts:reviewInvoiceAction()` renders the review-invoice screen with the extracted lines, per-line gross/discount/net editable, and exception badges across the top (**price jump**, **duplicate**, **doesn't add up**, **unmatched item**).
 - **[AR-7] This screen is owner-only.** Per-line gross/discount/net, invoice totals, and the **price jump** badge are all supplier cost data, and `lib/authz.ts:140` already defines `canSeeCost()` as `role === "owner"`. The earlier plan gave managers "review (no cost)", which this screen makes impossible to satisfy — a price-jump badge leaks the direction and rough size of a cost change even with the numbers blanked. Managers keep **upload** plus a **redacted list** (vendor, date, invoice number, status, line descriptions and quantities) served by a *separate query that never selects a monetary column*, so redaction cannot be undone by a later UI change.
 - **[AR-2]** `reviewInvoiceAction` ownership-checks **every** `matched_product_id` in the submitted payload — as one set query, before writing anything. A foreign key proves a row exists, not whose it is.
+- `rejectInvoiceAction` (owner) — CAS `needs_review` | `reviewed` → `rejected`, reason required. **Refused from `approved`** **[AR-4]**.
+- `resendToExtractionAction` (owner) — opens a **new** `extraction_job` (`awaiting_upload` is skipped; the file is already confirmed, so it starts `queued`) and leaves the previous job's `error_message` and `retry_count` intact for diagnosis **[AR-6]**.
+
+> Both actions appeared in the Gate 2 endpoint table and the Gate 3 action list but were
+> in **no slice**, so nothing built them and nothing tested them. They are here because
+> this is the slice that owns the review screen's Return button.
 
 **What the user can see:**
 - After the 2‑min cron fires, the review queue populates with invoices that have `status = needs_review`.
 - Clicking an invoice shows the line table with auto‑extracted quantities, descriptions, and gross/discount/net.
 - Exception badges appear where the arithmetic check failed or the cross‑check flagged a drop.
-- The user can edit a line, click **Approve** (status → `reviewed`) or **Return** (status → `uploaded` for re‑extract).
+- The user can edit a line, click **Approve** (CAS `needs_review` → `reviewed`) or **Return** (CAS `needs_review` → `rejected` with a reason, which is the re-extract entry point).
+
+> **[AR-4] This bullet previously read "Return (status → `uploaded` for re-extract)".**
+> `needs_review → uploaded` is not an edge in the invoice state machine — there is no path
+> back to `uploaded` at all, because `uploaded` means "no file confirmed yet". This is the
+> exact defect `ready_for_classify` was: a slice writing a status value the declared
+> machine does not contain. It survived the first correction because AR-6 only made us
+> write down the *job* lifecycle, and this is the *invoice* one. Re-extract is
+> `rejected → processing` via a new `extraction_job`.
 
 **Acceptance criteria:**
 - Cron processes one job: `extraction_job` → `done`; `invoice_line` drafts exist; `invoice.status = needs_review`.
 - Review-invoice screen renders with extracted lines + badges.
 - `reviewInvoiceAction` with corrected lines → arithmetic passes → `invoice.status = reviewed`.
+- `cron: reapStuckJobs()` (every 5 min) returns timed-out `running` jobs to `queued` and fails them at 3 attempts **[AR-6]**.
 - **Adversarial (must fail first):**
   - `job_claim_is_atomic` — two workers claiming concurrently: exactly one gets the job **[AR-6]**.
+  - `stuck_running_job_is_reaped` — kill a worker mid-extraction; the job returns to `queued` and completes on the next sweep instead of stranding the invoice in "processing" forever **[AR-6]**.
+  - `reaped_job_fails_after_three_tries` — a reliably-fatal PDF lands in `failed`, rather than re-entering the queue on every sweep **[AR-6]**.
+  - `job_transition_is_guarded` — `updateStatus(id, 'done', 'queued')` throws; the pipeline's own helper cannot bypass the lifecycle **[AR-6]**.
+  - `review_conflicts_when_status_moved` — the review CAS affects zero rows when the invoice moved on, and returns a conflict rather than overwriting **[AR-4]**.
   - `manager_cannot_open_review_screen` — `getInvoiceAction` returns 403 for manager **[AR-7]**.
+  - `extraction_status_hides_error_message` — the manager-visible status poll never returns `error_message`, which can quote invoice text **[AR-7]**.
   - `manager_invoice_payload_has_no_money` — asserted over the **serialized** manager payload, so adding a monetary column to the query fails the test rather than silently shipping **[AR-7]**.
   - `get_invoice_cross_tenant_is_not_found` — org A requesting org B's invoice gets `NotFoundError`, never a response confirming the row exists **[AR-2]**.
 
@@ -111,14 +131,15 @@ The phase order (from research §3.8, PRD Gate 1 covers A–E; F = auto‑approv
   - **First**, compare-and-set `invoice.status` `reviewed` → `approved` (also stamping `approved_at`, `approved_by`), scoped to `actor.organizationId`. **Zero rows affected means it was already approved — return the original success, not an error.** This CAS is the concurrency gate; everything below only runs if it won.
   - Then FOR each `line WHERE line_type = product AND matched_product_id`:
     - `lib/domain/cost-derivation.ts:deriveUnitCost(line)` → `raw_net / qty / pack_size` (deposits always return `null` per invariant; `null` ⇒ skip).
+    - Read `previous_unit_cost` **inside the transaction**, `SELECT current_unit_cost ... FOR UPDATE` on the product row being written **[AR-5]**. Read outside it, two invoices approved close together for the same product both record the same "previous" cost, and the price-jump badge — the only reason the column exists — compares against the wrong baseline.
     - `INSERT INTO product_cost_history (organization_id, product_id, source_invoice_id, source_invoice_line_id, unit_cost, previous_unit_cost, effective_at, created_by)` — append‑only, **`UNIQUE(source_invoice_line_id)`** so a replay rolls the transaction back rather than doubling history **[AR-4]**.
     - `UPDATE product SET current_unit_cost = :unitCost WHERE id = :matchedProductId AND organization_id = actor.organizationId` — note the **real column name** and the tenant-scoped write **[AR-5] [AR-2]**.
   - `retention_until` already set at upload; no-op if already set.
 - Alert logic in the review UI: if a line's `raw_discount / raw_gross > 0.5`, badge **"discount > 50%"** appears; if `raw_net < 0`, badge **"negative net"** appears (should not happen, but the check exists).
 
 **What the user can see:**
-- After approving an invoice, the product catalog (back‑office list) now shows `unit_cost` for the first time — a real number, not typed by hand.
-- The valuation & reorder list (Phase 3) now reads from `product.unit_cost` instead of showing `null`.
+- After approving an invoice, the product catalog (back‑office list) now shows **`current_unit_cost`** for the first time — a real number, not typed by hand.
+- The valuation & reorder list (Phase 3) now reads from **`product.current_unit_cost`** instead of showing `null`. *(Both bullets said `unit_cost` until 2026-08-14 — the column AR-5 established does not exist. The acceptance criteria below already used the real name, so this slice contradicted itself.)*
 - In the review screen for a future invoice, if a line has a discount > 50%, a **discount > 50%** badge appears; the user can review and override if needed.
 
 **Acceptance criteria:**
@@ -133,6 +154,9 @@ The phase order (from research §3.8, PRD Gate 1 covers A–E; F = auto‑approv
   - `approve_concurrent_applies_once` — two simultaneous approvals apply costs once **[AR-4]**.
   - `approve_rolls_back_on_midway_failure` — a failure on line 3 of 5 leaves zero cost rows and the invoice still `reviewed` **[AR-4]**.
   - `schema_matches_live_columns` — migration applies clean from empty; `vendor` is not recreated **[AR-5]**.
+  - `approved_invoice_cannot_be_rejected` — `approved` is terminal; rejecting it is refused. Otherwise the cost rows stay (append-only) while the invoice reads `rejected` **[AR-4]**.
+  - `previous_unit_cost_chains` — two approvals for one product record A→B then B→C, not two jumps from the same baseline **[AR-5]**.
+  - `no_reference_to_unit_cost_column` — a grep-style assertion that no query names `product.unit_cost` or `unit_cost_updated_at`, the two columns AR-5 found referenced but nonexistent **[AR-5]**.
 
 ---
 
@@ -193,7 +217,7 @@ The phase order (from research §3.8, PRD Gate 1 covers A–E; F = auto‑approv
 | 1 | A (Archive) | User uploads a file → it appears in the archive list |
 | 2 | B (Extraction + Review) | Review queue shows extracted lines + exception badges; user can approve/return |
 | 3 | C (Matching) | Alias persists across invoices; next invoice from same vendor already matched |
-| 4 | D (Cost Flow + Alerts) | Product catalog shows `unit_cost`; valuation & reorder list work |
+| 4 | D (Cost Flow + Alerts) | Product catalog shows `current_unit_cost`; valuation & reorder list work |
 | 5 | E (Audit Packet) | Owner requests export → email with signed ZIP link arrives; download works |
 
 **Banned:** Horizontal building — do not implement all database tables, then all API endpoints, then all UI pages, then start testing. Each slice must be **vertically** thin but end-to-end: a user can see a tangible result after each one.

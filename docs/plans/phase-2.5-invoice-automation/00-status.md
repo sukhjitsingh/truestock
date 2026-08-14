@@ -23,9 +23,25 @@ point: they cannot see a defect in a design that has no code yet.
 | AR-6 | *high* — three incompatible job-state vocabularies; job claimable before its file was uploaded | One machine `awaiting_upload → queued → running → done\|failed`; queued only after size + SHA-256 verification; atomic claim |
 | AR-7 | *high* — "manager = review, no cost" is unsatisfiable; the review screen is entirely cost data | Review and approval are owner-only (matching `canSeeCost()`); managers get upload + a separately-queried redacted list with no monetary column |
 
+### Second pass, 2026-08-14 — twelve more gaps, same shape
+
+Re-auditing each finding against the *rule* it implied (rather than the instance it named)
+found four more AR-2 gaps and eight across AR-4 → AR-7. Full detail in the review doc; the
+two that matter most:
+
+- **The `invoice` status had no declared state machine** — six enum values, no transitions,
+  in any gate doc. AR-6 forced that discipline onto `extraction_job` and stopped there.
+  `approved` is now terminal, every write is a compare-and-set, and Slice 2's Return
+  button no longer writes `status → uploaded`, an edge that does not exist.
+- **`vendor_alias` had no tenant foreign key at all** — and it is the one table whose bad
+  rows persist and re-apply to every future invoice from that vendor.
+
+Both passes are documentation-only; no implementation code exists yet.
+
 **Before re-approval:** regenerate the migration through drizzle-kit against the corrected
 schema, and confirm the adversarial tests in Gate 3's test plan fail against the
-uncorrected behaviour first.
+uncorrected behaviour first. The Gate 3 adversarial table now holds **32** tests (19 from
+the first pass, 3 from the AR-2 audit, 10 from the AR-4→AR-7 audit).
 
 ## Slices
 - [ ] Slice 1 — tracer bullet: the Hostinger native-binary spike (`@firecrawl/pdf-inspector` loads under `output: 'standalone'`)
