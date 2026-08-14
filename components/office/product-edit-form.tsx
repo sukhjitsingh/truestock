@@ -6,6 +6,8 @@ import { updateProductAction, deactivateProductAction } from "@/app/actions/cata
 import type { ProductSummary, VendorSummary } from "@/lib/domain/catalog";
 import { bottleSizesFor, isPresetSizeMl } from "@/lib/bottle-sizes";
 import { isCountedByCase } from "@/lib/pack-level";
+import { subcategoryOptions } from "@/lib/subcategories";
+import { formatCostForInput } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/field";
 
@@ -37,6 +39,7 @@ export function ProductEditForm({
   const [name, setName] = useState(product.name);
   const [brand, setBrand] = useState(product.brand ?? "");
   const [category, setCategory] = useState(product.category);
+  const [subcategory, setSubcategory] = useState(product.subcategory ?? "");
   const [sizeMl, setSizeMl] = useState(String(product.sizeMl));
   /**
    * Preset dropdown, or the free-text box behind "Other…".
@@ -59,7 +62,9 @@ export function ProductEditForm({
   );
   const [caseSize, setCaseSize] = useState(product.caseSize == null ? "" : String(product.caseSize));
   const [vendorId, setVendorId] = useState(product.vendorId == null ? "" : String(product.vendorId));
-  const [cost, setCost] = useState(product.currentUnitCost ?? "");
+  // DECIMAL(10,4) arrives as "144.0000"; show it as money without rounding
+  // away genuine sub-cent precision — see formatCostForInput in lib/utils.ts.
+  const [cost, setCost] = useState(formatCostForInput(product.currentUnitCost));
   const [parLevel, setParLevel] = useState(
     product.stock?.parLevel == null ? "" : String(product.stock.parLevel),
   );
@@ -102,6 +107,10 @@ export function ProductEditForm({
    */
   function changeCategory(next: string) {
     setCategory(next);
+    // A subcategory belongs to exactly one category — "Whiskey" under Beer is
+    // not a narrower filter, it is a row that matches nothing. Clear it and
+    // make the desk pick again rather than carrying a stale one across.
+    if (next !== category) setSubcategory("");
     if (sizeMode === SIZE_OTHER) return;
     const ctx = { category: next, unitType: product.unitType };
     if (!isPresetSizeMl(Number(sizeMl), ctx)) setSizeMode(SIZE_OTHER);
@@ -119,6 +128,10 @@ export function ProductEditForm({
       name,
       brand: brand.trim() === "" ? null : brand,
       category,
+      // Blank clears to null, same convention as brand and par above — the
+      // select is always rendered with its current value, so an empty choice
+      // is a deliberate "no type", not an omission.
+      subcategory: subcategory.trim() === "" ? null : subcategory,
       sizeMl: Number(sizeMl),
       /**
        * Submitted whether or not the field is on screen — hiding it PRESERVES
@@ -206,6 +219,39 @@ export function ProductEditForm({
               {["Spirits", "Beer", "Wine", "Liqueur", "NA"].map((c) => (
                 <option key={c} value={c}>
                   {c}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          {/*
+            Type (the `subcategory` column) — this is the ONLY control in the
+            app that writes it. The seed was previously its only writer, so a
+            product enrolled by scanning a barcode had no type and no way to
+            get one, which is invisible until the catalog's type filters go
+            looking for it.
+
+            Optional, and blank is a legitimate answer. Forcing a choice would
+            invite a wrong one on the products this exists to fix — an unknown
+            spirit filed as "Whiskey" to clear a required field is worse than
+            one honestly filed as nothing, because the filter would then
+            confidently return it.
+          */}
+          <Field
+            label="Type"
+            htmlFor="subcategory"
+            error={fieldErrors.subcategory}
+            hint="Optional. Drives the catalog's type filters."
+          >
+            <Select
+              id="subcategory"
+              value={subcategory}
+              onChange={(e) => setSubcategory(e.target.value)}
+            >
+              <option value="">— None —</option>
+              {subcategoryOptions(category, product.subcategory).map((s) => (
+                <option key={s} value={s}>
+                  {s}
                 </option>
               ))}
             </Select>

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useRef, useEffect, useState, useMemo, useCallback } from "react";
+import { useRef, useEffect, useState, useMemo, useCallback, useTransition } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -13,7 +13,7 @@ import {
   type SortingState,
   type PaginationState,
 } from "@tanstack/react-table";
-import { cn } from "@/lib/utils";
+import { cn, formatCostForInput } from "@/lib/utils";
 import { Money } from "@/components/ui/money";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -104,6 +104,11 @@ export function CatalogTable({
   const [assignError, setAssignError] = useState<string | null>(null);
   const [assignSuccess, setAssignSuccess] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  // Three states, not two: `undefined` = no subcategory filter, a string =
+  // that subcategory, and `null` = the "Unspecified" pill, which is a real
+  // filter selecting rows whose subcategory IS null. Collapsing null and
+  // undefined into one value would make "Unspecified" unclickable.
+  const [subcategoryFilter, setSubcategoryFilter] = useState<string | null | undefined>(undefined);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 20 });
 
@@ -141,6 +146,35 @@ export function CatalogTable({
   );
 
   /**
+   * Subcategories of the CURRENTLY SELECTED category only — "Whiskey, Vodka,
+   * Tequila, Gin, Rum" under Spirits, "Bottle, Draft, Cider" under Beer.
+   *
+   * Deliberately a second level rather than a flat list of every subcategory
+   * in the catalog. Flat, this bar would be twelve pills wide and would mix
+   * "Draft" with "Tequila" — two facets of different parents presented as
+   * peers, which is exactly how a counter ends up filtering to an empty
+   * intersection and concluding the catalog is missing products.
+   *
+   * `subcategory` is nullable in the schema, and a null is shown as its own
+   * pill rather than dropped. A product with no subcategory is invisible under
+   * every subcategory filter, so silently omitting the pill would make those
+   * rows unreachable once the user starts drilling down — and unreachable
+   * looks identical to "we don't stock it".
+   */
+  const subcategories = useMemo(() => {
+    if (!categoryFilter) return [];
+    const seen = new Set<string | null>();
+    for (const p of rows) {
+      if (p.category === categoryFilter) seen.add(p.subcategory ?? null);
+    }
+    return Array.from(seen).sort((a, b) => {
+      if (a === null) return 1; // "Unspecified" sorts last — it is not a type.
+      if (b === null) return -1;
+      return a.localeCompare(b);
+    });
+  }, [rows, categoryFilter]);
+
+  /**
    * This array is `useReactTable`'s `data`, and TanStack v8 watches it BY
    * REFERENCE: `getCoreRowModel`/`getSortedRowModel` rebuild their row models
    * whenever the reference changes. Built inline, it was a new array on every
@@ -162,13 +196,29 @@ export function CatalogTable({
    * 396/710/439/151/445 ms inline. Consistent, roughly 20%, and not a fix for
    * anything. Keep it on those terms.
    */
-  const filteredRows = useMemo(
-    () => (categoryFilter ? rows.filter((p) => p.category === categoryFilter) : rows),
-    [rows, categoryFilter],
-  );
+  const filteredRows = useMemo(() => {
+    let out = rows;
+    if (categoryFilter) out = out.filter((p) => p.category === categoryFilter);
+    if (subcategoryFilter !== undefined) {
+      out = out.filter((p) => (p.subcategory ?? null) === subcategoryFilter);
+    }
+    return out;
+  }, [rows, categoryFilter, subcategoryFilter]);
 
+  /**
+   * Changing the category always clears the subcategory. "Spirits + Whiskey"
+   * then switching to Beer would otherwise leave a Whiskey filter applied to
+   * beer and show an empty table — the filter bar would be telling the truth
+   * while the screen said the bar stocks no beer.
+   */
   function setCategory(next: string | null) {
     setCategoryFilter(next);
+    setSubcategoryFilter(undefined);
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }
+
+  function setSubcategory(next: string | null | undefined) {
+    setSubcategoryFilter(next);
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }
 
@@ -202,13 +252,56 @@ export function CatalogTable({
     }
   }, [visibleSelectedIds, visibleIds]);
 
-  function navigate(next: { q?: string; view?: string }) {
+  function navigate(next: { q?: string; view?: string }, mode: "push" | "replace" = "push") {
     const search = new URLSearchParams(params.toString());
     for (const [key, v] of Object.entries(next)) {
       if (v) search.set(key, v);
       else search.delete(key);
     }
-    router.push(`/office/catalog?${search.toString()}`);
+    const url = `/office/catalog?${search.toString()}`;
+    if (mode === "replace") router.replace(url);
+    else router.push(url);
+  }
+
+  /**
+   * Type-ahead search. The query lives in the URL and the actual filtering
+   * happens server-side (`searchProducts`), so every keystroke would otherwise
+   * be a round trip and a history entry. Two things make that behave:
+   *
+   *  - **Debounced 250 ms.** Typing "tequila" fires one request, not seven.
+   *  - **`router.replace`, not `push`.** Otherwise a seven-letter search leaves
+   *    seven entries in history and the back button walks the user backwards
+   *    one character at a time instead of returning to where they came from.
+   *
+   * `useTransition` is what keeps the input responsive while the RSC payload
+   * is in flight — without it, React would block on the pending navigation and
+   * the field would stutter mid-word, which is the exact feel the user was
+   * asking to be rid of. `isSearching` drives the visible "Searching…" note so
+   * a slow query looks like a slow query rather than a dropped keystroke.
+   *
+   * Enter still works and is not merely tolerated: it cancels the pending
+   * debounce and searches immediately, which is the right escape hatch for
+   * someone who has already finished typing.
+   */
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isSearching, startSearchTransition] = useTransition();
+
+  useEffect(() => {
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, []);
+
+  function runSearch(next: string) {
+    startSearchTransition(() => {
+      navigate({ q: next, view: view === "attention" ? "attention" : undefined }, "replace");
+    });
+  }
+
+  function onSearchChange(next: string) {
+    setValue(next);
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => runSearch(next), 250);
   }
 
   // These three are `useCallback` because the column definitions below close
@@ -347,10 +440,17 @@ export function CatalogTable({
 
     cols.push({
       id: "category",
-      accessorKey: "category",
+      // Sorts by the pair, so Spirits rows group by type rather than
+      // interleaving Whiskey and Vodka under one "Spirits" heading.
+      accessorFn: (row) => `${row.category} ${row.subcategory ?? ""}`,
       header: "Category",
-      cell: ({ getValue }) => (
-        <span className="text-row-subtitle text-muted-foreground">{getValue<string>()}</span>
+      cell: ({ row }) => (
+        <span className="text-row-subtitle text-muted-foreground">
+          {row.original.category}
+          {row.original.subcategory ? (
+            <span className="block text-caption">{row.original.subcategory}</span>
+          ) : null}
+        </span>
       ),
     });
 
@@ -391,7 +491,8 @@ export function CatalogTable({
               <EditableProductCell
                 productId={product.id}
                 field="currentUnitCost"
-                value={product.currentUnitCost ?? ""}
+                // DECIMAL(10,4) arrives as "144.0000" — see formatCostForInput.
+                value={formatCostForInput(product.currentUnitCost)}
                 placeholder="Enter cost"
                 ariaLabel={`Unit cost for ${product.name}`}
                 onSaved={patchRow}
@@ -491,7 +592,9 @@ export function CatalogTable({
       ? view === "attention"
         ? "Nothing needs attention."
         : "No products match that search."
-      : `No products in ${categoryFilter}.`;
+      : subcategoryFilter !== undefined
+        ? `No ${subcategoryFilter ?? "unspecified"} products in ${categoryFilter}.`
+        : `No products in ${categoryFilter}.`;
 
   return (
     <div>
@@ -499,7 +602,10 @@ export function CatalogTable({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            navigate({ q: value, view: view === "attention" ? "attention" : undefined });
+            // Enter means "now" — drop the pending debounce rather than
+            // letting it fire a second, identical navigation 250 ms later.
+            if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+            runSearch(value);
           }}
           method="get"
           className="flex min-w-[16rem] flex-1 items-center gap-2 rounded-md border border-input bg-card px-4 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50"
@@ -507,11 +613,25 @@ export function CatalogTable({
           <input
             type="search"
             value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder="Search name or brand"
+            onChange={(e) => onSearchChange(e.target.value)}
+            // Names what it actually matches. `searchProducts` gained
+            // subcategory when the type filter shipped, and a placeholder that
+            // still said "name or brand" made "tequila" look like a search that
+            // had failed rather than one the user was never told to try.
+            placeholder="Search name, brand or type"
             aria-label="Search catalog"
             className="min-h-tap-min min-w-0 flex-1 bg-transparent text-body text-foreground placeholder:text-muted-foreground focus:outline-none"
           />
+          {/* A live region, so a screen reader hears that results are being
+              fetched — the sighted cue is this same text. `aria-hidden` on a
+              spinner would leave that user with no signal at all. */}
+          <span
+            role="status"
+            aria-live="polite"
+            className="shrink-0 text-caption text-muted-foreground"
+          >
+            {isSearching ? "Searching…" : ""}
+          </span>
         </form>
 
         {/* View tabs — active gets underline + bold, never a color change
@@ -550,6 +670,26 @@ export function CatalogTable({
               onClick={() => setCategory(categoryFilter === category ? null : category)}
             >
               Category: {category}
+            </FilterPill>
+          ))}
+        </div>
+      ) : null}
+
+      {/* The second level, shown only once a category is chosen and only when
+          that category actually splits — a lone "Type: Liqueur" pill under
+          Liqueur is a control that cannot change anything. Indented and
+          labelled so it reads as narrowing the row above rather than as a
+          second, independent filter bar. */}
+      {subcategories.length > 1 ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2 border-l-2 border-border pl-3">
+          <span className="text-label uppercase text-muted-foreground">Within {categoryFilter}</span>
+          {subcategories.map((sub) => (
+            <FilterPill
+              key={sub ?? "__unspecified__"}
+              applied={subcategoryFilter === sub}
+              onClick={() => setSubcategory(subcategoryFilter === sub ? undefined : sub)}
+            >
+              Type: {sub ?? "Unspecified"}
             </FilterPill>
           ))}
         </div>
@@ -846,9 +986,11 @@ function EditableProductCell({
       }
 
       onSaved(result.data);
+      // Formatted the same way the incoming `value` prop is, or the cell would
+      // snap from "21.50" to "21.5000" the moment it saved successfully.
       const settled =
         field === "currentUnitCost"
-          ? result.data.currentUnitCost ?? ""
+          ? formatCostForInput(result.data.currentUnitCost)
           : result.data.caseSize == null
             ? ""
             : String(result.data.caseSize);

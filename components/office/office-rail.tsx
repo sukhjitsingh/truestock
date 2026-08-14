@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { RAIL_COOKIE } from "@/lib/ui-cookies";
 import type { Role } from "@/lib/authz";
 
 /**
@@ -26,11 +27,28 @@ import type { Role } from "@/lib/authz";
  * control do the thing its icon promises, and it means the icon-only default
  * is a preference rather than a guessing game.
  *
- * The state is component state, not persisted. It survives every client-side
- * navigation inside the office (this component sits in the layout and is not
- * remounted), and resets on a full page load. Persisting it in localStorage
- * would mean reading storage after mount and re-rendering, i.e. a visible
- * width flip on every cold load — worse than the thing it fixes.
+ * ## Why the state sticks, and why it is a cookie
+ *
+ * The choice sticks across full page loads, not just client-side navigation —
+ * a sidebar that silently re-collapses every time you hit refresh is a
+ * setting the user has to re-make forever.
+ *
+ * It is stored in a cookie rather than `localStorage` because the layout is a
+ * SERVER component: it reads the cookie during render and hands the answer
+ * down as `defaultExpanded`, so the first painted frame is already the right
+ * width. `localStorage` cannot do that — it is only readable after mount, so
+ * every cold load would paint 64px and then jump to 208px, which is a visible
+ * flash on the single most persistent element on the screen.
+ *
+ * The name itself lives in `lib/ui-cookies.ts`, not here — a constant exported
+ * from a `"use client"` module reaches a server component as a client-reference
+ * proxy rather than the string, which makes `cookies().get(...)` silently miss.
+ * See that file; it is a trap worth reading once.
+ *
+ * `SameSite=Lax`, no `Secure` flag hardcoded, one year, path `/`. It carries
+ * a single boolean about a personal layout preference — no identifier, nothing
+ * derived from the session — so it is a functional cookie, not one that needs
+ * consent, and it must stay that way.
  *
  * Roles: built per role rather than rendered-then-filtered, same rule as the
  * nav it replaces. Owner and manager see the same destinations; each screen
@@ -117,9 +135,26 @@ const ChevronIcon: RailIcon = ({ className }) => (
   </svg>
 );
 
-export function OfficeRail({ role }: { role: Role }) {
+export function OfficeRail({
+  role,
+  defaultExpanded = false,
+}: {
+  role: Role;
+  /** Read from the `RAIL_COOKIE` cookie server-side, so the rail renders at
+   *  its remembered width on the very first frame rather than flipping. */
+  defaultExpanded?: boolean;
+}) {
   const pathname = usePathname();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
+
+  function toggle() {
+    const next = !expanded;
+    setExpanded(next);
+    // One year. Written client-side rather than through a server action
+    // because nothing on the server needs to react to it mid-session — the
+    // cookie exists only so the NEXT document request starts at this width.
+    document.cookie = `${RAIL_COOKIE}=${next ? "1" : "0"}; path=/; max-age=31536000; SameSite=Lax`;
+  }
 
   const links: { href: string; label: string; icon: RailIcon; exact?: boolean }[] = [
     { href: "/office", label: "Dashboard", icon: DashboardIcon, exact: true },
@@ -194,7 +229,7 @@ export function OfficeRail({ role }: { role: Role }) {
 
       <button
         type="button"
-        onClick={() => setExpanded((v) => !v)}
+        onClick={toggle}
         aria-expanded={expanded}
         aria-label={expanded ? "Collapse sidebar" : "Expand sidebar"}
         className={cn(itemClass, "cursor-pointer")}

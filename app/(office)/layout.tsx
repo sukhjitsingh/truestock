@@ -1,5 +1,7 @@
+import { cookies } from "next/headers";
 import { requireOfficeUser } from "@/lib/current-user";
 import { OfficeRail } from "@/components/office/office-rail";
+import { RAIL_COOKIE } from "@/lib/ui-cookies";
 import { OfficeBreadcrumb } from "@/components/office/office-breadcrumb";
 import { AccountMenu } from "@/components/office/account-menu";
 
@@ -41,9 +43,14 @@ export default async function OfficeLayout({
 }) {
   const user = await requireOfficeUser();
 
+  // Read here rather than in the rail itself so the first painted frame is
+  // already the remembered width — a client-side read after mount would flash
+  // the collapsed rail on every cold load. See office-rail.tsx.
+  const railExpanded = (await cookies()).get(RAIL_COOKIE)?.value === "1";
+
   return (
     <div className="flex min-h-dvh bg-background text-foreground">
-      <OfficeRail role={user.role} />
+      <OfficeRail role={user.role} defaultExpanded={railExpanded} />
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-15 shrink-0 items-center gap-4 border-b border-border bg-card px-4 sm:px-6">
           <OfficeBreadcrumb />
