@@ -610,7 +610,25 @@ export function CatalogTable({
           method="get"
           className="flex min-w-[16rem] flex-1 items-center gap-2 rounded-md border border-input bg-card px-4 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50"
         >
+          {/* `runSearch` carries the active view across a search; the native
+              submit has to as well, or a pre-hydration Enter inside "Needs
+              attention" silently drops the user back to the full catalog. */}
+          {view === "attention" ? <input type="hidden" name="view" value="attention" /> : null}
+          {/* `method="get"` here is the deliberate counterpart to the
+              `method="post"` rule in AGENTS.md, not an exception to it. That
+              rule exists because an un-hydrated JS-handled form submits
+              natively, and a defaulted GET puts every field in the query
+              string — fatal for a password, correct for a search whose state
+              belongs in the URL anyway.
+              But the degradation only actually works if the field is named.
+              Without `name`, a pre-hydration Enter serializes nothing: the
+              browser navigates to a bare `?`, the typed text is gone, and the
+              page comes back unfiltered — which reads as "search is broken"
+              rather than "search hasn't loaded yet". `name="q"` makes the
+              native submit produce the same URL `runSearch` builds, so the
+              form works before React attaches and identically after. */}
           <input
+            name="q"
             type="search"
             value={value}
             onChange={(e) => onSearchChange(e.target.value)}
