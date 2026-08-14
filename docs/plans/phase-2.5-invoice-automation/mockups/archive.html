@@ -1,8 +1,240 @@
 <!doctype html>
-<html>
-<head><meta charset="utf-8"><title>Archive</title></head>
-<body><h1>Archive</h1>
-<p>Every captured invoice, searchable by vendor and date, with its retention date
-shown. Documents that were never approved next to approved ones. "This cannot be
-deleted" framing on every row.</p>
-</body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Archive — Truestock back office (Gate 1 mockup)</title>
+<!--
+  Gate 1 mockup, throwaway by design. Plain HTML, no build step, no network.
+  Tokens copied verbatim from docs/design-system.md §2 (light theme).
+  Every captured invoice, searchable by vendor and date, retention shown on
+  every row, and the "this cannot be deleted" framing throughout.
+-->
+<style>
+  :root {
+    --radius: 1rem;
+    --background: #f7f7f5;
+    --foreground: #111111;
+    --card: #ffffff;
+    --card-foreground: #111111;
+    --muted: #efefec;
+    --muted-foreground: #6b6b6b;
+    --primary: #0a0a0a;
+    --primary-foreground: #ffffff;
+    --secondary: #efefec;
+    --secondary-foreground: #111111;
+    --accent: #2563eb;
+    --accent-foreground: #ffffff;
+    --destructive: #c4304f;
+    --destructive-foreground: #ffffff;
+    --border: #e4e4e1;
+    --input: #8c8c8c;
+    --ring: #2563eb;
+    --negative: #b8305a;
+    --negative-bg: #fde8ec;
+    --warning: #92600a;
+    --warning-bg: #fdf0dc;
+    --success: #1f7a3d;
+    --success-bg: #e4f5e6;
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+    padding: 2rem;
+  }
+  h1 { font-size: 1.25rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1rem; margin: 0 0 0.75rem; }
+  p { margin: 0.25rem 0; }
+  .sub { color: var(--muted-foreground); font-size: 0.875rem; }
+  .mockup-label {
+    display: inline-block;
+    margin: 2rem 0 0.5rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: var(--radius-sm);
+    background: var(--primary);
+    color: var(--primary-foreground);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .mockup-label.alt { background: var(--accent); color: var(--accent-foreground); }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0.125rem 0.625rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .pill.success { background: var(--success-bg); color: var(--success); }
+  .pill.warning { background: var(--warning-bg); color: var(--warning); }
+  .pill.negative { background: var(--negative-bg); color: var(--negative); }
+  .pill.neutral { background: var(--muted); color: var(--muted-foreground); }
+  .state-note {
+    margin-top: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-left: 3px solid var(--accent);
+    background: var(--muted);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    font-size: 0.875rem;
+    color: var(--muted-foreground);
+  }
+  .state-note strong { color: var(--foreground); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 0.75rem 0.625rem; border-bottom: 1px solid var(--border); font-size: 0.875rem; vertical-align: middle; }
+  th { color: var(--muted-foreground); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.02em; }
+  .search {
+    width: 100%;
+    max-width: 420px;
+    padding: 0.625rem 0.875rem;
+    border: 1px solid var(--input);
+    border-radius: var(--radius-md);
+    font-size: 0.9375rem;
+    background: var(--card);
+  }
+  .filters { display: flex; gap: 0.75rem; margin: 1rem 0; flex-wrap: wrap; align-items: center; }
+  .select {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--input);
+    border-radius: var(--radius-md);
+    background: var(--card);
+    font-size: 0.875rem;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--card-foreground);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .btn.primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+  .btn.accent { background: var(--accent); color: var(--accent-foreground); border-color: var(--accent); }
+  .btn-row { display: flex; gap: 0.75rem; margin-top: 1.25rem; flex-wrap: wrap; }
+  .muted { color: var(--muted-foreground); }
+  .vendor { font-weight: 600; }
+  .amount { font-weight: 600; text-align: right; white-space: nowrap; }
+  a { color: var(--accent); }
+  .deleted-frame { display: inline-block; font-size: 0.75rem; color: var(--negative); background: var(--negative-bg); border-radius: var(--radius-sm); padding: 0.25rem 0.625rem; }
+</style>
+</head>
+<body>
+
+<h1>Invoices — archive</h1>
+<p class="sub">Every document that came in, searchable, retained, and un-deletable. Retention is met at write time, not hoped for later.</p>
+
+<div class="mockup-label">Screen: archive.html — search, filter, retention on every row</div>
+
+<div class="card">
+  <div class="filters">
+    <input class="search" type="search" placeholder="Search vendor, invoice number, date…" value="baileys" />
+    <select class="select"><option>Any vendor</option><option>Southern Glazer's</option><option>RNDC</option></select>
+    <select class="select"><option>Any status</option><option>Approved</option><option>Needs review</option><option>Rejected</option></select>
+    <a class="btn" href="audit-packet.html">Export audit packet</a>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Invoice</th>
+        <th>Date</th>
+        <th>Total</th>
+        <th>Status</th>
+        <th>Retained until</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="vendor">Southern Glazer's</span><br /><span class="muted">SG 1048821 · 2 pages</span></td>
+        <td>Aug 11, 2026</td>
+        <td class="amount">$1,284.55</td>
+        <td><span class="pill warning">needs review</span></td>
+        <td class="muted">Aug 11, 2029</td>
+        <td><a href="review-invoice.html">Open</a></td>
+      </tr>
+      <tr>
+        <td><span class="vendor">RNDC</span><br /><span class="muted">R 339201 · 3 pages</span></td>
+        <td>Aug 9, 2026</td>
+        <td class="amount">$2,011.90</td>
+        <td><span class="pill warning">needs review</span></td>
+        <td class="muted">Aug 9, 2029</td>
+        <td><a href="review-invoice.html">Open</a></td>
+      </tr>
+      <tr>
+        <td><span class="vendor">Breakthru</span><br /><span class="muted">BT 77512 · 1 page</span></td>
+        <td>Aug 8, 2026</td>
+        <td class="amount">$642.10</td>
+        <td><span class="pill warning">needs review</span></td>
+        <td class="muted">Aug 8, 2029</td>
+        <td><a href="review-invoice.html">Open</a></td>
+      </tr>
+      <tr>
+        <td><span class="vendor">Bernick's</span><br /><span class="muted">B 90211 · 1 page</span></td>
+        <td>Aug 6, 2026</td>
+        <td class="amount">$388.75</td>
+        <td><span class="pill success">approved</span></td>
+        <td class="muted">Aug 6, 2029</td>
+        <td><a href="review-invoice.html">Open</a></td>
+      </tr>
+      <tr>
+        <td><span class="vendor">Young's Market</span><br /><span class="muted">YM 4481 · 1 page</span></td>
+        <td>Aug 4, 2026</td>
+        <td class="amount">$510.30</td>
+        <td><span class="pill success">approved</span></td>
+        <td class="muted">Aug 4, 2029</td>
+        <td><a href="review-invoice.html">Open</a></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="mockup-label alt">The framing on every row: this cannot be deleted</div>
+
+<div class="card">
+  <div class="state-note">
+    <strong>No delete action exists anywhere.</strong> Not a button, not an admin backdoor. Arizona A.A.C. R19-1-501 needs two years of invoices produced on request, and the only way to be sure is to make the document un-removable at write time. If a bucket rule is ever configured to expire objects, it is set far beyond <code>retention_until</code> — or, better, no lifecycle rule at all, because a silent deleter is exactly what no code review will catch.
+  </div>
+  <p style="margin-top:0.75rem">An invoice whose date is still unknown gets the <em>longest</em> retention, never the shortest. <span class="deleted-frame">There is no "delete" anywhere in this screen</span> — the word is absent on purpose.</p>
+</div>
+
+<div class="mockup-label">State: search finds nothing</div>
+
+<div class="card">
+  <div class="state-note"><strong>Empty result:</strong> "No invoices match 'baileys'. Try a vendor name, an invoice number, or a wider date range." The search is honest — no "did you mean" guesses, no partial-credit results that look like the thing you asked for.</div>
+</div>
+
+<div class="mockup-label">State: a document that never got approved</div>
+
+<div class="card">
+  <div class="state-note"><strong>Rejected stays visible:</strong> a rejected invoice (a duplicate upload, a wrong vendor) remains in the archive, marked <span class="pill negative">rejected</span> with its reason, and is still exported in an audit packet with the rest — the packet is the truth of what was submitted, not only of what was approved.</div>
+</div>
+
+<p class="muted" style="margin-top:1rem">Mockup — every state rendered at once, nothing hidden behind a click. See <code>docs/plans/phase-2.5-invoice-automation/01-product.md</code>.</p>
+
+</body>
+</html>

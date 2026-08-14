@@ -1,9 +1,313 @@
 <!doctype html>
-<html>
-<head><meta charset="utf-8"><title>Review Invoice</title></head>
-<body><h1>Review Invoice</h1>
-<p>The document on the left, the editable line table on the right. Exception
-badges across the top: "price jump", "duplicate", "doesn't add up", "unmatched item".
-<affordance: "map this item to your catalog — the next invoice from this vendor
-will already know it">. Approve / Return controls.</p>
-</body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Review invoice — Truestock back office (Gate 1 mockup)</title>
+<!--
+  Gate 1 mockup, throwaway by design. Plain HTML, no build step, no network.
+  Tokens copied verbatim from docs/design-system.md §2 (light theme).
+  THE CENTERPIECE: document left, editable line table right, exception badges
+  across the top. Every state the research names is rendered at once, each
+  labelled: unmatched line, price variance, missing pack size, total mismatch,
+  deposit line shown as not-product, and the fix-a-line-once affordance.
+-->
+<style>
+  :root {
+    --radius: 1rem;
+    --background: #f7f7f5;
+    --foreground: #111111;
+    --card: #ffffff;
+    --card-foreground: #111111;
+    --muted: #efefec;
+    --muted-foreground: #6b6b6b;
+    --primary: #0a0a0a;
+    --primary-foreground: #ffffff;
+    --secondary: #efefec;
+    --secondary-foreground: #111111;
+    --accent: #2563eb;
+    --accent-foreground: #ffffff;
+    --destructive: #c4304f;
+    --destructive-foreground: #ffffff;
+    --border: #e4e4e1;
+    --input: #8c8c8c;
+    --ring: #2563eb;
+    --negative: #b8305a;
+    --negative-bg: #fde8ec;
+    --warning: #92600a;
+    --warning-bg: #fdf0dc;
+    --success: #1f7a3d;
+    --success-bg: #e4f5e6;
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+    padding: 2rem;
+  }
+  h1 { font-size: 1.25rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1rem; margin: 0 0 0.75rem; }
+  p { margin: 0.25rem 0; }
+  .sub { color: var(--muted-foreground); font-size: 0.875rem; }
+  .mockup-label {
+    display: inline-block;
+    margin: 2rem 0 0.5rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: var(--radius-sm);
+    background: var(--primary);
+    color: var(--primary-foreground);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .mockup-label.alt { background: var(--accent); color: var(--accent-foreground); }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0.125rem 0.625rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .pill.success { background: var(--success-bg); color: var(--success); }
+  .pill.warning { background: var(--warning-bg); color: var(--warning); }
+  .pill.negative { background: var(--negative-bg); color: var(--negative); }
+  .pill.neutral { background: var(--muted); color: var(--muted-foreground); }
+  .state-note {
+    margin-top: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-left: 3px solid var(--accent);
+    background: var(--muted);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    font-size: 0.875rem;
+    color: var(--muted-foreground);
+  }
+  .state-note strong { color: var(--foreground); }
+  .split { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+  .doc-pane { flex: 1 1 340px; min-width: 0; }
+  .table-pane { flex: 1 1 480px; min-width: 0; }
+  .paper {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    font-size: 0.6875rem;
+    color: #333;
+    padding: 1.5rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    min-height: 480px;
+  }
+  .paper .l { display: flex; justify-content: space-between; margin-bottom: 0.5rem; }
+  .paper .tot { border-top: 1px solid #999; margin-top: 0.75rem; padding-top: 0.375rem; text-align: right; }
+  .paper .dep { color: #555; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 0.625rem 0.5rem; border-bottom: 1px solid var(--border); font-size: 0.8125rem; vertical-align: top; }
+  th { color: var(--muted-foreground); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.02em; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  tr.line-bad { background: var(--warning-bg); }
+  tr.line-bad td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+  .badges { display: flex; gap: 0.375rem; flex-wrap: wrap; margin: 0.5rem 0 1rem; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--card-foreground);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .btn.primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+  .btn.accent { background: var(--accent); color: var(--accent-foreground); border-color: var(--accent); }
+  .btn.danger { background: var(--destructive); color: var(--destructive-foreground); border-color: var(--destructive); }
+  .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+  .btn-row { display: flex; gap: 0.75rem; margin-top: 1.25rem; flex-wrap: wrap; }
+  .muted { color: var(--muted-foreground); }
+  .match-pop {
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  }
+  .match-pop .head { font-weight: 600; font-size: 0.8125rem; margin-bottom: 0.375rem; }
+  .match-opt {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.375rem 0.5rem; border-radius: var(--radius-sm); cursor: pointer;
+  }
+  .match-opt:hover { background: var(--muted); }
+  a { color: var(--accent); }
+  .dl { display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; font-size: 0.875rem; }
+  .dl .k { color: var(--muted-foreground); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.02em; }
+</style>
+</head>
+<body>
+
+<h1>Review invoice — Southern Glazer's SG 1048821</h1>
+<p class="sub">Document on the left, editable lines on the right. The printed totals are never "fixed" — a mismatch stays a mismatch until you resolve it.</p>
+
+<div class="mockup-label">Screen: review-invoice.html — the full state</div>
+
+<div class="card">
+  <div class="dl">
+    <div><div class="k">Vendor</div>Southern Glazer's Wine &amp; Spirits</div>
+    <div><div class="k">Invoice</div>SG 1048821</div>
+    <div><div class="k">Date</div>Aug 11, 2026</div>
+    <div><div class="k">Pages</div>2 · photo</div>
+    <div><div class="k">Printed total</div><strong>$1,284.55</strong></div>
+  </div>
+
+  <div class="badges" style="margin-top:1rem">
+    <span class="pill warning">price jump</span>
+    <span class="pill negative">unmatched item</span>
+    <span class="pill warning">missing pack size</span>
+    <span class="pill success">deposit kept separate</span>
+  </div>
+
+  <div class="split">
+    <div class="doc-pane">
+      <h2>The document</h2>
+      <div class="paper">
+        <div class="l"><span>SOUTHERN GLAZER'S</span><span>SG 1048821</span></div>
+        <div class="l"><span>Invoice date 08/11/2026</span><span>Delivered 08/11/2026</span></div>
+        <div class="l"><span>TITOS HANDMADE VODKA 750</span><span>12 x 750ML · 1 cs · 96.00</span></div>
+        <div class="l"><span>JACK DANIELS BLACK 1L</span><span>6 x 1L · 2 cs · 72.50</span></div>
+        <div class="l"><span>HENDRICKS GIN 750</span><span>12 x 750ML · 1 cs · 34.20</span></div>
+        <div class="l"><span>KEG DEPOSIT HALF BARREL</span><span class="dep">1 · 40.00</span></div>
+        <div class="l"><span>BAILEYS IRISH CREAM 750</span><span>12 x 750ML · 1 cs · 28.90</span></div>
+        <div class="l"><span>JAMESON IRISH WHISKEY 750</span><span>6 x 750ML · 1 cs · 31.60</span></div>
+        <div class="l"><span>—</span><span>—</span></div>
+        <div class="l"><span>SUBTOTAL</span><span>1,236.45</span></div>
+        <div class="l"><span>LIQUOR TAX</span><span>48.10</span></div>
+        <div class="tot">TOTAL&nbsp;&nbsp;<strong>1,284.55</strong></div>
+      </div>
+      <p class="muted" style="margin-top:0.5rem">v1 shows the page beside the table with no highlighting. Per-line source highlighting is a later option if review turns out slow.</p>
+    </div>
+
+    <div class="table-pane">
+      <h2>The lines</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Qty</th>
+            <th>UoM</th>
+            <th>Pack</th>
+            <th class="num">Unit</th>
+            <th class="num">Ext</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Titos Handmade Vodka 750 <span class="pill warning" style="margin-left:0.25rem">price jump</span></td>
+            <td>1</td><td>case</td><td>12</td>
+            <td class="num">$8.00</td><td class="num">$96.00</td>
+            <td><a href="#">matched ✓</a></td>
+          </tr>
+          <tr>
+            <td>Jack Daniels Black 1L</td>
+            <td>2</td><td>case</td><td>6</td>
+            <td class="num">$6.04</td><td class="num">$72.50</td>
+            <td><a href="#">matched ✓</a></td>
+          </tr>
+          <tr>
+            <td>Hendricks Gin 750</td>
+            <td>1</td><td>case</td><td>12</td>
+            <td class="num">$2.85</td><td class="num">$34.20</td>
+            <td><a href="#">matched ✓</a></td>
+          </tr>
+          <tr class="line-bad">
+            <td>
+              Keg deposit — half barrel <span class="pill success" style="margin-left:0.25rem">deposit</span>
+              <div class="muted" style="font-size:0.75rem">Not product cost. It will never touch a bottle's price.</div>
+            </td>
+            <td>1</td><td>each</td><td>—</td>
+            <td class="num">$40.00</td><td class="num">$40.00</td>
+            <td><a href="#">set deposit</a></td>
+          </tr>
+          <tr>
+            <td>Baileys Irish Cream 750</td>
+            <td>1</td><td>case</td><td>12</td>
+            <td class="num">$2.41</td><td class="num">$28.90</td>
+            <td><a href="#">matched ✓</a></td>
+          </tr>
+          <tr>
+            <td>Jameson Irish Whiskey 750</td>
+            <td>1</td><td>case</td><td>6</td>
+            <td class="num">$5.27</td><td class="num">$31.60</td>
+            <td><a href="#">matched ✓</a></td>
+          </tr>
+          <tr class="line-bad">
+            <td>
+              <strong>BAILEYS — unmatched line</strong>
+              <div class="match-pop" style="margin-top:0.5rem">
+                <div class="head">Map this to your catalog</div>
+                <div class="match-opt">Baileys Irish Cream 750ml — 12/750 <span class="muted">suggested</span></div>
+                <div class="match-opt">Baileys Irish Cream 1L — 6/1L</div>
+                <div class="match-opt">Create a new product from this line</div>
+                <div class="muted" style="margin-top:0.375rem;font-size:0.75rem">Fix once — the next SG invoice already knows it.</div>
+              </div>
+            </td>
+            <td>1</td><td>case</td><td>12</td>
+            <td class="num">$2.41</td><td class="num">$28.90</td>
+            <td><a href="#" style="font-weight:600;color:var(--accent)">map now</a></td>
+          </tr>
+          <tr>
+            <td>
+              Liquor tax <span class="pill neutral" style="margin-left:0.25rem">tax</span>
+              <div class="muted" style="font-size:0.75rem">Not product cost.</div>
+            </td>
+            <td>—</td><td>—</td><td>—</td>
+            <td class="num">—</td><td class="num">$48.10</td>
+            <td><a href="#">ok</a></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="state-note">
+        <strong>The arithmetic check, stated plainly:</strong> product lines sum to <strong>$1,236.45</strong>.
+        Printed subtotal is <strong>$1,236.45</strong>. Matches.
+        (In the RNDC example in the queue, this is where "doesn't add up" lives — both numbers shown, never silently reconciled.)
+      </div>
+
+      <div class="btn-row">
+        <a class="btn primary" href="#" disabled>Approve — 2 exceptions left</a>
+        <a class="btn danger" href="#">Return to queue</a>
+      </div>
+      <p class="muted" style="font-size:0.8125rem;margin-top:0.5rem">Approve is disabled until zero exceptions. Every edit you make is recorded — who, what, when — for the audit trail.</p>
+    </div>
+  </div>
+</div>
+
+<div class="mockup-label alt">The rule under every row</div>
+
+<div class="card">
+  <p><strong>A plausible-but-wrong number is worse than an obviously broken one.</strong> This screen never shows a derived total as if it were printed. If the lines don't sum to the printed total, both numbers are shown and the mismatch is the badge — never a silently "fixed" figure. And a NULL pack size on a case line is never coerced to 12: it stays an exception until a human types it.</p>
+</div>
+
+<p class="muted" style="margin-top:1rem">Mockup — every state rendered at once, nothing hidden behind a click. See <code>docs/plans/phase-2.5-invoice-automation/01-product.md</code>.</p>
+
+</body>
+</html>
