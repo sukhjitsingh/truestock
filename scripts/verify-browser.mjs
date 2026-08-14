@@ -57,6 +57,16 @@ function record(name, ok, detail = "") {
 }
 
 /**
+ * A check that could not run here. It prints, but it does NOT enter `results`,
+ * so it can never be counted as a pass — the denominator shrinks instead of the
+ * numerator growing. Push the reason onto `skipped` as well so it surfaces in
+ * the NOT VERIFIED block at the end; this line scrolls past, that one doesn't.
+ */
+function skip(name, why) {
+  console.log(`SKIP  ${name} — ${why} (not a pass)`);
+}
+
+/**
  * Wait until React has actually attached to `selector` before typing into it.
  *
  * This is not defensive padding. Filling a controlled input before hydration
@@ -66,16 +76,40 @@ function record(name, ok, detail = "") {
  * "". The signal is React's own fiber key on the node, which exists only once
  * hydration has run; `domcontentloaded` and even `networkidle` can both be
  * reached before it.
+ *
+ * ## Why this polls instead of using `page.waitForFunction`
+ *
+ * `waitForFunction` cannot run against a production build. Its polling loop
+ * evaluates a *string* in the page, and the production CSP has no
+ * 'unsafe-eval' — correctly, that is the whole point of it — so the call dies
+ * with `EvalError: Evaluating a string as JavaScript violates ...`.
+ *
+ * What made this expensive to spot: it only fails in the SECOND and later
+ * browser contexts. In the first context Playwright's injected script is
+ * already installed (via `addScriptToEvaluateOnNewDocument`, which bypasses
+ * CSP) and the poll rides on that; a context created later falls back to the
+ * string path. So the login check at the top of this run passed and the role
+ * loop three hundred lines down threw, against the same server and the same
+ * policy. Measured 2026-08-13, both branches, against this build.
+ *
+ * `page.evaluate` is not affected — it calls a function on an existing handle
+ * rather than evaluating source text — so polling it from Node is CSP-safe in
+ * every context. Slightly more code here buys a harness that can verify the
+ * artifact we actually deploy, which is the one that has broken before.
  */
-async function waitForHydration(page, selector = "form") {
-  await page.waitForFunction(
-    (sel) => {
+async function waitForHydration(page, selector = "form", timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const hydrated = await page.evaluate((sel) => {
       const el = document.querySelector(sel);
       return Boolean(el) && Object.keys(el).some((k) => k.startsWith("__react"));
-    },
-    selector,
-    { timeout: 20000 },
-  );
+    }, selector);
+    if (hydrated) return;
+    if (Date.now() >= deadline) {
+      throw new Error(`waitForHydration: "${selector}" never hydrated within ${timeoutMs}ms`);
+    }
+    await page.waitForTimeout(100);
+  }
 }
 
 /**
@@ -133,7 +167,25 @@ const sql = await mysql.createConnection(process.env.DATABASE_URL);
 
 try {
   // ---- sign in ------------------------------------------------------------
-  await page.goto(`${BASE}/login`, { waitUntil: "domcontentloaded" });
+  const loginResponse = await page.goto(`${BASE}/login`, { waitUntil: "domcontentloaded" });
+
+  /**
+   * Whether the target is a production build, read from the policy it serves
+   * rather than from a flag someone has to remember to pass. `middleware.ts`
+   * adds 'unsafe-eval' and `ws: wss:` only when NODE_ENV is development, so the
+   * absence of 'unsafe-eval' IS the production signal — self-describing, and it
+   * cannot drift out of step with the thing it describes.
+   *
+   * It matters because a few checks below are about dev-only surfaces that
+   * production deliberately does not render. Those must SKIP rather than fail:
+   * a red line for a component that is correctly absent trains people to read
+   * past red lines, which is how a real one gets missed.
+   */
+  const loginCsp = loginResponse?.headers()["content-security-policy"] ?? "";
+  const isProductionBuild = loginCsp !== "" && !loginCsp.includes("'unsafe-eval'");
+  console.log(
+    `\ntarget: ${BASE} — ${isProductionBuild ? "PRODUCTION build" : "development build"} (per the served CSP)\n`,
+  );
 
   // The login form must be POST even before hydration: a GET would put the
   // password in the query string, the access log and the Referer header.
@@ -150,9 +202,28 @@ try {
    * unit tests because the unit tests can only check the predicate; this checks
    * what a human actually reads. Only meaningful when the run targets a host
    * Next allows natively.
+   *
+   * And only on a development build. `PreflightOriginCheck` returns null under
+   * NODE_ENV=production on purpose — it reports on `allowedDevOrigins`, which
+   * does not exist in a production build, so rendering it there would be a
+   * verdict about nothing. Its absence is the correct behaviour, not a failure.
    */
   const baseHost = new URL(BASE).hostname;
-  if (baseHost === "localhost" || baseHost === "127.0.0.1" || baseHost.endsWith(".localhost")) {
+  const localHost =
+    baseHost === "localhost" || baseHost === "127.0.0.1" || baseHost.endsWith(".localhost");
+  if (localHost && isProductionBuild) {
+    // Deliberately not `record(..., true)`. A skip counted as a pass inflates
+    // the total with a check that never ran, and prints a green line for it —
+    // which is how a run gets read as "everything is covered" when it isn't.
+    // Skips are loud and separate, and they never move the numerator.
+    skip(
+      "the preflight origin banner does not cry wolf on localhost",
+      "production build; PreflightOriginCheck is inert by design",
+    );
+    skipped.push(
+      "open item 26 — preflight origin banner: dev-only surface, re-run against a dev server to exercise it",
+    );
+  } else if (localHost) {
     const banner = await page
       .getByText(/Origin allowed/i)
       .locator("xpath=ancestor::div[1]")
@@ -742,14 +813,10 @@ try {
     const rolePage = await roleContext.newPage();
     try {
       await rolePage.goto(`${BASE}/login`, { waitUntil: "domcontentloaded" });
-      await rolePage.waitForFunction(
-        () => {
-          const el = document.querySelector("form");
-          return Boolean(el) && Object.keys(el).some((k) => k.startsWith("__react"));
-        },
-        undefined,
-        { timeout: 20000 },
-      );
+      // The shared helper, not an inlined waitForFunction — this is the second
+      // browser context, which is exactly where the CSP-safe polling matters.
+      // See waitForHydration.
+      await waitForHydration(rolePage, "form");
       await rolePage.fill('input[type="email"]', email);
       await rolePage.fill('input[type="password"]', password);
       const ok = await Promise.all([
