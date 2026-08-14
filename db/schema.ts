@@ -74,38 +74,31 @@ import { sql } from "drizzle-orm";
 
 // ---------------------------------------------------------------------------
 // Enums — exactly as spec'd (docs/spec.md §8)
+//
+// Defined in db/enums.ts and re-exported here so this stays the one import
+// server-side code needs. They live in their own Drizzle-free module because
+// lib/validation/* is shared with client components and needs them as values
+// — importing them from here shipped the whole schema to the browser. See the
+// header of db/enums.ts for the failure that caused.
 // ---------------------------------------------------------------------------
 
-export const userRoleEnum = ["owner", "manager", "staff"] as const;
-export const productUnitTypeEnum = ["bottle", "can", "keg"] as const;
-export const barcodePackLevelEnum = ["each", "case"] as const;
-export const countTypeEnum = ["full", "spot", "monthly_close"] as const;
-/**
- * How a location is counted. CLAUDE.md: "the input-mode switch [is] explicit —
- * Speed Rail and Back Bar are tenths, Storeroom is quantities only, and that
- * is driven entirely by location."
- *
- * It lives on `location` as a column because it is a property of the place,
- * not of the screen. The alternative was matching location names in the
- * frontend, which is how three screens end up with three different opinions
- * about whether the Wine Rack takes fill levels.
- *
- *  - `tenths`   — open bottles are the point here; the fill pad is the primary
- *                 input. Sealed quantities are still reachable, because a
- *                 back bar legitimately holds a backup bottle behind the open
- *                 one.
- *  - `quantity` — sealed backstock only. No fill UI at all, per "quantities
- *                 only": offering a fill pad in the storeroom invites someone
- *                 to tap a level on a sealed case.
- */
-export const locationCountModeEnum = ["tenths", "quantity"] as const;
-export const countStatusEnum = [
-  "draft",
-  "in_progress",
-  "submitted",
-  "reviewed",
-  "closed",
-] as const;
+import {
+  userRoleEnum,
+  productUnitTypeEnum,
+  barcodePackLevelEnum,
+  countTypeEnum,
+  locationCountModeEnum,
+  countStatusEnum,
+} from "./enums";
+
+export {
+  userRoleEnum,
+  productUnitTypeEnum,
+  barcodePackLevelEnum,
+  countTypeEnum,
+  locationCountModeEnum,
+  countStatusEnum,
+};
 
 // Reusable audit-timestamp pair. Only added to tables where spec §8 doesn't
 // already define purpose-built lifecycle timestamps (Count has started_at /

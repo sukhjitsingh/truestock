@@ -9,50 +9,21 @@
   only. Designed at 1440px. See the annotation block at the bottom of this
   file for design decisions and open questions.
 -->
+<link rel="stylesheet" href="tokens.css" />
 <style>
-  :root {
-    --radius: 1rem;
-    --background: #f7f7f5; --foreground: #111111;
-    --card: #ffffff; --card-foreground: #111111;
-    --muted: #efefec; --muted-foreground: #6b6b6b;
-    --primary: #0a0a0a; --primary-foreground: #ffffff;
-    --secondary: #efefec; --secondary-foreground: #111111;
-    --accent: #2563eb; --accent-foreground: #ffffff;
-    --destructive: #c4304f; --destructive-foreground: #ffffff;
-    --border: #e4e4e1; --input: #8c8c8c; --ring: #2563eb;
-    --success: #1f7a3d; --success-bg: #e4f5e6;
-    --warning: #92600a; --warning-bg: #fdf0dc;
-    --negative: #b8305a; --negative-bg: #fde8ec;
-    --radius-sm: calc(var(--radius) - 4px); --radius-md: calc(var(--radius) - 2px);
-    --radius-lg: var(--radius); --radius-xl: calc(var(--radius) + 4px);
-    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body { background: var(--background); color: var(--foreground); font-family: var(--font-sans);
-    font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; min-width: 1280px; }
-  h1, h2, h3, p, ol, ul { margin: 0; padding: 0; list-style: none; }
-  button, input { font: inherit; color: inherit; }
-  button { cursor: pointer; background: none; border: none; }
-  svg { display: block; }
-  table { border-collapse: collapse; width: 100%; }
-
-  a, button, input, [tabindex] { outline-offset: 2px; }
-  a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  /* Tokens, reset, focus-visible ring, type scale and color-text utilities
+     all come from tokens.css (generated from app/globals.css — see
+     prototypes/generate-tokens.mjs, P2.7). Only file-specific layout
+     utilities and components live here. */
+  body { min-width: 1280px; }
 
   .flex { display: flex; } .items-center { align-items: center; } .justify-between { justify-content: space-between; }
   .gap-2 { gap: .5rem; } .gap-3 { gap: .75rem; } .mt-1 { margin-top: .25rem; } .mt-2 { margin-top: .5rem; }
-  .mb-3 { margin-bottom: .75rem; } .uppercase { text-transform: uppercase; }
+  .mb-3 { margin-bottom: .75rem; }
 
-  .rounded-md { border-radius: var(--radius-md); } .rounded-lg { border-radius: var(--radius-lg); } .rounded-full { border-radius: 9999px; }
+  .rounded-md { border-radius: var(--radius-md); } .rounded-lg { border-radius: var(--radius-lg); } .rounded-full { border-radius: var(--radius-full); }
   .border { border: 1px solid var(--border); }
   .bg-card { background: var(--card); } .bg-muted { background: var(--muted); }
-  .text-foreground { color: var(--foreground); } .text-muted-foreground { color: var(--muted-foreground); }
-  .text-accent { color: var(--accent); }
-  .text-header-title { font-size: 1.75rem; line-height: 1.15; font-weight: 600; }
-  .text-caption { font-size: .8125rem; line-height: 1.4; }
-  .text-label { font-size: .6875rem; line-height: 1.2; font-weight: 600; letter-spacing: .06em; }
-  .tabular-nums { font-variant-numeric: tabular-nums; }
 
   .app-shell { display: flex; min-height: 100vh; }
   .rail { width: 64px; flex-shrink: 0; background: var(--card); border-right: 1px solid var(--border);
@@ -90,7 +61,12 @@
   .table-card { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--card); }
   thead th { text-align: left; font-size: .75rem; font-weight: 600; color: var(--muted-foreground); background: var(--muted); padding: .625rem .875rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
   th.num, td.num { text-align: right; }
-  th .sort { color: var(--muted-foreground); font-weight: 400; margin-left: .25rem; cursor: pointer; }
+  /* Sort control — a real button inside the th, matching
+     docs/design-system.md §9 "Sort control": never a decorative span with
+     cursor:pointer and no handler (ui-audit.md P1.2). */
+  th .sort-btn { display: inline-flex; align-items: center; gap: .25rem; font: inherit; font-weight: 600; color: var(--muted-foreground); }
+  th .sort-btn:hover { color: var(--foreground); }
+  th .sort-btn svg { flex-shrink: 0; }
   tbody tr { height: 57px; border-bottom: 1px solid var(--border); }
   tbody tr:last-child { border-bottom: none; }
   tbody tr:hover { background: color-mix(in srgb, var(--muted) 55%, transparent); }
@@ -100,16 +76,16 @@
   .count-id-num { color: var(--muted-foreground); font-weight: 400; }
   .type-chip { display: inline-flex; align-items: center; padding: .1875rem .5rem; border-radius: var(--radius-sm); background: var(--muted); font-size: .75rem; }
 
-  .status-pill { display: inline-flex; align-items: center; gap: .3125rem; padding: .1875rem .625rem; border-radius: 9999px; font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .status-pill { display: inline-flex; align-items: center; gap: .3125rem; padding: .1875rem .625rem; border-radius: var(--radius-full); font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
   .status-pill.draft { background: var(--muted); color: var(--muted-foreground); }
   .status-pill.in_progress { background: var(--warning-bg); color: var(--warning); }
   .status-pill.submitted { background: var(--warning-bg); color: var(--warning); }
   .status-pill.reviewed { background: var(--warning-bg); color: var(--warning); }
   .status-pill.closed { background: var(--success-bg); color: var(--success); }
-  .status-dot { width: 6px; height: 6px; border-radius: 9999px; background: currentColor; }
+  .status-dot { width: 6px; height: 6px; border-radius: var(--radius-full); background: currentColor; }
 
   .person { display: flex; align-items: center; gap: .5rem; }
-  .person-dot { width: 22px; height: 22px; border-radius: 9999px; display: flex; align-items: center; justify-content: center; font-size: .625rem; font-weight: 700; color: #fff; flex-shrink: 0; }
+  .person-dot { width: 22px; height: 22px; border-radius: var(--radius-full); display: flex; align-items: center; justify-content: center; font-size: .625rem; font-weight: 700; color: var(--primary-foreground); flex-shrink: 0; }
   .no-value { color: var(--muted-foreground); font-style: italic; font-size: .8125rem; }
   .dash { color: var(--muted-foreground); }
 
@@ -120,7 +96,11 @@
   .role-note { display: none; }
   .role-note[data-active="true"] { display: block; }
 
-  /* ---- prototype chrome (NOT shipped UI) — added at session close ---- */
+  /* ---- prototype chrome (NOT shipped UI) — added at session close ----
+     These two colors are intentionally outside the token set (same
+     reasoning as the letterbox background in count-scan.html): a
+     debug-only overlay marking a demo-only control must read as visually
+     distinct from every real token in the palette, not borrow one. */
   .proto-chrome { position: relative; outline: 2px dashed #C8901A; outline-offset: 7px;
                   border-radius: 8px; }
   .proto-chrome::before { content: "PROTOTYPE ONLY \2014 NOT SHIPPED UI";
@@ -187,17 +167,18 @@
 
       <div class="table-card">
         <table>
+          <caption class="sr-only">Counts, 7 of 7 shown</caption>
           <thead>
             <tr id="thead-row">
-              <th>Count <span class="sort" aria-hidden="true">⇅</span></th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Opened by</th>
-              <th>Started <span class="sort" aria-hidden="true">⇅</span></th>
-              <th>Closed by</th>
-              <th>Closed <span class="sort" aria-hidden="true">⇅</span></th>
-              <th class="num role-block" data-active="true" id="th-value">Total value</th>
-              <th style="width:120px;"></th>
+              <th scope="col" aria-sort="none"><button type="button" class="sort-btn" onclick="toggleSort(this)">Count <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></th>
+              <th scope="col">Type</th>
+              <th scope="col">Status</th>
+              <th scope="col">Opened by</th>
+              <th scope="col" aria-sort="none"><button type="button" class="sort-btn" onclick="toggleSort(this)">Started <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></th>
+              <th scope="col">Closed by</th>
+              <th scope="col" aria-sort="none"><button type="button" class="sort-btn" onclick="toggleSort(this)">Closed <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></th>
+              <th scope="col" class="num role-block" data-active="true" id="th-value">Total value</th>
+              <th scope="col" style="width:120px;"><span class="sr-only">Row actions</span></th>
             </tr>
           </thead>
           <tbody id="tbody"></tbody>
@@ -209,13 +190,13 @@
 
 <script>
   var counts = [
-    { id: 48, type: "Spot", status: "in_progress", openedBy: "Jordan M.", openedColor: "#2563eb", started: "Jul 25, 2026", closedBy: null, closed: null, value: null },
-    { id: 47, type: "Full", status: "closed", openedBy: "Jordan M.", openedColor: "#2563eb", started: "Jul 18, 2026", closedBy: "Alicia R.", closedColor: "#92600a", closed: "Jul 21, 2026", value: "$18,432.60" },
-    { id: 46, type: "Full", status: "closed", openedBy: "Alicia R.", openedColor: "#92600a", started: "Jul 11, 2026", closedBy: "Alicia R.", closedColor: "#92600a", closed: "Jul 14, 2026", value: "$17,312.20" },
-    { id: 45, type: "Monthly close", status: "reviewed", openedBy: "Jordan M.", openedColor: "#2563eb", started: "Jul 4, 2026", closedBy: null, closed: null, value: null },
-    { id: 44, type: "Spot", status: "submitted", openedBy: "Danny K.", openedColor: "#1f7a3d", started: "Jun 30, 2026", closedBy: null, closed: null, value: null },
-    { id: 43, type: "Full", status: "closed", openedBy: "Alicia R.", openedColor: "#92600a", started: "Jun 20, 2026", closedBy: "Alicia R.", closedColor: "#92600a", closed: "Jun 23, 2026", value: "$16,890.75" },
-    { id: 42, type: "Full", status: "draft", openedBy: "Jordan M.", openedColor: "#2563eb", started: "Jun 13, 2026", closedBy: null, closed: null, value: null },
+    { id: 48, type: "Spot", status: "in_progress", openedBy: "Jordan M.", openedColor: "var(--accent)", started: "Jul 25, 2026", closedBy: null, closed: null, value: null },
+    { id: 47, type: "Full", status: "closed", openedBy: "Jordan M.", openedColor: "var(--accent)", started: "Jul 18, 2026", closedBy: "Alicia R.", closedColor: "var(--warning)", closed: "Jul 21, 2026", value: "$18,432.60" },
+    { id: 46, type: "Full", status: "closed", openedBy: "Alicia R.", openedColor: "var(--warning)", started: "Jul 11, 2026", closedBy: "Alicia R.", closedColor: "var(--warning)", closed: "Jul 14, 2026", value: "$17,312.20" },
+    { id: 45, type: "Monthly close", status: "reviewed", openedBy: "Jordan M.", openedColor: "var(--accent)", started: "Jul 4, 2026", closedBy: null, closed: null, value: null },
+    { id: 44, type: "Spot", status: "submitted", openedBy: "Danny K.", openedColor: "var(--success)", started: "Jun 30, 2026", closedBy: null, closed: null, value: null },
+    { id: 43, type: "Full", status: "closed", openedBy: "Alicia R.", openedColor: "var(--warning)", started: "Jun 20, 2026", closedBy: "Alicia R.", closedColor: "var(--warning)", closed: "Jun 23, 2026", value: "$16,890.75" },
+    { id: 42, type: "Full", status: "draft", openedBy: "Jordan M.", openedColor: "var(--accent)", started: "Jun 13, 2026", closedBy: null, closed: null, value: null },
   ];
 
   var statusLabel = { draft: "Draft", in_progress: "In progress", submitted: "Submitted", reviewed: "Reviewed", closed: "Closed" };
@@ -253,6 +234,21 @@
     tr += '<td class="num">' + actionsCell(c) + '</td>';
     tr += '</tr>';
     return tr;
+  }
+
+  // Real sort control (design-system.md §9 "Sort control"): cycles the
+  // owning <th>'s aria-sort through none -> ascending -> descending,
+  // clearing every sibling th first. No actual row re-ordering — this is
+  // a static prototype — but the control is a real, keyboard-reachable
+  // button with a live ARIA state, not a decorative span.
+  function toggleSort(btn) {
+    var th = btn.closest("th");
+    var row = th.parentElement;
+    var current = th.getAttribute("aria-sort");
+    Array.prototype.forEach.call(row.querySelectorAll("th[aria-sort]"), function (t) {
+      if (t !== th) t.setAttribute("aria-sort", "none");
+    });
+    th.setAttribute("aria-sort", current === "ascending" ? "descending" : "ascending");
   }
 
   var tbody = document.getElementById("tbody");

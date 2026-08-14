@@ -10,55 +10,10 @@
   See the annotation block at the bottom of this file for design decisions
   and open questions.
 -->
+<link rel="stylesheet" href="tokens.css" />
 <style>
-  :root {
-    --radius: 1rem;
-    --background: #f7f7f5;
-    --foreground: #111111;
-    --card: #ffffff;
-    --card-foreground: #111111;
-    --muted: #efefec;
-    --muted-foreground: #6b6b6b;
-    --primary: #0a0a0a;
-    --primary-foreground: #ffffff;
-    --secondary: #efefec;
-    --secondary-foreground: #111111;
-    --accent: #2563eb;
-    --accent-foreground: #ffffff;
-    --destructive: #c4304f;
-    --destructive-foreground: #ffffff;
-    --border: #e4e4e1;
-    --input: #8c8c8c;
-    --ring: #2563eb;
-    --header: #0a0a0a;
-    --header-foreground: #ffffff;
-    --success: #1f7a3d;
-    --success-bg: #e4f5e6;
-    --warning: #92600a;
-    --warning-bg: #fdf0dc;
-    --negative: #b8305a;
-    --negative-bg: #fde8ec;
-    --radius-sm: calc(var(--radius) - 4px);
-    --radius-md: calc(var(--radius) - 2px);
-    --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) + 4px);
-    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    background: var(--background); color: var(--foreground);
-    font-family: var(--font-sans); font-variant-numeric: tabular-nums;
-    -webkit-font-smoothing: antialiased; min-width: 1280px;
-  }
-  h1, h2, h3, p, ol, ul { margin: 0; padding: 0; list-style: none; }
-  button, input, select, textarea, label { font: inherit; color: inherit; }
-  button { cursor: pointer; background: none; border: none; }
-  svg { display: block; }
-
-  a, button, input, select, [role="button"], [tabindex] { outline-offset: 2px; }
-  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
-  [role="button"]:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  body { min-width: 1280px; }
+  .text-destructive { color: var(--destructive); }
 
   .flex { display: flex; } .grid { display: grid; } .flex-col { flex-direction: column; }
   .items-center { align-items: center; } .items-start { align-items: flex-start; }
@@ -67,23 +22,13 @@
   .gap-1 { gap: .25rem; } .gap-1_5 { gap: .375rem; } .gap-2 { gap: .5rem; } .gap-3 { gap: .75rem; } .gap-4 { gap: 1rem; }
   .mt-1 { margin-top: .25rem; } .mt-2 { margin-top: .5rem; } .mt-3 { margin-top: .75rem; } .mt-4 { margin-top: 1rem; } .mt-6 { margin-top: 1.5rem; }
   .mb-1 { margin-bottom: .25rem; } .mb-2 { margin-bottom: .5rem; } .mb-3 { margin-bottom: .75rem; }
-  .uppercase { text-transform: uppercase; } .italic { font-style: italic; }
+  .italic { font-style: italic; }
 
   .rounded-sm { border-radius: var(--radius-sm); } .rounded-md { border-radius: var(--radius-md); }
-  .rounded-lg { border-radius: var(--radius-lg); } .rounded-full { border-radius: 9999px; }
+  .rounded-lg { border-radius: var(--radius-lg); } .rounded-full { border-radius: var(--radius-full); }
   .border { border: 1px solid var(--border); }
 
   .bg-card { background: var(--card); } .bg-muted { background: var(--muted); }
-  .text-foreground { color: var(--foreground); } .text-muted-foreground { color: var(--muted-foreground); }
-  .text-accent { color: var(--accent); } .text-destructive { color: var(--destructive); }
-  .text-success { color: var(--success); } .text-warning { color: var(--warning); }
-
-  .text-header-title { font-size: 1.75rem; line-height: 1.15; font-weight: 600; }
-  .text-row-title { font-size: 1.125rem; line-height: 1.3; font-weight: 600; }
-  .text-body { font-size: 1rem; line-height: 1.5; }
-  .text-caption { font-size: .8125rem; line-height: 1.4; }
-  .text-label { font-size: .6875rem; line-height: 1.2; font-weight: 600; letter-spacing: .06em; }
-  .tabular-nums { font-variant-numeric: tabular-nums; }
 
   /* ---- shell (same rail/topbar as office-catalog.html) ---- */
   .app-shell { display: flex; min-height: 100vh; }
@@ -114,7 +59,7 @@
 
   /* ---- product header block ---- */
   .product-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
-  .status-pill { display: inline-flex; align-items: center; padding: .1875rem .625rem; border-radius: 9999px; font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .status-pill { display: inline-flex; align-items: center; padding: .1875rem .625rem; border-radius: var(--radius-full); font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
   .status-pill.active { background: var(--muted); color: var(--foreground); }
   .status-pill.inactive { background: var(--muted); color: var(--muted-foreground); }
   .btn-primary { display: inline-flex; align-items: center; gap: .5rem; height: 36px; padding: 0 1rem; border-radius: var(--radius-md);
@@ -153,7 +98,7 @@
   .barcode-table td { padding: .5rem; border-bottom: 1px solid var(--border); font-size: .875rem; vertical-align: middle; }
   .barcode-table tr:last-child td { border-bottom: none; }
   .barcode-table input, .barcode-table select { height: 34px; border-radius: var(--radius-sm); border: 1px solid var(--input); padding: 0 .5rem; font-size: .8125rem; width: 100%; }
-  .pill-mini { display: inline-flex; align-items: center; padding: .0625rem .5rem; border-radius: 9999px; font-size: .6875rem; font-weight: 600; background: var(--muted); color: var(--foreground); }
+  .pill-mini { display: inline-flex; align-items: center; padding: .0625rem .5rem; border-radius: var(--radius-full); font-size: .6875rem; font-weight: 600; background: var(--muted); color: var(--foreground); }
   .pill-mini.primary { background: var(--accent); color: var(--accent-foreground); }
   .icon-btn-sm { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); color: var(--muted-foreground); }
   .icon-btn-sm:hover { background: var(--muted); }
@@ -174,7 +119,13 @@
 
   .waste-note { font-size: .75rem; color: var(--muted-foreground); margin-top: .375rem; }
 
-  /* ---- prototype chrome (NOT shipped UI) — added at session close ---- */
+  /* ---- prototype chrome (NOT shipped UI) ----
+     The two hex values below (#C8901A outline, #8A6206 label text) are the
+     only intentional non-token colors in this file. They mark demo-only
+     controls (the role-preview toggle) that will never ship, so they are
+     deliberately NOT tokenized — same precedent as count-scan.html's
+     letterbox background. Every other color in this file comes from
+     tokens.css. */
   .proto-chrome { position: relative; outline: 2px dashed #C8901A; outline-offset: 7px;
                   border-radius: 8px; }
   .proto-chrome::before { content: "PROTOTYPE ONLY \2014 NOT SHIPPED UI";
@@ -356,13 +307,14 @@
           <div class="section-title">Barcodes</div>
           <div class="section-sub">A product has many barcodes — a bottle UPC and a case UPC are different codes with different <code>pack_level</code>. This is a list, not a single UPC field.</div>
           <table class="barcode-table">
+            <caption class="sr-only">Barcodes for Bacardí Superior Rum, 1 of 1 shown</caption>
             <thead>
               <tr>
-                <th style="width:44%;">Barcode</th>
-                <th style="width:18%;">Format</th>
-                <th style="width:16%;">Pack level</th>
-                <th style="width:14%;">Primary</th>
-                <th style="width:8%;"></th>
+                <th scope="col" style="width:44%;">Barcode</th>
+                <th scope="col" style="width:18%;">Format</th>
+                <th scope="col" style="width:16%;">Pack level</th>
+                <th scope="col" style="width:14%;">Primary</th>
+                <th scope="col" style="width:8%;"><span class="sr-only">Row actions</span></th>
               </tr>
             </thead>
             <tbody>

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ClipboardList } from "lucide-react";
+import { ChevronRight, ClipboardList } from "lucide-react";
 import { requireUser } from "@/lib/current-user";
 import { getActiveCountAction, getCountTotalsAction } from "@/app/actions/counts";
 import { Card } from "@/components/ui/card";
@@ -32,31 +32,38 @@ export default async function CountHomePage() {
         <p className="mb-3 text-label uppercase text-muted-foreground">Current count</p>
 
         {activeCount ? (
-          <Link href={`/count/${activeCount.id}`} className="block">
-            <Card className="flex items-start gap-3">
-              <div className="flex size-16 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                <ClipboardList className="size-7" aria-hidden="true" />
-              </div>
-              <div className="min-w-0 flex-1">
+          <Card className="flex items-start gap-3">
+            <div className="flex size-16 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+              <ClipboardList className="size-7" aria-hidden="true" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-start justify-between gap-2">
                 <h2 className="text-row-title text-card-foreground">Count #{activeCount.id}</h2>
-                <p className="text-row-subtitle text-muted-foreground">
-                  {activeCount.type.replace(/_/g, " ")} &middot; started{" "}
-                  {formatDate(activeCount.startedAt)}
-                </p>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <StatusPill tone={countStatusTone(activeCount.status)}>
-                    {countStatusLabel(activeCount.status)}
-                  </StatusPill>
-                  {totals?.ok ? (
-                    <span className="text-caption text-muted-foreground">
-                      {totals.data.lineCount} lines &middot;{" "}
-                      {formatUnits(totals.data.totalUnits)} units
-                    </span>
-                  ) : null}
-                </div>
+                <Link
+                  href={`/count/${activeCount.id}`}
+                  aria-label={`View count #${activeCount.id}`}
+                  className="flex size-tap-min shrink-0 items-center justify-center text-muted-foreground"
+                >
+                  <ChevronRight className="size-5" aria-hidden="true" />
+                </Link>
               </div>
-            </Card>
-          </Link>
+              <p className="text-row-subtitle text-muted-foreground">
+                {activeCount.type.replace(/_/g, " ")} &middot; started{" "}
+                {formatDate(activeCount.startedAt)}
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <StatusPill tone={countStatusTone(activeCount.status)}>
+                  {countStatusLabel(activeCount.status)}
+                </StatusPill>
+                {totals?.ok ? (
+                  <span className="text-caption text-muted-foreground">
+                    {totals.data.lineCount} lines &middot;{" "}
+                    {formatUnits(totals.data.totalUnits)} units
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          </Card>
         ) : (
           <Card>
             <p className="text-row-subtitle text-muted-foreground">

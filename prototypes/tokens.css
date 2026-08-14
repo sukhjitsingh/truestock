@@ -1,0 +1,193 @@
+/*
+ * prototypes/tokens.css — GENERATED FILE. Do not hand-edit.
+ *
+ * Produced by `node prototypes/generate-tokens.mjs` from app/globals.css.
+ * Every prototype HTML file links this stylesheet instead of carrying its
+ * own copy of the token set, so a future token change in app/globals.css
+ * propagates here by re-running the generator instead of by re-drifting
+ * eleven files one at a time (docs/plans/phase-2-ui-redesign/ui-audit.md,
+ * P2.7). See docs/design-system.md for what each token means.
+ *
+ * Regenerate after touching app/globals.css:
+ *   node prototypes/generate-tokens.mjs
+ *
+ * Generated 2026-08-13.
+ */
+
+:root {
+  --radius: 1rem;
+  --background: #f7f7f5;
+  --foreground: #111111;
+  --card: #ffffff;
+  --card-foreground: #111111;
+  --popover: #ffffff;
+  --popover-foreground: #111111;
+  --primary: #0a0a0a;
+  --primary-foreground: #ffffff;
+  --secondary: #efefec;
+  --secondary-foreground: #111111;
+  --muted: #efefec;
+  --muted-foreground: #6b6b6b;
+  --accent: #2563eb;
+  --accent-foreground: #ffffff;
+  --destructive: #c4304f;
+  --destructive-foreground: #ffffff;
+  --success: #1f7a3d;
+  --success-bg: #e4f5e6;
+  --warning: #92600a;
+  --warning-bg: #fdf0dc;
+  --negative: #b8305a;
+  --negative-bg: #fde8ec;
+  --border: #e4e4e1;
+  --input: #8c8c8c;
+  --ring: #2563eb;
+  --header: #0a0a0a;
+  --header-foreground: #ffffff;
+
+  /* radius scale — shadcn calc-from-base convention, mirrors app/globals.css
+     @theme inline. --radius-full is NOT in app/globals.css (Tailwind's own
+     `rounded-full` utility needs no token) but the prototypes have no
+     Tailwind, so it is named here to stop the 999px/9999px split the audit
+     found between the counting app and everything else. */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-full: 9999px;
+
+  /* spacing — bare names, re-exposed from app/globals.css's --spacing-* keys */
+  --card-gap: 0.75rem;
+  --card-pad: 1rem;
+  --bar-pad: 1rem;
+  --section-gap: 1.5rem;
+  --tap-min: 2.75rem;
+  --tap-primary: 3.5rem;
+  --action-bar: 6rem;
+  --row-office: 3.5625rem;
+  --safe-top: max(0px, env(safe-area-inset-top));
+  --safe-bottom: max(var(--bar-pad), env(safe-area-inset-bottom));
+
+  /* font stack — app/globals.css uses next/font CSS vars (--font-geist-sans)
+     that only exist inside the Next.js app; these prototypes are static
+     files opened with no build step and no network fetch, so they fall
+     back to the OS system-UI stack instead. This is the one token in this
+     file that is not literally copied from app/globals.css for that reason —
+     every prototype used to invent its own slightly different fallback
+     stack (one included "Inter", which ships nowhere else); this is the
+     single agreed value. */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.dark {
+  --background: #0b0b0c;
+  --foreground: #f5f5f4;
+  --card: #17181a;
+  --card-foreground: #f5f5f4;
+  --popover: #17181a;
+  --popover-foreground: #f5f5f4;
+  --primary: #f5f5f4;
+  --primary-foreground: #0a0a0a;
+  --secondary: #1e1e21;
+  --secondary-foreground: #f5f5f4;
+  --muted: #131315;
+  --muted-foreground: #a8a8a5;
+  --accent: #60a5fa;
+  --accent-foreground: #0a0a0a;
+  --destructive: #d33039;
+  --destructive-foreground: #ffffff;
+  --success: #6fcf8e;
+  --success-bg: #14301f;
+  --warning: #f0b429;
+  --warning-bg: #3a2a10;
+  --negative: #f0718a;
+  --negative-bg: #3a1620;
+  --border: #232326;
+  --input: #6b6b6b;
+  --ring: #60a5fa;
+  --header: #121317;
+  --header-foreground: #f5f5f4;
+}
+
+/* ===================================================================
+   RESET + BASE — identical across all eleven files before this existed;
+   now declared once.
+   =================================================================== */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, p, ol, ul { margin: 0; padding: 0; list-style: none; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: none; }
+a { color: inherit; text-decoration: none; }
+svg { display: block; }
+table { border-collapse: collapse; width: 100%; }
+
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
+textarea:focus-visible, [role="button"]:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Numeric column alignment — mirrors app/globals.css's `.num` utility.
+   Right-align only; tabular-nums is already global on body above. */
+.num { text-align: right; }
+
+/* Screen-reader-only content — a real clip-based implementation, not the
+   `position:absolute; width:1px; height:1px; overflow:hidden` hack a few
+   prototypes hand-rolled inline, which stays in normal document flow and
+   can be focused into view (ui-audit.md P1.4). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ===================================================================
+   TYPE SCALE — mirrors the --text-* theme keys in app/globals.css.
+   Sentence case in source, this class only adds size/weight/leading —
+   pair with the .uppercase utility for label/screen-title copy
+   (docs/design-system.md §4, ui-spec-mobile.md §12: never hardcode
+   literal caps in HTML).
+   =================================================================== */
+.text-numeral-lg { font-size: 3rem; line-height: 1; font-weight: 700; }
+.text-header-title { font-size: 1.75rem; line-height: 1.15; font-weight: 600; }
+.text-numeral-md { font-size: 1.5rem; line-height: 1.1; font-weight: 600; }
+.text-row-title { font-size: 1.125rem; line-height: 1.3; font-weight: 600; }
+.text-numeral-sm { font-size: 1.0625rem; line-height: 1.2; font-weight: 600; }
+.text-row-subtitle { font-size: 0.9375rem; line-height: 1.4; font-weight: 400; }
+.text-body { font-size: 1rem; line-height: 1.5; }
+.text-screen-title { font-size: 0.8125rem; line-height: 1.2; font-weight: 600; letter-spacing: 0.06em; }
+.text-caption { font-size: 0.8125rem; line-height: 1.4; }
+.text-label { font-size: 0.6875rem; line-height: 1.2; font-weight: 600; letter-spacing: 0.06em; }
+.uppercase { text-transform: uppercase; }
+.tabular-nums { font-variant-numeric: tabular-nums; }
+
+/* ===================================================================
+   COLOR TEXT UTILITIES — the type-scale classes above never bake in a
+   color (matching app/globals.css: size/weight/leading only); several
+   prototypes previously baked --muted-foreground straight into
+   .text-row-subtitle / .text-caption instead of pairing a color utility
+   in markup, which is how six of the eleven files ended up with a type
+   scale that silently disagreed with the other five. These are the
+   color utilities every file already needs somewhere.
+   =================================================================== */
+.text-foreground { color: var(--foreground); }
+.text-card-foreground { color: var(--card-foreground); }
+.text-muted-foreground { color: var(--muted-foreground); }
+.text-accent { color: var(--accent); }
+.text-success { color: var(--success); }
+.text-warning { color: var(--warning); }
+.text-negative { color: var(--negative); }

@@ -156,10 +156,13 @@ export function FillEntry({
             onClick={() => onCorrect?.(draft)}
             className="flex min-h-tap-primary flex-[1.4] flex-col items-center justify-center gap-0.5 rounded-md bg-primary px-2 text-primary-foreground disabled:opacity-50"
           >
-            <span className="text-label uppercase">
-              Replace with {draft.length} {draft.length === 1 ? "bottle" : "bottles"}
+            <span className="flex items-baseline gap-1">
+              <span className="text-label uppercase">Replace with</span>
+              <span className="text-numeral-sm uppercase tabular-nums">
+                {draft.length} {draft.length === 1 ? "bottle" : "bottles"}
+              </span>
             </span>
-            <span className="text-caption tabular-nums opacity-80">
+            <span className="text-caption tabular-nums text-primary-foreground/70">
               was {was.toFixed(1)} ·{" "}
               <span className={delta >= 0 ? "text-success" : "text-negative"}>
                 {delta >= 0 ? "+" : "−"}
@@ -277,11 +280,16 @@ export function FillEntry({
             "flex min-h-tap-primary flex-[1.4] flex-col items-center justify-center gap-0.5 rounded-md bg-primary px-2 text-primary-foreground disabled:opacity-50",
           )}
         >
-          <span className="text-label uppercase">
-            Add {fills.length || ""} {fills.length === 1 ? "bottle" : "bottles"}
+          <span className="flex items-baseline gap-1">
+            <span className="text-label uppercase">Add</span>
+            {fills.length > 0 ? (
+              <span className="text-numeral-sm uppercase tabular-nums">
+                {fills.length} {fills.length === 1 ? "bottle" : "bottles"}
+              </span>
+            ) : null}
           </span>
           {fills.length > 0 ? (
-            <span className="text-caption tabular-nums opacity-80">
+            <span className="text-caption tabular-nums text-primary-foreground/70">
               +{total.toFixed(1)} units
             </span>
           ) : null}

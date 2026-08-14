@@ -141,6 +141,10 @@ export function CountLeg({
   const [pendingWrites, setPendingWrites] = useState(0);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [query, setQuery] = useState("");
+  /** Target of the floating bar's search button — see the bar at the bottom
+   *  of this component's JSX for why it focuses this field rather than
+   *  opening a second one. */
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [results, setResults] = useState<ProductSummary[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -841,9 +845,10 @@ export function CountLeg({
       </div>
 
       <div className="px-bar-pad pt-4">
-        <div className="flex h-tap-min items-center gap-2 rounded-md border border-input bg-card px-4">
+        <div className="flex h-tap-min items-center gap-2 rounded-md border border-input bg-card px-4 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50">
           <Search className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
           <input
+            ref={searchInputRef}
             type="search"
             value={query}
             onChange={(e) => void search(e.target.value)}
@@ -930,14 +935,58 @@ export function CountLeg({
         />
       </div>
 
-      <div
-        className="fixed inset-x-0 bottom-0 z-40 flex gap-3 border-t border-border bg-background px-bar-pad pt-bar-pad"
-        style={{ paddingBottom: "max(var(--spacing-bar-pad), env(safe-area-inset-bottom))" }}
-      >
+      {/*
+        The floating quick-access bar.
+
+        Scan and search live at the TOP of this screen, and this screen grows —
+        after forty bottles the "Just counted" list is several viewports long,
+        so reaching either one meant scrolling back up with the hand that is
+        not holding a bottle. That is the whole reason this bar exists: the two
+        controls used constantly are always within thumb reach, in the same
+        place, no matter how far down the list you are.
+
+        Scan is the wide accent target because it is what happens 150 times a
+        count. Search is a 44px icon beside it rather than a second wide button
+        — it is the fallback for damaged labels and house infusions, not the
+        primary path, and CLAUDE.md's rule is that it is always *beside* scan,
+        never behind it. It focuses the real field at the top rather than
+        opening a second search UI, so there is exactly one search input on
+        this screen and no question about which one is live.
+
+        Finish section stays, in the same place it already was, and stays
+        `outline` — promoting it to a filled button next to Scan would put the
+        leg-ending action and the most-repeated action at the same visual
+        weight, one thumb-width apart.
+      */}
+      <div className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-2 border-t border-border bg-background px-bar-pad pt-bar-pad pb-safe-bottom">
+        <Button
+          variant="outline"
+          size="icon"
+          aria-label="Search products"
+          onClick={() => {
+            searchInputRef.current?.scrollIntoView({ block: "center" });
+            searchInputRef.current?.focus();
+          }}
+        >
+          <Search className="size-5" aria-hidden="true" />
+        </Button>
+        <Button
+          variant="accent"
+          size="primary"
+          className="flex flex-1 items-center justify-center gap-2"
+          onClick={() => setScannerOpen(true)}
+        >
+          <ScanLine className="size-5" aria-hidden="true" />
+          <span className="text-label uppercase">Scan</span>
+        </Button>
+        {/* Still "Finish section" verbatim — AGENTS.md's counting loop and the
+            pick-location screen's own copy both name this button by that
+            exact string. Shortening it to "Finish" here would leave two
+            documents pointing at a control that no longer exists. */}
         <Button
           variant="outline"
           size="primary"
-          className="flex-1"
+          className="whitespace-nowrap"
           onClick={() => setPhase({ kind: "pick-location" })}
         >
           Finish section

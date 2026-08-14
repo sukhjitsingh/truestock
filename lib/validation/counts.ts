@@ -28,7 +28,8 @@
  * write, not a new one).
  */
 import { z } from "zod";
-import { countTypeEnum, countStatusEnum } from "@/db/schema";
+// db/enums.ts, not db/schema.ts — see the note in lib/validation/catalog.ts.
+import { countTypeEnum, countStatusEnum } from "@/db/enums";
 
 export const countTypeSchema = z.enum(countTypeEnum);
 export const countStatusSchema = z.enum(countStatusEnum);

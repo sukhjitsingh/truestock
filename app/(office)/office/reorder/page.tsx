@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireOfficeUser } from "@/lib/current-user";
 import { reorderListAction } from "@/app/actions/reports";
 import { formatDate } from "@/lib/utils";
+import { PageHeader } from "@/components/office/page-header";
 import { ReorderVendorBlock } from "@/components/office/reorder-vendor-block";
 
 export const metadata = { title: "Reorder · Truestock" };
@@ -41,20 +42,25 @@ export default async function ReorderPage() {
 
   return (
     <div>
-      <h1 className="text-header-title">Reorder</h1>
-      {asOfCountId == null ? (
-        <p className="mt-4 text-row-subtitle text-muted-foreground">
-          Nothing to suggest yet — on-hand comes from the most recent{" "}
-          <strong className="text-foreground">closed</strong> count, and there isn&rsquo;t one.
-          An in-progress count can&rsquo;t be used: every section not yet walked would read as
-          zero and put the whole catalog on this list.
-        </p>
-      ) : (
-        <p className="mt-1 text-row-subtitle text-muted-foreground">
-          On hand as of count #{asOfCountId} &middot; {items.length}{" "}
-          {items.length === 1 ? "item" : "items"} at or below par
-        </p>
-      )}
+      <PageHeader
+        title="Reorder"
+        subtitle={
+          asOfCountId == null ? (
+            <p className="text-row-subtitle text-muted-foreground">
+              Nothing to suggest yet — on-hand comes from the most recent{" "}
+              <strong className="text-foreground">closed</strong> count, and there isn&rsquo;t
+              one. An in-progress count can&rsquo;t be used: every section not yet walked would
+              read as zero and put the whole catalog on this list.
+            </p>
+          ) : (
+            <p className="text-row-subtitle text-muted-foreground">
+              On hand as of count #{asOfCountId}
+              {asOfClosedAtLabel ? ` · ${asOfClosedAtLabel}` : ""} &middot; {items.length}{" "}
+              {items.length === 1 ? "item" : "items"} at or below par
+            </p>
+          )
+        }
+      />
 
       {/*
         Two very different empty states, deliberately not sharing a message.

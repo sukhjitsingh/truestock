@@ -263,6 +263,32 @@ Written, reviewed, typechecked — never observed working.
 
 ## Recent history
 
+- **2026-08-13** — **The catalog page's "hang" was Drizzle in the browser
+  bundle, and the back office got the left rail it was specified with.**
+  `lib/validation/*` is imported by client components and took its enum
+  tuples as *values* from `db/schema.ts`, so every office form pulled
+  `drizzle-orm/mysql-core` and all the table definitions into the client
+  bundle; Turbopack then spent 125–152 s compiling that on demand while the
+  server-rendered HTML sat on screen returning 200 and ignoring every click.
+  Extracting the tuples to a dependency-free `db/enums.ts` cut the worst
+  chunk to 1238 ms (25 chunks → 17, zero Drizzle). Same failure shape as the
+  static-CSP break: renders fine, status 200, completely inert.
+  A second theory — that a reference-unstable `data` array drove TanStack's
+  `autoResetPageIndex` into a render loop — was **wrong**, and is recorded as
+  wrong in `components/office/catalog-table.tsx`: instrumentation showed at
+  most three renders, and the un-memoized original completed every
+  category-pill click in 151–710 ms. The memoization stayed, measured and
+  labelled as the ~20% optimization it actually is (308/638/315/114/350 ms).
+  Separately, `app/(office)/layout.tsx` now renders
+  `prototypes/office-catalog.html`'s shell — a 64 px icon rail on the left
+  (`components/office/office-rail.tsx`, replacing the top `OfficeNav`) plus a
+  60 px top bar carrying breadcrumb and account only. Global search,
+  notifications and messages are omitted on every screen rather than present
+  on one, per `ui-spec-web.md` §2; the rail's expand chevron is wired to a
+  real 13 rem labelled state rather than shipped inert, per `ui-audit.md`
+  P0.7. **197 integration tests pass**; verified by opening all seven office
+  routes plus two detail routes in a browser, not by status code.
+
 - **2026-08-12** — **Phases 1 and 1.5 built through the 4-gate workflow: the
   app now sets itself up.** Seven slices, planned in
   `docs/plans/phase-1-to-1.5/` before any code existed, then built by subagents

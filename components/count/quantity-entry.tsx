@@ -145,7 +145,7 @@ export function QuantityEntry({
               aria-selected={mode === m}
               onClick={() => setMode(m)}
               className={cn(
-                "min-h-tap-min rounded-sm text-label uppercase",
+                "min-h-tap-primary rounded-sm text-label uppercase",
                 // Brand blue marks the selected segment. design-system.md §3
                 // sanctions accent for selected states in forms and nav —
                 // this is a UI mode, not a stock status, so amber (which
@@ -216,12 +216,13 @@ export function QuantityEntry({
           onClick={() => onSubmit({ mode, cases, eaches })}
           className="flex min-h-tap-primary flex-[1.4] flex-col items-center justify-center gap-0.5 rounded-md bg-primary px-2 text-primary-foreground disabled:opacity-50"
         >
-          <span className="text-label uppercase">
-            {mode === "add"
-              ? `Add ${describe(cases, eaches)}`
-              : `Set to ${describeAfter(cases, eaches)}`}
+          <span className="flex items-baseline gap-1">
+            <span className="text-label uppercase">{mode === "add" ? "Add" : "Set to"}</span>
+            <span className="text-numeral-sm uppercase tabular-nums">
+              {mode === "add" ? describe(cases, eaches) : describeAfter(cases, eaches)}
+            </span>
           </span>
-          <span className="text-caption tabular-nums opacity-80">
+          <span className="text-caption tabular-nums text-primary-foreground/70">
             {mode === "add"
               ? `${describe(currentCases, currentEaches)} → ${describe(nextCases, nextEaches)}`
               : `was ${describe(currentCases, currentEaches)}${

@@ -3,6 +3,16 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Check, Copy, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  TableContainer,
+  Table,
+  TableCaption,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table";
 import { formatUnits } from "@/lib/utils";
 import { formatReorderOrderText } from "@/lib/reorder-format";
 import type { ReorderItem } from "@/lib/domain/reports";
@@ -127,54 +137,43 @@ export function ReorderVendorBlock({
           </Button>
         </div>
       </div>
-      <div className="overflow-x-auto rounded-md border border-border">
-        <table className="w-full min-w-[34rem] border-collapse text-left">
-          <thead>
-            <tr className="border-b border-border">
-              <th scope="col" className="py-2 pl-4 text-label uppercase text-muted-foreground">
-                Product
-              </th>
-              <th
-                scope="col"
-                className="py-2 pr-4 text-right text-label uppercase text-muted-foreground"
-              >
-                On hand
-              </th>
-              <th
-                scope="col"
-                className="py-2 pr-4 text-right text-label uppercase text-muted-foreground"
-              >
-                Par
-              </th>
-              <th
-                scope="col"
-                className="py-2 pr-4 text-right text-label uppercase text-muted-foreground"
-              >
-                Order
-              </th>
-            </tr>
-          </thead>
-          <tbody>
+      <TableContainer className="rounded-md border border-border">
+        <Table className="min-w-[34rem]">
+          <TableCaption>{vendorName} reorder, {items.length} items</TableCaption>
+          <TableHeader>
+            <TableRow interactive={false}>
+              <TableHead>Product</TableHead>
+              <TableHead numeric>On hand</TableHead>
+              <TableHead numeric>Par</TableHead>
+              <TableHead numeric>Order</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {items.map((item) => (
-              <tr key={item.productId} className="border-b border-border last:border-none">
-                <td className="py-3 pl-4 text-row-subtitle text-foreground">
-                  {item.productName}
-                  <span className="ml-2 text-caption text-muted-foreground">{item.category}</span>
-                </td>
-                <td className="py-3 pr-4 text-right text-row-subtitle tabular-nums text-muted-foreground">
+              <TableRow key={item.productId} interactive={false}>
+                <TableCell>
+                  <span
+                    className="block max-w-[16rem] truncate text-row-subtitle text-foreground"
+                    title={item.productName}
+                  >
+                    {item.productName}
+                  </span>
+                  <span className="text-caption text-muted-foreground">{item.category}</span>
+                </TableCell>
+                <TableCell numeric className="tabular-nums text-muted-foreground">
                   {formatUnits(item.onHand)}
-                </td>
-                <td className="py-3 pr-4 text-right text-row-subtitle tabular-nums text-muted-foreground">
+                </TableCell>
+                <TableCell numeric className="tabular-nums text-muted-foreground">
                   {formatUnits(item.parLevel)}
-                </td>
-                <td className="py-3 pr-4 text-right text-numeral-sm tabular-nums text-foreground">
+                </TableCell>
+                <TableCell numeric className="text-numeral-sm tabular-nums text-foreground">
                   {formatUnits(item.suggestedOrderQty)}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
-      </div>
+          </TableBody>
+        </Table>
+      </TableContainer>
     </section>
   );
 }

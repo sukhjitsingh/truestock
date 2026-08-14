@@ -45,7 +45,7 @@ export function CountTabBar({ role }: { role: Role }) {
             href={tab.href}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "flex min-h-tap-min flex-col items-center justify-center gap-1 pb-[env(safe-area-inset-bottom)]",
+              "flex min-h-tap-min flex-col items-center justify-center gap-1 pb-safe-bottom",
               active ? "text-foreground" : "text-muted-foreground",
             )}
           >

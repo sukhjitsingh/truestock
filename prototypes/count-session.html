@@ -4,24 +4,12 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Truestock — Count Session (prototype)</title>
+<link rel="stylesheet" href="tokens.css" />
 <style>
-  :root{
-    --background:#0B0B0C;--foreground:#F5F5F4;--card:#17181A;--card-foreground:#F5F5F4;
-    --muted:#131315;--muted-foreground:#A8A8A5;--primary:#F5F5F4;--primary-foreground:#0A0A0A;
-    --secondary:#1E1E21;--secondary-foreground:#F5F5F4;--accent:#60A5FA;--accent-foreground:#0A0A0A;
-    --destructive:#D33039;--destructive-foreground:#FFFFFF;--border:#232326;--input:#6B6B6B;--ring:#60A5FA;
-    --header:#121317;--header-foreground:#F5F5F4;
-    --success:#6FCF8E;--success-bg:#14301F;--warning:#F0B429;--warning-bg:#3A2A10;--negative:#F0718A;--negative-bg:#3A1620;
-    --radius-sm:12px;--radius-md:14px;--radius-lg:16px;--radius-xl:20px;
-    --card-gap:12px;--card-pad:16px;--bar-pad:16px;--section-gap:24px;--tap-min:44px;--tap-primary:56px;
-  }
-  *{box-sizing:border-box;}
-  html,body{margin:0;padding:0;}
-  body{background:#050506;color:var(--foreground);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
-    font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;}
-  :focus-visible{outline:2px solid var(--ring);outline-offset:2px;}
-  button{cursor:pointer;font-family:inherit;}
-  a{color:inherit;text-decoration:none;}
+  /* Outer letterbox background is intentionally darker than --background
+     (#050506 vs #0B0B0C) — this is device-frame chrome around the 390px
+     mockup, not a token; the app surface itself uses --background. */
+  body{ background:#050506; }
 
   .proto-bar{max-width:390px;margin:0 auto;padding:10px 12px;border:1px dashed #3a3a3f;border-bottom:none;
     background:#111114;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8a8a90;display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
@@ -43,26 +31,15 @@
     border:1px solid var(--border);border-top:none;}
   .app.has-bar{padding-bottom:96px;}
 
-  .text-numeral-lg{font-size:48px;font-weight:700;line-height:1;}
-  .text-header-title{font-size:28px;font-weight:600;line-height:1.15;}
-  .text-numeral-md{font-size:24px;font-weight:600;line-height:1.1;}
-  .text-row-title{font-size:18px;font-weight:600;line-height:1.3;}
-  .text-numeral-sm{font-size:17px;font-weight:600;line-height:1.2;}
-  .text-row-subtitle{font-size:15px;font-weight:400;line-height:1.4;color:var(--muted-foreground);}
-  .text-body{font-size:16px;font-weight:400;line-height:1.5;}
-  .text-screen-title{font-size:13px;font-weight:600;line-height:1.2;letter-spacing:.06em;text-transform:uppercase;}
-  .text-caption{font-size:13px;font-weight:400;line-height:1.4;color:var(--muted-foreground);}
-  .text-label{font-size:11px;font-weight:600;line-height:1.2;letter-spacing:.06em;text-transform:uppercase;}
-
   .detail-header{border-radius:0 0 var(--radius-xl) var(--radius-xl);background:var(--header);color:var(--header-foreground);
     padding:20px var(--bar-pad) 28px;}
   .icon-btn{width:44px;height:44px;min-width:44px;display:flex;align-items:center;justify-content:center;
-    border-radius:999px;border:1px solid rgba(245,245,244,.2);background:transparent;color:inherit;}
+    border-radius:var(--radius-full);border:1px solid rgba(245,245,244,.2);background:transparent;color:inherit;}
   .header-row{display:flex;align-items:center;justify-content:space-between;}
   .header-pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
-  .pill-outline{display:inline-flex;align-items:center;border-radius:999px;padding:4px 12px;font-size:11px;font-weight:600;
+  .pill-outline{display:inline-flex;align-items:center;border-radius:var(--radius-full);padding:4px 12px;font-size:11px;font-weight:600;
     letter-spacing:.06em;text-transform:uppercase;border:1px solid rgba(245,245,244,.25);color:var(--header-foreground);}
-  .pill{display:inline-flex;align-items:center;border-radius:999px;padding:4px 12px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;}
+  .pill{display:inline-flex;align-items:center;border-radius:var(--radius-full);padding:4px 12px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;}
   .pill-success{background:var(--success-bg);color:var(--success);}
   .pill-warning{background:var(--warning-bg);color:var(--warning);}
   .pill-neutral{background:rgba(245,245,244,.12);color:var(--header-foreground);}
@@ -87,7 +64,7 @@
   .timeline{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;}
   .timeline li{display:flex;gap:12px;}
   .node-col{display:flex;flex-direction:column;align-items:center;}
-  .node{width:12px;height:12px;border-radius:999px;flex-shrink:0;}
+  .node{width:12px;height:12px;border-radius:var(--radius-full);flex-shrink:0;}
   .node-done{background:var(--success);}
   .node-current{border:2px solid var(--accent);background:var(--background);}
   .node-upcoming{border:2px solid var(--input);background:var(--background);}
@@ -169,8 +146,8 @@
     </div>
     <h1 class="text-header-title" style="margin:14px 0 0">Count #1247</h1>
     <div class="header-pills">
-      <span class="pill-outline">FULL COUNT</span>
-      <span class="pill" id="statusPill">REVIEWED</span>
+      <span class="pill-outline">Full count</span>
+      <span class="pill" id="statusPill">Reviewed</span>
     </div>
     <div class="header-meta">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
@@ -184,7 +161,7 @@
   </div>
 
   <div class="section">
-    <div class="section-label"><span class="text-label" style="color:var(--muted-foreground)">Progress</span></div>
+    <div class="section-label"><span class="text-label uppercase text-muted-foreground">Progress</span></div>
     <div class="progress-card">
       <div class="progress-grid">
         <div class="progress-item">
@@ -197,7 +174,7 @@
         </div>
       </div>
       <div class="value-row" id="valueRow">
-        <span class="text-caption">Total value</span>
+        <span class="text-caption text-muted-foreground">Total value</span>
         <span class="text-numeral-md tabular" id="valueAmount">$1,842.60</span>
       </div>
       <p class="excluded-note">9 priced lines &middot; 33 unpriced lines excluded from valuation (no cost on file yet — normal at this stage of the catalog)</p>
@@ -205,14 +182,14 @@
   </div>
 
   <div class="section">
-    <div class="section-label"><span class="text-label" style="color:var(--muted-foreground)">Status</span></div>
+    <div class="section-label"><span class="text-label uppercase text-muted-foreground">Status</span></div>
     <ol class="timeline" id="timeline"></ol>
   </div>
 
   <div class="section">
     <div class="section-label">
-      <span class="text-label" style="color:var(--muted-foreground)">Counted lines</span>
-      <span class="text-caption">42</span>
+      <span class="text-label uppercase text-muted-foreground">Counted lines</span>
+      <span class="text-caption text-muted-foreground">42</span>
     </div>
     <div class="lines" id="linesList">
 
@@ -220,7 +197,7 @@
         <div class="card-glyph" aria-hidden="true">SP</div>
         <div class="row-body">
           <div class="row-top"><h3 class="text-row-title">Tito's Handmade Vodka</h3></div>
-          <p class="text-row-subtitle row-sub">750ml &middot; Back Bar</p>
+          <p class="text-row-subtitle row-sub text-muted-foreground">750ml &middot; Back Bar</p>
           <div class="qty-value has-value" data-money-row>
             <span class="text-numeral-sm">4 ea</span>
             <span class="text-numeral-sm val tabular" data-cost="63.96">$63.96</span>
@@ -232,7 +209,7 @@
         <div class="card-glyph" aria-hidden="true">SP</div>
         <div class="row-body">
           <div class="row-top"><h3 class="text-row-title">Bacardi Superior Rum</h3></div>
-          <p class="text-row-subtitle row-sub">750ml &middot; Storeroom</p>
+          <p class="text-row-subtitle row-sub text-muted-foreground">750ml &middot; Storeroom</p>
           <div class="qty-value has-value" data-money-row>
             <span class="text-numeral-sm">3 cases, 0 ea</span>
             <span class="text-numeral-sm val tabular" data-cost="405.00">$405.00</span>
@@ -244,7 +221,7 @@
         <div class="card-glyph" aria-hidden="true">SP</div>
         <div class="row-body">
           <div class="row-top"><h3 class="text-row-title">Casamigos Blanco</h3></div>
-          <p class="text-row-subtitle row-sub">750ml &middot; Back Bar</p>
+          <p class="text-row-subtitle row-sub text-muted-foreground">750ml &middot; Back Bar</p>
           <div class="qty-value no-value" data-money-row data-unpriced="true">
             <span class="text-numeral-sm">2 ea</span>
           </div>
@@ -256,7 +233,7 @@
         <div class="card-glyph" aria-hidden="true">SP</div>
         <div class="row-body">
           <div class="row-top"><h3 class="text-row-title">Tanqueray London Dry Gin</h3></div>
-          <p class="text-row-subtitle row-sub">750ml &middot; Back Bar &middot; 2 open bottles</p>
+          <p class="text-row-subtitle row-sub text-muted-foreground">750ml &middot; Back Bar &middot; 2 open bottles</p>
           <div class="qty-value has-value" data-money-row>
             <span class="text-numeral-sm">1.1 units</span>
             <span class="text-numeral-sm val tabular" data-cost="20.35">$20.35</span>
@@ -268,7 +245,7 @@
         <div class="card-glyph" aria-hidden="true">KG</div>
         <div class="row-body">
           <div class="row-top"><h3 class="text-row-title">Coors Light — Half Barrel</h3></div>
-          <p class="text-row-subtitle row-sub">Keg &middot; Tap 1 &middot; 70% full</p>
+          <p class="text-row-subtitle row-sub text-muted-foreground">Keg &middot; Tap 1 &middot; 70% full</p>
           <div class="qty-value no-value" data-money-row data-unpriced="true">
             <span class="text-numeral-sm">0.7 units</span>
           </div>
@@ -280,7 +257,7 @@
         <div class="card-glyph" aria-hidden="true">BE</div>
         <div class="row-body">
           <div class="row-top"><h3 class="text-row-title">Corona Extra</h3></div>
-          <p class="text-row-subtitle row-sub">24/case &middot; Walk-in Cooler</p>
+          <p class="text-row-subtitle row-sub text-muted-foreground">24/case &middot; Walk-in Cooler</p>
           <div class="qty-value has-value" data-money-row>
             <span class="text-numeral-sm">2 cases, 0 ea</span>
             <span class="text-numeral-sm val tabular" data-cost="52.80">$52.80</span>
@@ -317,7 +294,7 @@
 
 <script>
   var STATUS_ORDER = ['draft','in_progress','submitted','reviewed','closed'];
-  var STATUS_LABEL = {draft:'DRAFT', in_progress:'IN PROGRESS', submitted:'SUBMITTED', reviewed:'REVIEWED', closed:'CLOSED'};
+  var STATUS_LABEL = {draft:'Draft', in_progress:'In progress', submitted:'Submitted', reviewed:'Reviewed', closed:'Closed'};
   var TL_STEPS = [
     {key:'draft', title:'Draft created', date:'Jul 18, 2026'},
     {key:'in_progress', title:'In progress', date:'Started Jul 18, 2026'},
@@ -355,7 +332,7 @@
         '</div>' +
         '<div class="tl-body">' +
           '<p class="tl-title ' + state + '">' + step.title + '</p>' +
-          (state !== 'upcoming' ? '<p class="text-caption">' + (i === idx ? step.date : step.date) + '</p>' : '') +
+          (state !== 'upcoming' ? '<p class="text-caption text-muted-foreground">' + (i === idx ? step.date : step.date) + '</p>' : '') +
         '</div>';
       timelineEl.appendChild(li);
     });
@@ -410,7 +387,7 @@
       bar.className = 'bottom-bar';
       bar.innerHTML =
         '<button class="btn btn-outline">Back</button>' +
-        '<button class="btn btn-primary"><span class="text-label">Submit count</span></button>';
+        '<button class="btn btn-primary"><span class="text-label uppercase">Submit count</span></button>';
       bottomSlot.appendChild(bar);
       app.classList.add('has-bar');
       return;
@@ -421,7 +398,7 @@
         bar.className = 'bottom-bar';
         bar.innerHTML =
           '<button class="btn btn-outline">Back</button>' +
-          '<button class="btn btn-primary"><span class="text-label">Mark reviewed</span></button>';
+          '<button class="btn btn-primary"><span class="text-label uppercase">Mark reviewed</span></button>';
         bottomSlot.appendChild(bar);
         app.classList.add('has-bar');
       } else {
@@ -437,8 +414,8 @@
       if (role === 'owner' || role === 'manager'){
         bar.className = 'bottom-bar';
         var primaryInner = (role === 'owner')
-          ? '<span class="text-label">Close count</span><span class="text-numeral-sm tabular">$1,842.60</span>'
-          : '<span class="text-label">Close count</span>';
+          ? '<span class="text-label uppercase">Close count</span><span class="text-numeral-sm tabular">$1,842.60</span>'
+          : '<span class="text-label uppercase">Close count</span>';
         bar.innerHTML =
           '<button class="btn btn-outline">Back</button>' +
           '<button class="btn btn-primary">' + primaryInner + '</button>';

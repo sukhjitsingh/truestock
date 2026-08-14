@@ -292,7 +292,11 @@ export function LocationsTable({ locations }: { locations: LocationSummary[] }) 
                 <th scope="col" className="py-2 text-right text-label uppercase text-muted-foreground">
                   Sort order
                 </th>
-                <th scope="col" className="py-2 text-label uppercase text-muted-foreground">
+                {/* `pl-4` because the column to the left is right-aligned, so
+                    its content ends flush against this one's start and the two
+                    render as "SORT ORDERSTATUS" / "1Active" with nothing
+                    between them. */}
+                <th scope="col" className="py-2 pl-4 text-label uppercase text-muted-foreground">
                   Status
                 </th>
                 <th scope="col" className="py-2 text-right text-label uppercase text-muted-foreground">
@@ -318,7 +322,7 @@ export function LocationsTable({ locations }: { locations: LocationSummary[] }) 
                     <td className="py-3 text-right text-row-subtitle tabular-nums text-muted-foreground">
                       {loc.sortOrder}
                     </td>
-                    <td className="py-3 text-row-subtitle">
+                    <td className="py-3 pl-4 text-row-subtitle">
                       {loc.active ? (
                         <span className="text-muted-foreground">Active</span>
                       ) : (

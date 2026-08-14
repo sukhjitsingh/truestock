@@ -202,8 +202,14 @@ export function BarcodeScanner({
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black">
       <div
-        className="flex items-center justify-between p-bar-pad"
-        style={{ paddingTop: "max(var(--spacing-bar-pad), env(safe-area-inset-top))" }}
+        // `--spacing-safe-top` (globals.css) is `max(0px, env(safe-area-inset-top))`
+        // with no bar-pad floor — unlike `--spacing-safe-bottom`, which has one.
+        // On devices reporting a zero top inset (most Android phones), the bare
+        // token would collapse this header's padding to 0px. Composing both
+        // tokens here preserves the guaranteed bar-pad floor while still
+        // resolving the real inset when present, instead of hand-duplicating
+        // `env()` in an inline style.
+        className="flex items-center justify-between p-bar-pad pt-[max(var(--spacing-bar-pad),var(--spacing-safe-top))]"
       >
         <button
           type="button"
@@ -245,10 +251,7 @@ export function BarcodeScanner({
         ) : null}
       </div>
 
-      <div
-        className="p-bar-pad"
-        style={{ paddingBottom: "max(var(--spacing-bar-pad), env(safe-area-inset-bottom))" }}
-      >
+      <div className="p-bar-pad pb-safe-bottom">
         {error ? (
           <p className="rounded-md bg-negative-bg px-3 py-2 text-caption text-negative" role="alert">
             {error}

@@ -233,7 +233,29 @@ export async function searchProducts(
   }
   if (input.query) {
     const needle = `%${input.query}%`;
-    const nameOrBrand = or(like(product.name, needle), like(product.brand, needle));
+    /**
+     * Name, brand, OR subcategory.
+     *
+     * Subcategory joined this list when the catalog grew type filters
+     * (2026-08-13). Without it the screen contradicted itself: a "Type:
+     * Tequila" pill sits in the filter bar, and typing "tequila" into the
+     * search box beside it returned zero products, because not one bottle is
+     * literally *named* tequila. A label the UI shows and the search cannot
+     * find reads as an empty catalog, not as a mis-aimed query.
+     *
+     * This costs nothing in index terms. A leading `%` wildcard already
+     * defeats any index on `name`, so this was a scan before the third column
+     * was added and is the same scan after — including on the count-time
+     * picker's latency-critical path, which is why that caller does not need
+     * to opt out of it. It also makes "vodka" a working search on the phone
+     * while holding a bottle whose label is unreadable, which is the exact
+     * situation the picker exists for.
+     */
+    const nameOrBrand = or(
+      like(product.name, needle),
+      like(product.brand, needle),
+      like(product.subcategory, needle),
+    );
     if (nameOrBrand) {
       conditions.push(nameOrBrand);
     }

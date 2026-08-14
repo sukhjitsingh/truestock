@@ -4,24 +4,12 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Truestock — Fill Level (tenths) (prototype)</title>
+<link rel="stylesheet" href="tokens.css" />
 <style>
-  :root{
-    --background:#0B0B0C;--foreground:#F5F5F4;--card:#17181A;--card-foreground:#F5F5F4;
-    --muted:#131315;--muted-foreground:#A8A8A5;--primary:#F5F5F4;--primary-foreground:#0A0A0A;
-    --secondary:#1E1E21;--secondary-foreground:#F5F5F4;--accent:#60A5FA;--accent-foreground:#0A0A0A;
-    --destructive:#D33039;--destructive-foreground:#FFFFFF;--border:#232326;--input:#6B6B6B;--ring:#60A5FA;
-    --header:#121317;--header-foreground:#F5F5F4;
-    --success:#6FCF8E;--success-bg:#14301F;--warning:#F0B429;--warning-bg:#3A2A10;--negative:#F0718A;--negative-bg:#3A1620;
-    --radius-sm:12px;--radius-md:14px;--radius-lg:16px;--radius-xl:20px;
-    --card-gap:12px;--card-pad:16px;--bar-pad:16px;--section-gap:24px;--tap-min:44px;--tap-primary:56px;
-  }
-  *{box-sizing:border-box;}
-  html,body{margin:0;padding:0;}
-  body{background:#050506;color:var(--foreground);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
-    font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;}
-  :focus-visible{outline:2px solid var(--ring);outline-offset:2px;}
-  button{cursor:pointer;font-family:inherit;}
-  a{color:inherit;text-decoration:none;}
+  /* Outer letterbox background is intentionally darker than --background
+     (#050506 vs #0B0B0C) — this is device-frame chrome around the 390px
+     mockup, not a token; the app surface itself uses --background. */
+  body{ background:#050506; }
 
   .proto-bar{max-width:390px;margin:0 auto;padding:10px 12px;border:1px dashed #3a3a3f;border-bottom:none;
     background:#111114;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8a8a90;display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
@@ -44,27 +32,23 @@
   .app{max-width:390px;margin:0 auto;min-height:100vh;background:var(--background);position:relative;
     border:1px solid var(--border);border-top:none;padding-bottom:110px;}
 
-  .text-numeral-lg{font-size:48px;font-weight:700;line-height:1;}
-  .text-header-title{font-size:28px;font-weight:600;line-height:1.15;}
-  .text-numeral-md{font-size:24px;font-weight:600;line-height:1.1;}
-  .text-row-title{font-size:18px;font-weight:600;line-height:1.3;}
-  .text-numeral-sm{font-size:17px;font-weight:600;line-height:1.2;}
-  .text-row-subtitle{font-size:15px;font-weight:400;line-height:1.4;color:var(--muted-foreground);}
-  .text-body{font-size:16px;font-weight:400;line-height:1.5;}
-  .text-screen-title{font-size:13px;font-weight:600;line-height:1.2;letter-spacing:.06em;text-transform:uppercase;}
-  .text-caption{font-size:13px;font-weight:400;line-height:1.4;color:var(--muted-foreground);}
-  .text-label{font-size:11px;font-weight:600;line-height:1.2;letter-spacing:.06em;text-transform:uppercase;}
+  /* This file's type-scale classes previously baked --muted-foreground
+     directly into .text-row-subtitle/.text-caption; tokens.css keeps the
+     type scale color-free (size/weight/leading only, matching
+     app/globals.css) so muted text pairs .text-muted-foreground explicitly
+     in markup — see the color utilities added below where those classes
+     are used. */
 
   /* detail header */
   .detail-header{border-radius:0 0 var(--radius-xl) var(--radius-xl);background:var(--header);color:var(--header-foreground);
     padding:20px var(--bar-pad) 24px;}
   .icon-btn{width:44px;height:44px;min-width:44px;display:flex;align-items:center;justify-content:center;
-    border-radius:999px;border:1px solid rgba(245,245,244,.2);background:transparent;color:inherit;}
+    border-radius:var(--radius-full);border:1px solid rgba(245,245,244,.2);background:transparent;color:inherit;}
   .header-row{display:flex;align-items:center;justify-content:space-between;}
   .header-pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
-  .pill-outline{display:inline-flex;align-items:center;border-radius:999px;padding:4px 12px;font-size:11px;font-weight:600;
+  .pill-outline{display:inline-flex;align-items:center;border-radius:var(--radius-full);padding:4px 12px;font-size:11px;font-weight:600;
     letter-spacing:.06em;text-transform:uppercase;border:1px solid rgba(245,245,244,.25);color:var(--header-foreground);}
-  .pill-accent{display:inline-flex;align-items:center;border-radius:999px;padding:4px 12px;font-size:11px;font-weight:600;
+  .pill-accent{display:inline-flex;align-items:center;border-radius:var(--radius-full);padding:4px 12px;font-size:11px;font-weight:600;
     letter-spacing:.06em;text-transform:uppercase;background:rgba(96,165,250,.18);color:var(--accent);}
 
   .section{padding:20px var(--bar-pad) 0;}
@@ -106,11 +90,11 @@
   .bottle-chip.active{border-color:var(--accent);}
   .bottle-chip .left{display:flex;align-items:center;gap:12px;flex:1;min-width:0;background:none;border:0;color:inherit;
     text-align:left;min-height:56px;}
-  .bottle-chip .num{width:36px;height:36px;border-radius:999px;background:var(--muted);color:var(--muted-foreground);
+  .bottle-chip .num{width:36px;height:36px;border-radius:var(--radius-full);background:var(--muted);color:var(--muted-foreground);
     display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0;}
   .bottle-chip .fill-badge{font-size:17px;font-weight:600;}
   .bottle-chip .remove-x{width:44px;height:44px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
-    color:var(--muted-foreground);background:transparent;border:0;border-radius:999px;}
+    color:var(--muted-foreground);background:transparent;border:0;border-radius:var(--radius-full);}
   .bottle-chip .remove-x:hover{color:var(--destructive);}
 
   .totals-row{display:flex;align-items:baseline;justify-content:space-between;padding:14px 0 4px;border-top:1px solid var(--border);margin-top:14px;}
@@ -160,15 +144,15 @@
     </div>
     <h1 class="text-header-title" id="productName" style="margin:14px 0 0">Tanqueray London Dry Gin</h1>
     <div class="header-pills">
-      <span class="pill-outline" id="productSize">750ML</span>
-      <span class="pill-outline" id="productLoc">BACK BAR</span>
-      <span class="pill-accent">OPEN &middot; FILL ENTRY</span>
+      <span class="pill-outline" id="productSize">750ml</span>
+      <span class="pill-outline" id="productLoc">Back bar</span>
+      <span class="pill-accent">Open &middot; fill entry</span>
     </div>
   </header>
 
   <div class="section">
     <div class="section-label">
-      <span class="text-label" style="color:var(--muted-foreground)" id="editorLabel">SETTING FILL LEVEL — NEW BOTTLE</span>
+      <span class="text-label uppercase text-muted-foreground" id="editorLabel">Setting fill level — new bottle</span>
     </div>
 
     <div class="editor">
@@ -204,21 +188,21 @@
 
   <div class="section">
     <div class="section-label">
-      <span class="text-label" style="color:var(--muted-foreground)">OPEN ON THIS LINE</span>
-      <span class="text-caption" id="bottleCountLabel">2 bottles</span>
+      <span class="text-label uppercase text-muted-foreground">Open on this line</span>
+      <span class="text-caption text-muted-foreground" id="bottleCountLabel">2 bottles</span>
     </div>
     <div class="bottle-list" id="bottleList"></div>
     <div class="totals-row">
-      <span class="text-caption">Total open</span>
+      <span class="text-caption text-muted-foreground">Total open</span>
       <span class="text-numeral-sm" id="totalsText">1.1 units</span>
     </div>
-    <p class="text-caption" id="valueNote" style="margin-top:4px"></p>
+    <p class="text-caption text-muted-foreground" id="valueNote" style="margin-top:4px"></p>
   </div>
 
   <div class="bottom-bar">
     <button class="btn btn-outline" style="min-height:var(--tap-primary)">Cancel</button>
     <button class="btn btn-primary" id="saveBtn">
-      <span class="text-label" style="letter-spacing:.06em">Save fill levels</span>
+      <span class="text-label uppercase">Save fill levels</span>
     </button>
   </div>
 </div>
@@ -245,11 +229,11 @@
   // kegs) — only the header pills, sizeMl, and cost differ. ----
   var examples = {
     bottle: {
-      name: "Tanqueray London Dry Gin", size: "750ML", loc: "BACK BAR",
+      name: "Tanqueray London Dry Gin", size: "750ml", loc: "Back bar",
       sizeMl: 750, unitCost: 18.50, fills: [0.3, 0.8]
     },
     keg: {
-      name: "Coors Light — Half Barrel", size: "58,674 ML", loc: "TAP 1",
+      name: "Coors Light — Half Barrel", size: "58,674 ml", loc: "Tap 1",
       sizeMl: 58674, unitCost: null, fills: [0.7]
     }
   };
@@ -298,7 +282,7 @@
 
   function renderCommitRow(){
     if (activeIndex === null){
-      editorLabel.textContent = 'SETTING FILL LEVEL — NEW BOTTLE';
+      editorLabel.textContent = 'Setting fill level — new bottle';
       commitRow.innerHTML = '<button class="btn btn-primary" id="commitAdd">+ Add bottle to line</button>';
       document.getElementById('commitAdd').addEventListener('click', function(){
         var ex = examples[current];
@@ -307,7 +291,7 @@
         setDraft(0.5);
       });
     } else {
-      editorLabel.textContent = 'EDITING BOTTLE #' + (activeIndex+1);
+      editorLabel.textContent = 'Editing bottle #' + (activeIndex+1);
       commitRow.innerHTML =
         '<button class="btn btn-outline btn-destructive" id="commitRemove">Remove</button>' +
         '<button class="btn btn-primary" id="commitUpdate">Update bottle</button>';
@@ -386,9 +370,9 @@
   // is genuinely present for this viewer — never a blank second line.
   function updateSaveButton(value){
     if (typeof value === 'number'){
-      saveBtn.innerHTML = '<span class="text-label">Save fill levels</span><span class="text-numeral-sm tabular">$' + value.toFixed(2) + '</span>';
+      saveBtn.innerHTML = '<span class="text-label uppercase">Save fill levels</span><span class="text-numeral-sm tabular">$' + value.toFixed(2) + '</span>';
     } else {
-      saveBtn.innerHTML = '<span class="text-label">Save fill levels</span>';
+      saveBtn.innerHTML = '<span class="text-label uppercase">Save fill levels</span>';
     }
   }
 

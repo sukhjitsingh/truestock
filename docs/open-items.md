@@ -221,7 +221,8 @@ rows in the same transaction, so a deactivated account is locked out on its
 very next request with no live session remaining.
 
 `app/actions/users.ts` — three owner-only server actions wrapping the domain.
-`components/office/office-nav.tsx` exposes the Users link for owner role.
+`components/office/office-rail.tsx` exposes the Users link for owner role
+(it was `office-nav.tsx` until the rail replaced the top nav on 2026-08-13).
 `/office/users` renders the list with role-change selects and active toggles.
 
 Tests: `tests/user-write-path.test.ts` (DB-backed, bun:test) covers all three
