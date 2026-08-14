@@ -89,28 +89,7 @@ so it must be covered by a test rather than assumed after a driver bump.
 
 ## MVP scope — do not exceed without asking
 
-**In:** catalog, locations, barcode scan, fill level in tenths, quantity input,
-count sessions, valuation, reorder list, auth with three roles, multi-tenancy.
-
-**Out (deferred, do not build):** AI fill estimation, bottle photos, invoice OCR,
-Toast PMIX import, variance reporting, compliance packet.
-
-**The MVP contains no AI and no file storage.** If a task seems to need either,
-stop and confirm — it is probably scope creep.
-
-### Two decisions that changed the shape of this, 2026-07-27
-
-**This is going to be sold, so it is multi-tenant** (invariant 9). Done before the
-first migration ever ran, because tenant isolation is the one thing that is cheap
-now and a data migration plus a full invariant re-audit later. What is NOT built:
-a user belonging to more than one organization, an org switcher, billing, signup,
-or per-tenant subdomains. One org per user, seeded by hand. All of that is additive.
-
-**Invoice automation is coming, and it reverses two exclusions above** — it needs
-AI (OCR) and file storage (Arizona's 2-year retention, spec §10). Nothing is built
-for it yet. Before building any of it, settle spec §13's xtraCHEF question: that
-subscription already does invoice line-item capture and archival, and one hour of
-testing decides whether this half needs building at all.
+**Out (deferred, do not build):** AI fill estimation, bottle photos,Toast PMIX import, variance reporting, compliance packet.*The MVP contains no AI and no file storage. This restriction does not applyto Phase 2.5 and later, where invoice OCR automation and local file storageare deliberately built features \(see Phase 2.5 PRD\).*### Two decisions that changed the shape of this, 2026-07-27**This is going to be sold, so it is multi-tenant** \(invariant 9\). Done before thefirst migration ever ran, because tenant isolation is the one thing that is cheapnow and a data migration plus a full invariant re-audit later. What is NOT built:a user belonging to more than one organization, an org switcher, billing, signup,or per-tenant subdomains. One org per user, seeded by hand. All of that is additive.**Invoice automation is built in Phase 2.5** — it requires AI \(OCR\) and filestorage \(2-year retention, spec \§10\). The xtraCHEF subscription is not used;costs are captured from supplier invoices via the OCR pipeline built in Phase 2.5.Before building any of it, the xtraCHEF question was settled: that subscriptionalready does invoice line-item capture and archival, and one hour of testingdecided whether this half needs building at all. Since then, the OCR pipeline\(§3.2 of the research doc\) extracts invoices via pdf-inspector \(text-based\) orClaude Vision \(scanned/mixed\), with arithmetic checks, a review queue asthroughput governor, and deposits never folded into product cost.testing decides whether this half needs building at all.
 
 ---
 

@@ -1099,7 +1099,9 @@ and any way to *send* the list, which is now a Phase 1.5 item.
 **In the MVP:** catalog, locations, barcode scan, tenths, quantities, count
 sessions, valuation, reorder, three roles, multi-tenancy.
 
-**Deliberately out:** AI fill estimation, bottle photos, invoice OCR, Toast PMIX
+**Deliberately out:** AI fill estimation, bottle photos, Toast PMIX import,
+variance reporting, compliance packet. (Invoice OCR was deferred but is now
+built in Phase 2.5 — see the Phase 2.5 PRD and history log.)
 import, variance reporting, compliance packet. **The MVP contains no AI and no
 file storage** — if a task seems to need either, it is probably scope creep.
 
