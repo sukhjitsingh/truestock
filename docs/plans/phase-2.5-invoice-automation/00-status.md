@@ -1,9 +1,31 @@
 # Status: Phase 2.5 — OCR invoice automation
 
 - Gate 1 — Product: APPROVED 2026-08-14
-- Gate 2 — Architecture: APPROVED 2026-08-14
-- Gate 3 — Program Design: APPROVED 2026-08-14
-- Gate 4 — Slice plan: APPROVED 2026-08-14
+- Gate 2 — Architecture: **CORRECTED 2026-08-14 — approval withdrawn, awaiting re-approval**
+- Gate 3 — Program Design: **CORRECTED 2026-08-14 — approval withdrawn, awaiting re-approval**
+- Gate 4 — Slice plan: **CORRECTED 2026-08-14 — approval withdrawn, awaiting re-approval**
+
+## Adversarial review, 2026-08-14 — why Gates 2–4 were re-opened
+
+A Codex adversarial review of the branch found **3 critical + 4 high** defects, all in the
+Gate 2–4 contract. Full writeup: `docs/reviews/2026-08-14-phase-2.5-adversarial-review.md`.
+**No implementation code existed yet**, so nothing shipped was broken and all seven were
+free to fix. Static checks (`tsc`, `eslint`, tests) were green throughout — which is the
+point: they cannot see a defect in a design that has no code yet.
+
+| # | Finding | Closed by |
+|---|---------|-----------|
+| AR-1 | *critical* — invoice originals stored in `public/invoices/`, i.e. served unauthenticated by Next | Storage moved outside the web root (`INVOICE_STORAGE_DIR`); sole read path is an owner-only, ownership-checked, traversal-guarded route handler |
+| AR-2 | *critical* — client-supplied `matched_product_id` could cross tenants and overwrite another org's cost | `organization_id` + composite `(organization_id, parent_id)` FKs on every child table; `Actor` threaded through every domain call; every nested id ownership-checked |
+| AR-3 | *critical* — audit-packet ZIP selected invoices by date range with no org predicate | Org id read from the packet row and carried through every invoice/count/file query; single-distinct-org assertion on the manifest |
+| AR-4 | *high* — approval could partially apply or replay cost writes | One transaction; compare-and-set on `reviewed → approved` as the concurrency gate; `UNIQUE(source_invoice_line_id)` on cost history |
+| AR-5 | *high* — plan referenced `product.unit_cost`, `unit_cost_updated_at`, table `cost_history` (none exist) and listed `vendor` as new (it exists) | Reconciled against live `db/schema.ts`: `current_unit_cost`, new `product_cost_history` table designed properly, `vendor` reused |
+| AR-6 | *high* — three incompatible job-state vocabularies; job claimable before its file was uploaded | One machine `awaiting_upload → queued → running → done\|failed`; queued only after size + SHA-256 verification; atomic claim |
+| AR-7 | *high* — "manager = review, no cost" is unsatisfiable; the review screen is entirely cost data | Review and approval are owner-only (matching `canSeeCost()`); managers get upload + a separately-queried redacted list with no monetary column |
+
+**Before re-approval:** regenerate the migration through drizzle-kit against the corrected
+schema, and confirm the adversarial tests in Gate 3's test plan fail against the
+uncorrected behaviour first.
 
 ## Slices
 - [ ] Slice 1 — tracer bullet: the Hostinger native-binary spike (`@firecrawl/pdf-inspector` loads under `output: 'standalone'`)
