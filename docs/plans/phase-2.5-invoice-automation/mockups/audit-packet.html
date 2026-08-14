@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Audit packet — Truestock back office (Gate 1 mockup)</title>
+<!--
+  Gate 1 mockup, throwaway by design. Plain HTML, no build step, no network.
+  Tokens copied verbatim from docs/design-system.md §2 (light theme).
+  The one-button export: pick a date range, get a packet, emailed link.
+  Shows the request, the "takes a few minutes" state, and what the packet
+  contains (invoices, counts, manifest).
+-->
+<style>
+  :root {
+    --radius: 1rem;
+    --background: #f7f7f5;
+    --foreground: #111111;
+    --card: #ffffff;
+    --card-foreground: #111111;
+    --muted: #efefec;
+    --muted-foreground: #6b6b6b;
+    --primary: #0a0a0a;
+    --primary-foreground: #ffffff;
+    --secondary: #efefec;
+    --secondary-foreground: #111111;
+    --accent: #2563eb;
+    --accent-foreground: #ffffff;
+    --destructive: #c4304f;
+    --destructive-foreground: #ffffff;
+    --border: #e4e4e1;
+    --input: #8c8c8c;
+    --ring: #2563eb;
+    --negative: #b8305a;
+    --negative-bg: #fde8ec;
+    --warning: #92600a;
+    --warning-bg: #fdf0dc;
+    --success: #1f7a3d;
+    --success-bg: #e4f5e6;
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+    padding: 2rem;
+  }
+  h1 { font-size: 1.25rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1rem; margin: 0 0 0.75rem; }
+  p { margin: 0.25rem 0; }
+  .sub { color: var(--muted-foreground); font-size: 0.875rem; }
+  .mockup-label {
+    display: inline-block;
+    margin: 2rem 0 0.5rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: var(--radius-sm);
+    background: var(--primary);
+    color: var(--primary-foreground);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .mockup-label.alt { background: var(--accent); color: var(--accent-foreground); }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .state-note {
+    margin-top: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-left: 3px solid var(--accent);
+    background: var(--muted);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    font-size: 0.875rem;
+    color: var(--muted-foreground);
+  }
+  .state-note strong { color: var(--foreground); }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--card-foreground);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .btn.primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+  .btn.accent { background: var(--accent); color: var(--accent-foreground); border-color: var(--accent); }
+  .btn-row { display: flex; gap: 0.75rem; margin-top: 1.25rem; flex-wrap: wrap; }
+  .muted { color: var(--muted-foreground); }
+  .field { margin-bottom: 1rem; }
+  .field label { display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.375rem; }
+  .input, .select {
+    padding: 0.625rem 0.875rem;
+    border: 1px solid var(--input);
+    border-radius: var(--radius-md);
+    font-size: 0.9375rem;
+    background: var(--card);
+    width: 100%;
+    max-width: 280px;
+  }
+  .packet-list { list-style: none; margin: 1rem 0 0; padding: 0; }
+  .packet-list li {
+    display: flex; align-items: center; gap: 0.625rem;
+    padding: 0.625rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.875rem;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0.125rem 0.625rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .pill.success { background: var(--success-bg); color: var(--success); }
+  .pill.warning { background: var(--warning-bg); color: var(--warning); }
+  .pill.neutral { background: var(--muted); color: var(--muted-foreground); }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>Audit packet</h1>
+<p class="sub">The one-button export the Arizona requirement exists for: date range in, complete packet out, manifest included.</p>
+
+<div class="mockup-label">Screen: audit-packet.html — the request</div>
+
+<div class="card">
+  <div class="row" style="display:flex; gap:1rem; flex-wrap:wrap;">
+    <div class="field">
+      <label for="from">From</label>
+      <input class="input" id="from" type="date" value="2026-08-01" />
+    </div>
+    <div class="field">
+      <label for="to">To</label>
+      <input class="input" id="to" type="date" value="2026-08-31" />
+    </div>
+    <div class="field">
+      <label for="inc">Include</label>
+      <select class="select" id="inc">
+        <option>Invoices + counts</option>
+        <option>Invoices only</option>
+        <option>Counts only</option>
+      </select>
+    </div>
+  </div>
+
+  <p class="muted" style="margin-top:0.5rem">Roughly <strong>25 invoices</strong> and <strong>4 closed counts</strong> are in this range. The packet is generated in the background — a request that builds it inline would time out, so it never does.</p>
+
+  <div class="btn-row">
+    <a class="btn primary" href="#">Request packet</a>
+  </div>
+</div>
+
+<div class="mockup-label alt">State: the job is running — nothing blocks on it</div>
+
+<div class="card">
+  <div class="state-note">
+    <strong>In progress:</strong> "Building your packet… This takes a few minutes for a full year. We'll email you a link when it's ready (usually under 5)." The request is a background job, so the screen never spins and the tab can close.
+  </div>
+</div>
+
+<div class="mockup-label">State: the packet is ready — what it contains</div>
+
+<div class="card">
+  <div class="state-note"><strong>Done:</strong> "Your packet for Aug 1 – Aug 31 is ready. The link is valid for 15 minutes."</div>
+  <ul class="packet-list">
+    <li>📄 <strong>29 invoice files</strong> — named <code>2026-08-11_Southern Glazer's_SG 1048821.pdf</code>, one per document</li>
+    <li>📊 <strong>invoices.csv</strong> — vendor, number, date, totals, who approved, when</li>
+    <li>📊 <strong>invoice_lines.csv</strong> — every line: product, quantity, unit cost, extended, line type</li>
+    <li>📊 <strong>counts.csv</strong> — every closed count in range, per line</li>
+    <li>📊 <strong>monthly_values.csv</strong> — beginning/ending inventory value per month</li>
+    <li>🧾 <strong>manifest.txt</strong> — generated-at, date range, row counts, per-file SHA-256</li>
+  </ul>
+  <div class="btn-row">
+    <a class="btn accent" href="#">Download ZIP</a>
+  </div>
+  <p class="muted" style="font-size:0.8125rem;margin-top:0.5rem">The manifest hashes are why a packet you produce can't be edited after export without being caught. Same caveat as the research: confirm current A.A.C. R19-1-501 requirements with the DLLC and your attorney before relying on it — this is planning, not legal advice.</p>
+</div>
+
+<div class="mockup-label">The "who approved what" trail — why the packet is trusted</div>
+
+<div class="card">
+  <p>Every approved invoice carries its approver and timestamp, and every correction made in review is an append-only record. The packet's CSV columns exist because of that — "who approved which cost" is the invoice half of the immutability spec §10 asks for.</p>
+</div>
+
+<p class="muted" style="margin-top:1rem">Mockup — every state rendered at once, nothing hidden behind a click. See <code>docs/plans/phase-2.5-invoice-automation/01-product.md</code>.</p>
+
+</body>
+</html>

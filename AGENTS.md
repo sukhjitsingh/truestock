@@ -89,32 +89,30 @@ so it must be covered by a test rather than assumed after a driver bump.
 
 ## MVP scope — do not exceed without asking
 
-**In:** catalog, locations, barcode scan, fill level in tenths, quantity input,
-count sessions, valuation, reorder list, auth with three roles, multi-tenancy.
-
-**Out (deferred, do not build):** AI fill estimation, bottle photos, invoice OCR,
+**Out (deferred, do not build):** AI fill estimation, bottle photos,
 Toast PMIX import, variance reporting, compliance packet.
 
-**The MVP contains no AI and no file storage.** If a task seems to need either,
-stop and confirm — it is probably scope creep.
+*The MVP contains no AI and no file storage. This restriction does not apply
+to Phase 2.5 and later, where invoice OCR automation and local file storage
+are deliberately built features \(see Phase 2.5 PRD\).*
 
 ### Two decisions that changed the shape of this, 2026-07-27
 
-**This is going to be sold, so it is multi-tenant** (invariant 9). Done before the
-first migration ever ran, because tenant isolation is the one thing that is cheap
-now and a data migration plus a full invariant re-audit later. What is NOT built:
-a user belonging to more than one organization, an org switcher, billing, signup,
-or per-tenant subdomains. One org per user, seeded by hand. All of that is additive.
+**This is going to be sold, so it is multi-tenant** \(invariant 9\). Done before
+the first migration ever ran, because tenant isolation is the one thing that is
+cheap now and a data migration plus a full invariant re-audit later. What is NOT
+built: a user belonging to more than one organization, an org switcher, billing,
+signup, or per-tenant subdomains. One org per user, seeded by hand. All of that
+is additive.
 
-**Invoice automation is coming, and it reverses two exclusions above** — it needs
-AI (OCR) and file storage (Arizona's 2-year retention, spec §10). Nothing is built
-for it yet. Before building any of it, settle spec §13's xtraCHEF question: that
-subscription already does invoice line-item capture and archival, and one hour of
-testing decides whether this half needs building at all.
-
----
-
-## Non-negotiable invariants
+**Invoice automation is built in Phase 2.5** — it requires AI \(OCR\) and filestorage \(2-year retention, spec \§10\). The xtraCHEF subscription is not used;
+costs are captured from supplier invoices via the OCR pipeline built in Phase 2.5.
+Before building any of it, the xtraCHEF question was settled: that subscription
+already does invoice line-item capture and archival, and one hour of testing
+decided whether this half needs building at all. Since then, the OCR pipeline
+\(§3.2 of the research doc\) extracts invoices via pdf-inspector \(text-based\) or
+Claude Vision \(scanned/mixed\), with arithmetic checks, a review queue as
+throughput governor, and deposits never folded into product cost.## Non-negotiable invariants
 
 These are correctness rules, not preferences. Violating them produces numbers that look
 plausible and are wrong, which is the worst failure mode this app has.
@@ -218,6 +216,181 @@ Things to know about it:
 - **Costs are not filled in yet.** They come from supplier invoices. Nothing that depends
   on valuation can be tested until they are.
 - **`case_size` applies to bottled beer, not liquor.** Liquor is counted as bottles —
+  eaches and partial fills — so `case_size` stays NULL for all 62 spirits, the 2 liqueurs,
+  5 wines and 3 NA, and that is correct rather than missing data. Only the **16 bottled
+  beers** are counted both ways and need a case size. Draft kegs don't either: a keg is one
+  unit measured in tenths.
+  This matters because `computeLineUnits` only treats a NULL `case_size` as indeterminate
+  when `sealed_case_qty > 0` — "zero cases of an unknown size" is unambiguously zero. So a
+  NULL case size on liquor never excludes a line. Do not "fix" the catalog by backfilling
+  case sizes onto spirits; that would invent a pack level the bar doesn't use.
+- **Spirits default to 750 ml.** Anything also stocked as a 1.75L handle needs its own
+  row — different barcode, different case cost, different pour economics.
+- **`upc` is deliberately blank.** It fills through scan-to-enroll during the first count.
+- Wines are currently varietals (`Merlot`, `Chardonnay`) rather than specific bottles.
+  They need a producer before they can be costed or scanned.
+- The **Draft Economics** tab holds the owner's own pour model: 16 oz and 22 oz serving
+  sizes, per-keg waste factor, margin per pour. It is the manual prototype of the Phase 2
+  variance report — read it before building that.
+
+## Draft beer
+
+Draft is simpler than it looks and should not be special-cased:
+
+- A keg is a Product with `unit_type: keg` and `size_ml` set to its volume
+  (half barrel 58,674 · quarter barrel 29,337 · sixtel 19,533).
+- A tapped keg records as a decimal in `partial_fills`, same as a bottle.
+- Tap lines can be modelled as Locations (`Tap 1`, `Tap 2`) — no schema change needed.
+- **Draft menu items map one-to-one to products.** A 16 oz Coors Light is one Toast item,
+  one product, one pour size. This makes the Phase 2 recipe map nearly free for draft;
+  cocktails are where the tedious work lives.
+- Eyeballing a keg's level is not possible. Tenths is the MVP answer. Weight
+  (`empty_weight_g`, `full_weight_g`) is the accurate method, deferred.
+
+## Working agreements
+
+- **The catalog is the foundation.** Scan-to-enroll: an unknown barcode opens a fast
+  new-product form. That form must stay under 20 seconds to complete. If it gets slow,
+  the catalog decays and the whole system dies. This is the highest-risk interaction.
+- **Always offer a search picker beside the scan button** — damaged labels, house
+  infusions, and some wine have no usable barcode.
+- **The active location is locked per leg, with an escape hatch.** A count covers all five
+  locations, but scanning is scoped to one at a time: pick a location, count it, tap
+  *Finish section*, move on. A separate "count something elsewhere" action records a stray
+  bottle into another location and returns you to the current leg — it never silently
+  changes which leg you are in.
+  Why it is locked: a wrong active location fails *silently*. Every scan lands on a real,
+  legitimate line in the wrong place; the count total stays correct and only the
+  distribution is wrong, so nothing looks broken until a reorder list is nonsense weeks
+  later. Locking also makes the input-mode switch explicit — Speed Rail and Back Bar are
+  tenths, Storeroom is quantities only, and that is driven entirely by location.
+  Note: `prototypes/count-scan.html` predates this decision and still shows a free-switch
+  dropdown. Do not copy that part of it.
+- **Count-line writes are optimistic.** UI updates immediately, saves in the background,
+  pending writes queue in IndexedDB. The server stays authoritative.
+- **A quantity SET shows its before/after on the button, live.** `ADD` and `SET` take the
+  same input in the same box, and afterward the line just reads `3 ea` either way — a SET
+  the user meant as an ADD loses bottles with nothing on screen looking wrong. So the
+  submit button states the consequence as they type: `SET TO 3 EA / was 12 ea · −9`, or
+  `ADD 3 EA / 12 → 15`. No modal — a confirmation dialog on a control used 150 times a
+  count gets clicked through blind inside a week, which is worse than no guard because it
+  feels like one. The `count_line_write` ledger records the delta either way, so this is
+  about the human noticing at the time, not about recovering afterward.
+- **One fresh `client_line_id` UUID per write attempt — never one per count line.**
+  Idempotency lives in the append-only `count_line_write` ledger, whose unique index on
+  `client_line_id` makes a replayed write roll back and return success. Reuse an id only
+  when literally resending the same failed request. Reusing one id per line instead would
+  make every legitimate second scan of a bottle a silently swallowed no-op — the count
+  comes out short with no error anywhere, which is quieter and worse than the
+  double-count this ledger replaced.
+- **Row-level edit is a real `<button>`, never an `onClick` on the `<tr>`.** Both
+  the locations and vendors tables shipped with the row itself as the edit
+  affordance and were fixed on 2026-08-12. Three defects at once: it is
+  unreachable by keyboard and invisible to a screen reader (`tabIndex: -1`, no
+  role) while every other control on the screen is a button; nothing on screen
+  says the row is clickable; and because the inline form opens *above* the table,
+  every row below it reflows, so a click aimed at one row lands on another. That
+  last one put a real location — Speed Rail — into the edit form, one confirm from
+  a renamed location and a changed `count_mode`, with nothing looking wrong
+  afterwards. **The fix is an explicit Edit button with the row's `onClick`
+  removed**, not a `role`/`tabIndex` bolted onto the `<tr>` — that fixes the
+  accessibility third and leaves the wrong-target hazard. Any edit form must also
+  name its subject in the heading (`Edit Speed Rail`, not `Edit location`).
+- **Dim-bar UI.** High contrast, large tap targets, dark mode, one-handed operation.
+  The other hand is holding a bottle.
+- **Any form whose submit is handled in JavaScript carries `method="post"`.**
+  `preventDefault()` only runs once React has attached; before that — or if
+  hydration fails outright — the browser submits natively, and a form with no
+  method defaults to **GET**, serializing every field into the query string.
+  On the login form that put a plaintext password into the server access log,
+  the user's history, and the `Referer` of any later outbound link. POST
+  degrades to a bare 405 instead, which leaks nothing. Gating the submit
+  button on a hydrated flag is the complement, not the substitute: the flag
+  handles the ordinary race, the method handles hydration never happening.
+- **Verify UI work in a browser, not with `curl`.** Server-rendered HTML and a
+  200 prove the server ran, nothing more. Every client-side failure this
+  project has hit — the CSP hydration break, the credential leak — was
+  invisible to status codes and obvious on first page load.
+- Migrations go through drizzle-kit. No hand-edited schema drift.
+- Conventional commits. Small, reviewable changes.
+
+---
+
+## Schema delta not yet in docs/spec.md §8
+
+One column must be added to `Product` before the schema is built:
+
+```
+waste_factor   DECIMAL(4,3)   NOT NULL DEFAULT 0.000
+```
+
+Draft products get `0.100`. Bottles and wine stay `0.000`. Theoretical depletion then
+computes as `pour_ml / (1 - waste_factor)`. One column now versus a migration and a
+recount later. Update §8 of the spec when you touch it.
+
+## Open questions — ask, don't assume
+
+1. **Shelf life.** The owner's previous sheet tracked *Discard Date*, *Days Until Discard*,
+   and *Status*. Nothing in the current spec covers it. If it was load-bearing (opened
+   vermouth, cream liqueurs), it needs a home before the schema hardens.
+2. **Par scope.** Undecided whether par is per product or per location. `ProductPar` is
+   built with a nullable `location_id` so this can stay unanswered — write null rows for now.
+3. **Open vs sealed split.** How many of the 95 units are open bottles versus sealed
+   backstock is still unknown. It drives the counting-speed estimates.
+4. **Count cadence.** Weekly gives usable variance; monthly barely does. Not yet fixed.
+
+## The team
+
+Subagents live in `.claude/agents/`. Suggested sequence for the MVP:
+
+1. `database` — schema and migrations first; everything depends on it
+2. `backend` — server actions, route handlers, business logic
+3. `frontend` + `ui-design` — the counting screen, then the back office
+4. `code-reviewer` and `security-reviewer` — read-only, run after changes
+5. `devops` — deploy pipeline, once there is something to deploy
+
+**A note on using them:** `backend` and `frontend` both edit files in `app/`. Run them
+sequentially, not in parallel, or they will collide. The read-only reviewers are the ones
+that parallelise safely.
+
+## Planning workflow
+
+Non-trivial, multi-file, decision-heavy work (schema changes, new endpoints, anything
+touching the count-write path) goes through the software-factory 4-gate workflow:
+Product → Architecture → Program Design → Vertical Slices, written to
+`docs/plans/<slug>/` and gated on explicit user approval at each stage. See
+`docs/plans/README.md` for the gate templates and the skip-the-gates rule for trivial
+work. Two things are easy to get backwards, so state them explicitly:
+
+- **Authority split.** `STATE.md` / `ROADMAP.md` / `docs/open-items.md` stay
+  authoritative for *what* the project is doing and *when* — status, phase
+  sequencing, deferred-item triggers. Unchanged by this workflow.
+  `docs/plans/<slug>/` is authoritative for *how* one non-trivial feature gets
+  built, for that feature's lifetime only. A feature's Gate 1 doc should cite
+  the relevant ROADMAP phase or open-item rather than re-deriving it; when the
+  feature ships, STATE.md's history log gets its usual one-line entry.
+- **Gate 4 vs. the subagent sequence above — they compose, not compete.** Gate 4
+  slices are the *unit of work* (tracer bullet → real logic → one capability
+  per slice). The `database → backend → frontend/ui-design →
+  code-reviewer/security-reviewer → devops` order is *how each slice gets
+  built* — schema first, then business logic, then UI (frontend/ui-design
+  sequential, never parallel, per the rule above), then the two read-only
+  reviewers in parallel, then devops only once ship-ready.
+
+## CodeGraph
+
+This repo is indexed by CodeGraph — a `.codegraph/` directory holds a regenerable
+SQLite knowledge graph of every symbol, edge, and file (not source, not checked in).
+Reach for it BEFORE grep/find or reading files when you need to understand or locate
+code:
+
+- **MCP tool** (when available): `codegraph_explore` answers most code questions in
+  one call — the relevant symbols' verbatim source plus the call paths between them,
+  including dynamic-dispatch hops grep can't follow. Name a file or symbol in the
+  query to read its current line-numbered source.
+- **Shell** (always works): `codegraph explore "<symbol names or question>"` prints
+  the same output.
+ bottled beer, not liquor.** Liquor is counted as bottles —
   eaches and partial fills — so `case_size` stays NULL for all 62 spirits, the 2 liqueurs,
   5 wines and 3 NA, and that is correct rather than missing data. Only the **16 bottled
   beers** are counted both ways and need a case size. Draft kegs don't either: a keg is one

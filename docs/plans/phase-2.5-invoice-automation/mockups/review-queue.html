@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Review queue — Truestock back office (Gate 1 mockup)</title>
+<!--
+  Gate 1 mockup, throwaway by design. Plain HTML, no build step, no network.
+  Tokens copied verbatim from docs/design-system.md §2 (light theme).
+  This is the screen the 30-minute success metric is measured against:
+  typed exception badges, one row per invoice, approve in one tap.
+  Every state named in 01-product.md's Screens table is rendered at once,
+  each labelled.
+-->
+<style>
+  :root {
+    --radius: 1rem;
+    --background: #f7f7f5;
+    --foreground: #111111;
+    --card: #ffffff;
+    --card-foreground: #111111;
+    --muted: #efefec;
+    --muted-foreground: #6b6b6b;
+    --primary: #0a0a0a;
+    --primary-foreground: #ffffff;
+    --secondary: #efefec;
+    --secondary-foreground: #111111;
+    --accent: #2563eb;
+    --accent-foreground: #ffffff;
+    --destructive: #c4304f;
+    --destructive-foreground: #ffffff;
+    --border: #e4e4e1;
+    --input: #8c8c8c;
+    --ring: #2563eb;
+    --negative: #b8305a;
+    --negative-bg: #fde8ec;
+    --warning: #92600a;
+    --warning-bg: #fdf0dc;
+    --success: #1f7a3d;
+    --success-bg: #e4f5e6;
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+    padding: 2rem;
+  }
+  h1 { font-size: 1.25rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1rem; margin: 0 0 0.75rem; }
+  p { margin: 0.25rem 0; }
+  .sub { color: var(--muted-foreground); font-size: 0.875rem; }
+  .mockup-label {
+    display: inline-block;
+    margin: 2rem 0 0.5rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: var(--radius-sm);
+    background: var(--primary);
+    color: var(--primary-foreground);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .mockup-label.alt { background: var(--accent); color: var(--accent-foreground); }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0.125rem 0.625rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .pill.success { background: var(--success-bg); color: var(--success); }
+  .pill.warning { background: var(--warning-bg); color: var(--warning); }
+  .pill.negative { background: var(--negative-bg); color: var(--negative); }
+  .pill.neutral { background: var(--muted); color: var(--muted-foreground); }
+  .pill.accent { background: var(--accent); color: var(--accent-foreground); }
+  .state-note {
+    margin-top: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-left: 3px solid var(--accent);
+    background: var(--muted);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    font-size: 0.875rem;
+    color: var(--muted-foreground);
+  }
+  .state-note strong { color: var(--foreground); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 0.875rem 0.75rem; border-bottom: 1px solid var(--border); font-size: 0.875rem; vertical-align: top; }
+  th { color: var(--muted-foreground); font-weight: 600; font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.02em; }
+  tr.row-ok:hover, tr.row-wait:hover { background: var(--muted); }
+  .badges { display: flex; gap: 0.375rem; flex-wrap: wrap; }
+  .vendor { font-weight: 600; }
+  .amount { font-weight: 600; text-align: right; white-space: nowrap; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--card-foreground);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .btn.primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+  .btn.accent { background: var(--accent); color: var(--accent-foreground); border-color: var(--accent); }
+  .btn-row { display: flex; gap: 0.75rem; margin-top: 1.25rem; flex-wrap: wrap; }
+  .muted { color: var(--muted-foreground); }
+  .summary-tiles { display: flex; gap: 1rem; margin: 1.25rem 0; flex-wrap: wrap; }
+  .tile { flex: 1 1 140px; background: var(--muted); border-radius: var(--radius-md); padding: 0.875rem 1rem; }
+  .tile .num { font-size: 1.5rem; font-weight: 700; }
+  .tile .lbl { color: var(--muted-foreground); font-size: 0.8125rem; }
+  .amount.neg { color: var(--negative); }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>Invoices — review queue</h1>
+<p class="sub">Everything that needs you, with the reason typed out. This is the screen the month-end 30-minute target is measured against.</p>
+
+<div class="mockup-label">Screen: review-queue.html — 3 waiting, reasons typed</div>
+
+<div class="card">
+  <div class="summary-tiles">
+    <div class="tile"><div class="num">3</div><div class="lbl">Need review</div></div>
+    <div class="tile"><div class="num">2</div><div class="lbl">Can approve now</div></div>
+    <div class="tile"><div class="num">0</div><div class="lbl">Reading</div></div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Invoice</th>
+        <th>Date</th>
+        <th>Total</th>
+        <th>Why it's waiting</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="row-wait">
+        <td><span class="vendor">Southern Glazer's</span><br /><span class="muted">SG 1048821 · 2 pages · photo</span></td>
+        <td>Aug 11, 2026</td>
+        <td class="amount">$1,284.55</td>
+        <td>
+          <div class="badges">
+            <span class="pill warning">price jump</span>
+            <span class="pill negative">unmatched item</span>
+          </div>
+          <div class="muted" style="margin-top:0.25rem">TITOS HNDMD VDKA 750 up 8% · 1 line not recognised</div>
+        </td>
+        <td><a class="btn" href="review-invoice.html">Review</a></td>
+      </tr>
+      <tr class="row-wait">
+        <td><span class="vendor">RNDC</span><br /><span class="muted">R 339201 · 3 pages · PDF</span></td>
+        <td>Aug 9, 2026</td>
+        <td class="amount">$2,011.90</td>
+        <td>
+          <div class="badges">
+            <span class="pill negative">doesn't add up</span>
+          </div>
+          <div class="muted" style="margin-top:0.25rem">Lines total $1,986.40 vs printed $2,011.90</div>
+        </td>
+        <td><a class="btn" href="review-invoice.html">Review</a></td>
+      </tr>
+      <tr class="row-wait">
+        <td><span class="vendor">Breakthru</span><br /><span class="muted">BT 77512 · 1 page · photo</span></td>
+        <td>Aug 8, 2026</td>
+        <td class="amount">$642.10</td>
+        <td>
+          <div class="badges">
+            <span class="pill warning">possible duplicate</span>
+          </div>
+          <div class="muted" style="margin-top:0.25rem">Same number as an invoice entered Aug 1</div>
+        </td>
+        <td><a class="btn" href="review-invoice.html">Review</a></td>
+      </tr>
+      <tr class="row-ok">
+        <td><span class="vendor">Bernick's</span><br /><span class="muted">B 90211 · 1 page · PDF</span></td>
+        <td>Aug 6, 2026</td>
+        <td class="amount">$388.75</td>
+        <td>
+          <div class="badges">
+            <span class="pill success">ready to approve</span>
+          </div>
+          <div class="muted" style="margin-top:0.25rem">All 9 lines matched, adds up exactly</div>
+        </td>
+        <td><a class="btn primary" href="#">Approve</a></td>
+      </tr>
+      <tr class="row-ok">
+        <td><span class="vendor">Young's Market</span><br /><span class="muted">YM 4481 · 1 page · email</span></td>
+        <td>Aug 4, 2026</td>
+        <td class="amount">$510.30</td>
+        <td>
+          <div class="badges">
+            <span class="pill success">ready to approve</span>
+          </div>
+          <div class="muted" style="margin-top:0.25rem">All 12 lines matched, adds up exactly</div>
+        </td>
+        <td><a class="btn primary" href="#">Approve</a></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="mockup-label alt">The typing that matters — exceptions are typed, not just counted</div>
+
+<div class="card">
+  <p>The queue never just says "3 need attention." It says what kind of attention, so a month's invoices can be cleared in one sitting:</p>
+  <table>
+    <thead>
+      <tr><th>Badge</th><th>What it means</th><th>What you do</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><span class="pill warning">price jump</span></td><td>Unit cost differs from what you paid before</td><td>Look once, accept or flag to your rep</td></tr>
+      <tr><td><span class="pill negative">unmatched item</span></td><td>A line the app can't map to your catalog</td><td>Map it once — the next invoice knows it</td></tr>
+      <tr><td><span class="pill negative">doesn't add up</span></td><td>Lines don't equal the printed total</td><td>Find the dropped line — the silent under-cost</td></tr>
+      <tr><td><span class="pill warning">possible duplicate</span></td><td>Same vendor + invoice number already entered</td><td>Confirm it's new, or dismiss</td></tr>
+      <tr><td><span class="pill neutral">missing pack size</span></td><td>A case line without a readable pack size</td><td>Type 12 or 24 once</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="mockup-label">State: nothing waiting</div>
+
+<div class="card">
+  <div class="state-note"><strong>Empty state:</strong> "You're all caught up. New invoices land here the moment they're captured." The month-end target is met when this screen is empty — that is the definition of done.</div>
+</div>
+
+<div class="mockup-label">State: a document is mid-reading</div>
+
+<div class="card">
+  <div class="state-note"><strong>In progress:</strong> a row in <span class="pill neutral">reading</span> shows vendor and date as soon as known, no badges yet, and a "this usually takes under a minute" hint. It appears in the queue immediately — nothing is captured and hidden.</div>
+</div>
+
+<p class="muted" style="margin-top:1rem">Mockup — every state rendered at once, nothing hidden behind a click. See <code>docs/plans/phase-2.5-invoice-automation/01-product.md</code>.</p>
+
+</body>
+</html>

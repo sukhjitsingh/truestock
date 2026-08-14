@@ -1106,3 +1106,33 @@ Data privacy: [Anthropic commercial terms](https://terms.law/ToS-Watchdog/ai-ser
 
 Claude model IDs, pricing, image-token tiers, cache minimums and structured-output config
 per the `claude-api` skill (cached 2026-06-24), not from memory.
+
+## 5.4 Spike result — real Southern Glazer's invoice, extracted in ~100 ms
+
+Validated on 2026-08-14 against the owner's actual invoice
+`Southern Glazer's Invoice-5402426.pdf` (60 KB, 1 page) using pdf-inspector v1.14.2. The
+binary used was **`linux-x64-gnu` running inside `node:22-slim` via Docker** — deliberately
+the same glibc/arch as the Hostinger production runtime, so this is a partial de-risk of
+§5.2's spike (the standalone-packaging half remains unproven, see below).
+
+**Classify** — `TextBased`, 1 page, confidence **1.0**, no OCR pages needed. The invoice
+is a generated PDF from SGWS's Proof portal, not a scan.
+
+**Extract** — 83ms, valid layout-aware Markdown. Tables intact, per-line items recovered:
+
+- Header: Invoice **5402426**, dated 02/02/2026, account ID 10880.
+- Totals: Gross **$483.64**, Discount **$123.78**, Net **$359.86**.
+- 4 line items with pack details parsed out of the item name
+  (`BLACK VELVET CANADIAN 80 984395 • 1.0L • 12 Case • SCREW CAP`), quantity, gross/discount/net.
+- Title: *"Proof by Southern Glazer's"*.
+
+**Two findings that validate the pipeline design, not just the tool:**
+
+1. **The extraction surfaces exactly the discrepancy the review queue and arithmetic check exist for.** Header says Total Units **7**; the line items sum to **8** (1 case + 2 + 1 + 4). The last line's net cell is blank (`$168.00/$168.00/[]`). A human reviewer or the arithmetic check catches both — this real invoice is a live demo of why auto-approve stays off.
+2. **This is the Proof *pre-delivery* document, not final.** The extractor captured the invoice's own disclaimer: taxes/fees included, "refer to post-delivery invoice for additional details and final pricing information." Line items carry no unit price — only gross/discount/net — so unit cost for valuation must be derived (gross ÷ qty ÷ pack), and the post-delivery invoice may differ. Worth noting in the review step.
+
+**Parse caveats for the normalizer (all cheap):** the tax-note footnote landed inside the totals row as a stray cell; one garbage footer fragment (`ack db e Fe`); UoM mixes "Cases"/"Units" and needs the `pack_size` parser from Part 3.
+
+**A dev-machine constraint discovered here:** pdf-inspector's optional deps only ship `darwin-arm64` — there is **no `darwin-x64` (Intel Mac) binary.** The owner's dev Mac is x86_64, so the package cannot run natively here. The npx failure was this missing optional dependency (npm optional-deps bug [npm/cli#4828](https://github.com/npm/cli/issues/4828)) compounding the absent binary. Local dev runs it via Docker (linux-x64) — the same command path the Hostinger spike will use.
+
+**What this means:** pdf-inspector's value to Truestock is proven on the exact arch production runs, in-process, ~100 ms, free. §5.2's remaining unknown is narrowed to the `output: 'standalone'` file-tracing half of the spike; the runtime-load half has effectively passed.

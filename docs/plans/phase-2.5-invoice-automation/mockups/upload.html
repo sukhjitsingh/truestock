@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Upload — Truestock back office (Gate 1 mockup)</title>
+<!--
+  Gate 1 mockup, throwaway by design. Plain HTML, no build step, no network.
+  Tokens copied verbatim from docs/design-system.md §2 (light theme) — the
+  back office always renders light.
+  Every state named in docs/plans/phase-2.5-invoice-automation/01-product.md's
+  Screens table is rendered at once, each labelled, rather than hidden behind
+  a click.
+-->
+<style>
+  :root {
+    --radius: 1rem;
+    --background: #f7f7f5;
+    --foreground: #111111;
+    --card: #ffffff;
+    --card-foreground: #111111;
+    --muted: #efefec;
+    --muted-foreground: #6b6b6b;
+    --primary: #0a0a0a;
+    --primary-foreground: #ffffff;
+    --secondary: #efefec;
+    --secondary-foreground: #111111;
+    --accent: #2563eb;
+    --accent-foreground: #ffffff;
+    --destructive: #c4304f;
+    --destructive-foreground: #ffffff;
+    --border: #e4e4e1;
+    --input: #8c8c8c;
+    --ring: #2563eb;
+    --negative: #b8305a;
+    --negative-bg: #fde8ec;
+    --warning: #92600a;
+    --warning-bg: #fdf0dc;
+    --success: #1f7a3d;
+    --success-bg: #e4f5e6;
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+    padding: 2rem;
+  }
+  h1 { font-size: 1.25rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1rem; margin: 0 0 0.75rem; }
+  p { margin: 0.25rem 0; }
+  .sub { color: var(--muted-foreground); font-size: 0.875rem; }
+  .mockup-label {
+    display: inline-block;
+    margin: 2rem 0 0.5rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: var(--radius-sm);
+    background: var(--primary);
+    color: var(--primary-foreground);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .mockup-label.alt { background: var(--accent); color: var(--accent-foreground); }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .row { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .col { flex: 1 1 320px; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--card-foreground);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .btn.primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+  .btn.accent { background: var(--accent); color: var(--accent-foreground); border-color: var(--accent); }
+  .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0.125rem 0.625rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+  .pill.success { background: var(--success-bg); color: var(--success); }
+  .pill.warning { background: var(--warning-bg); color: var(--warning); }
+  .pill.negative { background: var(--negative-bg); color: var(--negative); }
+  .state-note {
+    margin-top: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-left: 3px solid var(--accent);
+    background: var(--muted);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    font-size: 0.875rem;
+    color: var(--muted-foreground);
+  }
+  .state-note strong { color: var(--foreground); }
+  .drop-zone {
+    border: 2px dashed var(--input);
+    border-radius: var(--radius-md);
+    padding: 2rem;
+    text-align: center;
+    color: var(--muted-foreground);
+    background: var(--muted);
+  }
+  .drop-zone.active { border-color: var(--accent); background: var(--success-bg); }
+  .addr-box {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem 1.25rem;
+    border: 1px solid var(--input);
+    border-radius: var(--radius-md);
+    background: var(--card);
+  }
+  .addr-box code { font-size: 1rem; font-weight: 600; color: var(--foreground); }
+  .btn-row { display: flex; gap: 0.75rem; margin-top: 1.25rem; flex-wrap: wrap; }
+  .muted { color: var(--muted-foreground); }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+  th, td { text-align: left; padding: 0.625rem 0.75rem; border-bottom: 1px solid var(--border); font-size: 0.875rem; }
+  th { color: var(--muted-foreground); font-weight: 600; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>Invoices — get them in</h1>
+<p class="sub">Three ways in. Anything you send lands in the review queue; nothing is trusted until you look at it.</p>
+
+<div class="mockup-label">Screen: upload.html — all three intake paths, at rest</div>
+
+<div class="card">
+  <div class="row">
+
+    <div class="col">
+      <h2>1 · Photograph it</h2>
+      <div class="drop-zone">
+        <div style="font-size:2rem;margin-bottom:0.25rem">📷</div>
+        <strong>Point your camera at the invoice</strong>
+        <p class="muted">Best on a flat surface, one page at a time.<br />A 3-page delivery = 3 photos.</p>
+      </div>
+      <div class="btn-row">
+        <a class="btn accent" href="#">Open camera</a>
+        <a class="btn" href="#">Choose from photos</a>
+      </div>
+    </div>
+
+    <div class="col">
+      <h2>2 · Upload a file</h2>
+      <div class="drop-zone">
+        <div style="font-size:2rem;margin-bottom:0.25rem">📄</div>
+        <strong>PDF, photo, or the file your rep emailed</strong>
+        <p class="muted">Whole document in one file is best —<br />the app handles multi-page PDFs.</p>
+      </div>
+      <div class="btn-row">
+        <a class="btn accent" href="#">Choose file</a>
+      </div>
+    </div>
+
+    <div class="col">
+      <h2>3 · Forward an email</h2>
+      <div class="addr-box">
+        <div style="font-size:1.25rem">✉️</div>
+        <div>
+          <div class="muted" style="font-size:0.75rem">Send invoice emails to</div>
+          <code>invoices@yourbar.truestock.app</code>
+        </div>
+      </div>
+      <p class="muted" style="margin-top:0.75rem">Each bar gets its own address. Emails and their attachments land in the queue within a minute.</p>
+    </div>
+
+  </div>
+</div>
+
+<div class="mockup-label alt">State: something was just captured — the queue is informed</div>
+
+<div class="card">
+  <div class="state-note"><strong>Just captured:</strong> "SGW 1048821 — 2 pages — just arrived from camera." The queue chip updated and the top of the list shows the new document in <span class="pill warning">reading</span>.</div>
+  <div class="btn-row">
+    <a class="btn primary" href="review-queue.html">Go to review queue (1 new)</a>
+  </div>
+</div>
+
+<div class="mockup-label">State: a duplicate was caught at the door</div>
+
+<div class="card">
+  <div class="state-note"><strong>Same document, second try:</strong> the app recognises the exact file it already holds and refuses the copy — it does not queue a duplicate for you to review. The message reads: <em>"You already have this invoice (SG 1048821, captured today). It was not added again."</em></div>
+</div>
+
+<div class="mockup-label">State: the queue when nothing is waiting</div>
+
+<div class="card">
+  <div class="state-note"><strong>Empty state:</strong> "No invoices waiting. New ones land here the moment they're captured." The <strong>Archive</strong> link stays visible — finding last month's paper is still one tap away.</div>
+</div>
+
+<p class="muted" style="margin-top:1rem">Mockup — every state rendered at once, nothing hidden behind a click. See <code>docs/plans/phase-2.5-invoice-automation/01-product.md</code>.</p>
+
+</body>
+</html>
