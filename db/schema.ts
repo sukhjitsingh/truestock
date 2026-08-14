@@ -89,6 +89,11 @@ import {
   countTypeEnum,
   locationCountModeEnum,
   countStatusEnum,
+  invoiceStatusEnum,
+  invoiceSourceEnum,
+  extractionJobStatusEnum,
+  extractionPhaseEnum,
+  pdfTypeEnum,
 } from "./enums";
 
 export {
@@ -98,6 +103,11 @@ export {
   countTypeEnum,
   locationCountModeEnum,
   countStatusEnum,
+  invoiceStatusEnum,
+  invoiceSourceEnum,
+  extractionJobStatusEnum,
+  extractionPhaseEnum,
+  pdfTypeEnum,
 };
 
 // Reusable audit-timestamp pair. Only added to tables where spec §8 doesn't
@@ -874,5 +884,227 @@ export const countLineWrite = mysqlTable(
       foreignColumns: [countLine.organizationId, countLine.id],
       name: "count_line_write_organization_line_fk",
     }).onDelete("cascade"),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Invoice — Phase 2.5, Slice 1 (OCR invoice automation)
+// ---------------------------------------------------------------------------
+// docs/plans/phase-2.5-invoice-automation/02-architecture.md §2 is the spec.
+// Only `invoice` and `extraction_job` are built in this slice, deliberately —
+// `invoice_line`, `vendor_alias`, `audit_packet`, `audit_packet_file` and
+// `product_cost_history` are later slices and are NOT defined here.
+//
+// [AR-4] The status machine (uploaded → processing → needs_review →
+// reviewed → approved | rejected) is declared as data in
+// `lib/domain/invoices.ts` (`INVOICE_TRANSITIONS`), not here — this table
+// only fixes the closed set of values via `invoiceStatusEnum`.
+// `approved` is terminal: nothing transitions out of it, so a correction to
+// an approved invoice is a new record, never a status edit (mirrors
+// invariant 1's "closed counts are immutable").
+//
+// Money columns are DECIMAL(10,4), same precision as
+// `product.current_unit_cost` — see the file header's precision
+// conventions — so a per-unit cost derived from an invoice line round-trips
+// exactly as a string with no float drift.
+export const invoice = mysqlTable(
+  "invoice",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    organizationId: int("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "restrict" }),
+    // No single-column FK — the composite tenant FK below covers it.
+    // Nullable: the upload form may not have a vendor picked yet.
+    vendorId: int("vendor_id"),
+    status: mysqlEnum("status", invoiceStatusEnum).notNull().default("uploaded"),
+    source: mysqlEnum("source", invoiceSourceEnum).notNull(),
+    // ---------------------------------------------------------------------
+    // File identity — declared by the client when the upload is REQUESTED,
+    // then verified against what actually landed on disk.
+    // ---------------------------------------------------------------------
+    //
+    // Points into INVOICE_STORAGE_DIR, never `public/` [AR-1]. Long enough
+    // for a deep per-org/per-year path; not a URL.
+    //
+    // Nullable only because the storage key is `{org}/{invoiceId}.{ext}` and
+    // `id` is an autoincrement — it does not exist until the row does. The
+    // insert and the follow-up UPDATE that sets this run in one transaction,
+    // so a committed row always has a path. NULL is preferred over inserting
+    // `''` and updating: an empty string is a value the file route would have
+    // to special-case, and if the transaction were ever refactored apart it
+    // would resolve to the storage root itself rather than failing.
+    filePath: varchar("file_path", { length: 1024 }),
+    // Both DECLARED at upload-request time, both re-derived from the bytes
+    // that actually landed and compared in `confirmUploadAction`. Comparing a
+    // value against itself would make the verification decorative, so these
+    // are written once, at request time, and never rewritten from the file.
+    // A mismatch leaves `extraction_job.status = awaiting_upload`, so a
+    // truncated or swapped upload is never extracted [AR-6].
+    fileSha256: varchar("file_sha256", { length: 64 }).notNull(),
+    fileSizeBytes: int("file_size_bytes").notNull(),
+
+    // ---------------------------------------------------------------------
+    // Everything below is READ OFF THE DOCUMENT, so none of it exists until
+    // extraction has run (Slice 2). All nullable, deliberately.
+    // ---------------------------------------------------------------------
+    //
+    // The alternative — NOT NULL with a placeholder written at upload — puts
+    // a fabricated invoice date, invoice number and $0.00 totals on a row
+    // that the archive list renders as though they were read off the
+    // document. That is the plausible-but-wrong default AGENTS.md names as
+    // this app's worst failure mode: nothing looks broken, and the numbers
+    // are invented. NULL renders as "—" and is the truth.
+    //
+    // The consequence is a constraint the DATABASE cannot express: these must
+    // be non-null before the invoice reaches `reviewed`. Enforced in the
+    // domain layer, on the CAS transition, with an adversarial test — a
+    // nullable column with no such guard would let an invoice be approved
+    // with no total and write a NULL cost downstream.
+    pageCount: int("page_count"),
+    // DATE, not TIMESTAMP — an invoice date is a calendar day printed on a
+    // document, not a moment in time. mode: "string" + db/index.ts's
+    // `dateStrings: ["DATE"]` keeps it a plain "YYYY-MM-DD" end to end, same
+    // reasoning as count_line.openedAt (see that column's comment above).
+    invoiceDate: date("invoice_date", { mode: "string" }),
+    dueDate: date("due_date", { mode: "string" }),
+    invoiceNumber: varchar("invoice_number", { length: 100 }),
+    totalGross: decimal("total_gross", { precision: 10, scale: 4 }),
+    totalDiscount: decimal("total_discount", { precision: 10, scale: 4 }),
+    totalNet: decimal("total_net", { precision: 10, scale: 4 }),
+    // ISO 4217 code (e.g. "USD"). Free text, not an enum — same reasoning as
+    // product.category: a small but not worth hardcoding closed set.
+    currency: varchar("currency", { length: 3 }),
+    // Derived from `invoice_date` via `computeRetentionUntil` (spec §10's
+    // 2-year window), so it cannot be known before the date is. DATE — the
+    // retention sweep operates on whole days, same as the other three date
+    // columns above.
+    retentionUntil: date("retention_until", { mode: "string" }),
+    // A moment in time (when the CAS to `approved` happened), so TIMESTAMP —
+    // unlike the calendar dates above.
+    approvedAt: timestamp("approved_at"),
+    approvedBy: int("approved_by").references(() => user.id, { onDelete: "restrict" }),
+    ...auditColumns,
+  },
+  (table) => [
+    // Target of extraction_job's (and later invoice_line's,
+    // product_cost_history's) composite tenant FK. Same role as
+    // `vendor_organization_id_id_unique` / `count_organization_id_id_unique`.
+    uniqueIndex("invoice_organization_id_id_unique").on(table.organizationId, table.id),
+    // Review queue: filter by tenant + status, ordered by recency.
+    index("invoice_organization_status_invoice_date_idx").on(
+      table.organizationId,
+      table.status,
+      table.invoiceDate,
+    ),
+    // Archive screen: filter by tenant + vendor, ordered by recency.
+    index("invoice_organization_vendor_invoice_date_idx").on(
+      table.organizationId,
+      table.vendorId,
+      table.invoiceDate,
+    ),
+    // Retention sweep: every invoice whose retention window has lapsed, per
+    // tenant.
+    index("invoice_organization_retention_until_idx").on(
+      table.organizationId,
+      table.retentionUntil,
+    ),
+    // Tenant integrity for a client-supplied id [AR-2] — the upload form
+    // supplies vendor_id from a picker, so without this an invoice could be
+    // filed against another tenant's vendor and every archive/audit-packet
+    // query downstream would report it under that vendor's name.
+    //
+    // ON DELETE RESTRICT, not SET NULL: organization_id is NOT NULL, so
+    // MySQL can't null just one column of the pair — same reasoning as
+    // `product_organization_vendor_fk` above. A NULL vendor_id skips the
+    // check entirely (MATCH SIMPLE), which is correct for an invoice with no
+    // vendor picked yet.
+    foreignKey({
+      columns: [table.organizationId, table.vendorId],
+      foreignColumns: [vendor.organizationId, vendor.id],
+      name: "invoice_organization_vendor_fk",
+    }).onDelete("restrict"),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// ExtractionJob — Phase 2.5, Slice 1
+// ---------------------------------------------------------------------------
+// [AR-6] ONE state machine: awaiting_upload → queued → running → done | failed.
+// See `extractionJobStatusEnum` in db/enums.ts for the full history of why
+// this is written down in exactly one place.
+//
+// A job is created `awaiting_upload`, not `queued` — the invoice row and job
+// row exist before the client has uploaded the file, so a job claimable at
+// creation would get picked up by the cron before the object exists and fail
+// as what looks like OCR flakiness. `confirmUploadAction` moves it to
+// `queued` only after verifying the stored object's byte length and SHA-256
+// match what was declared at upload.
+//
+// `claimNextJob` is an atomic conditional update
+// (`SET status='running', claimed_at=NOW(), claimed_by=:worker
+//   WHERE status='queued' ORDER BY id LIMIT 1`) — zero rows affected means
+// another worker won the race, not an error. `reapStuckJobs` is the missing
+// edge back out of `running`: a job whose claimed_at is older than the
+// 15-minute timeout returns to `queued` with retry_count incremented, or to
+// `failed` with error_message = 'worker timeout' once retry_count reaches 3.
+// Reclaiming is safe because extraction writes invoice_line drafts keyed by
+// (invoice_id, line_number) — idempotent by construction, and nothing
+// downstream (review, approval) has run yet.
+//
+// `phase` and `pdf_type` are observability only, never a claim predicate —
+// the claim query only ever looks at `status`.
+export const extractionJob = mysqlTable(
+  "extraction_job",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    organizationId: int("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "restrict" }),
+    // No single-column FK — the composite tenant FK below covers it.
+    invoiceId: int("invoice_id").notNull(),
+    status: mysqlEnum("status", extractionJobStatusEnum).notNull().default("awaiting_upload"),
+    phase: mysqlEnum("phase", extractionPhaseEnum),
+    pdfType: mysqlEnum("pdf_type", pdfTypeEnum),
+    // MariaDB has no native JSON type — `json` here is a `longtext` alias
+    // with a validity check (see db/README.md). mysql2 still parses it back
+    // into an array on read, same guarantee count_line.partial_fills relies
+    // on; that's a driver behaviour, not a schema one, so it's covered by a
+    // test rather than assumed. Nullable — most jobs never need OCR pages.
+    pagesNeedingOcr: json("pages_needing_ocr").$type<number[]>(),
+    errorMessage: text("error_message"),
+    claimedAt: timestamp("claimed_at"),
+    // Worker id (hostname/pid-ish string) — makes a stuck job diagnosable.
+    // Not a FK: workers aren't a database entity.
+    claimedBy: varchar("claimed_by", { length: 255 }),
+    startedAt: timestamp("started_at"),
+    completedAt: timestamp("completed_at"),
+    // Bounded by reapStuckJobs at 3 attempts before the job moves to
+    // `failed` — see the table comment above.
+    retryCount: int("retry_count").notNull().default(0),
+    ...auditColumns,
+  },
+  (table) => [
+    // Target of a later slice's composite tenant FKs, if any child table
+    // ever needs one. Same role as every other `*_organization_id_id_unique`
+    // in this file.
+    uniqueIndex("extraction_job_organization_id_id_unique").on(table.organizationId, table.id),
+    // THE claim-query index. Deliberately NOT organization-scoped: the
+    // cron's `UPDATE ... WHERE status='queued' ORDER BY id LIMIT 1` is a
+    // system worker claiming across ALL tenants, not a user-scoped read, so
+    // an organization-first index would never be the one the optimizer
+    // picks for it.
+    index("extraction_job_status_id_idx").on(table.status, table.id),
+    // Tenant integrity [AR-2] — an invoice_id supplied by a later slice's
+    // resend/retry flow is client-adjacent, so this makes a cross-tenant
+    // attachment a database error (1452) rather than a silent misfile.
+    // ON DELETE RESTRICT: nothing hard-deletes an invoice (mirrors
+    // invariant 6's soft-delete discipline), so there is no cascade this
+    // needs to follow.
+    foreignKey({
+      columns: [table.organizationId, table.invoiceId],
+      foreignColumns: [invoice.organizationId, invoice.id],
+      name: "extraction_job_organization_invoice_fk",
+    }).onDelete("restrict"),
   ],
 );
