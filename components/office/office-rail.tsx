@@ -102,6 +102,13 @@ const VendorsIcon: RailIcon = ({ className }) => (
   </svg>
 );
 
+const InvoicesIcon: RailIcon = ({ className }) => (
+  <svg {...iconProps} className={className}>
+    <path d="M6 2.5h9l3 3V21a.5.5 0 0 1-.5.5H6.5A.5.5 0 0 1 6 21V3a.5.5 0 0 1 .5-.5Z" strokeLinejoin="round" />
+    <path d="M9 9h6M9 13h6M9 17h4" strokeLinecap="round" />
+  </svg>
+);
+
 const ReorderIcon: RailIcon = ({ className }) => (
   <svg {...iconProps} className={className}>
     <path
@@ -162,6 +169,7 @@ export function OfficeRail({
     { href: "/office/catalog", label: "Catalog", icon: CatalogIcon },
     { href: "/office/locations", label: "Locations", icon: LocationsIcon },
     { href: "/office/vendors", label: "Vendors", icon: VendorsIcon },
+    { href: "/office/invoices", label: "Invoices", icon: InvoicesIcon },
     { href: "/office/reorder", label: "Reorder", icon: ReorderIcon },
     ...(role === "owner" ? [{ href: "/office/users", label: "Users", icon: UsersIcon }] : []),
   ];

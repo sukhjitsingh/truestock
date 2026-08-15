@@ -34,6 +34,15 @@ next-env.d.ts
 # local db dumps
 *.sql.gz
 
+# Invoice originals (Phase 2.5). INVOICE_STORAGE_DIR defaults to ./var/invoices/
+# — a SIBLING of public/, never inside it. Next serves public/ statically ahead
+# of the application, so an invoice placed there is retrievable unauthenticated:
+# no session, no role check, no organization predicate. That is simultaneously a
+# cross-tenant breach (invariant 9) and a cost-visibility breach (invariant 8),
+# and it is the AR-1 finding this directory choice exists to close. The only
+# read path is GET /api/invoices/[id]/file.
+/var/
+
 # Jcode / Codex agent config — local tooling, not part of the project
 .agents/
 .codex/

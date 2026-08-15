@@ -57,3 +57,32 @@ export function countStatusTone(status: string): PillTone {
 export function countStatusLabel(status: string): string {
   return status.replace(/_/g, " ");
 }
+
+/**
+ * Invoice lifecycle status -> pill tone (Phase 2.5). Mirrors
+ * `countStatusTone`'s reasoning: `needs_review` and `reviewed` are "not
+ * done yet, wants a look" the same way a count's `in_progress`/`submitted`/
+ * `reviewed` do, so they share the warning tone; `approved` is terminal
+ * (`lib/domain/invoices.ts`'s `INVOICE_TRANSITIONS`), matching a closed
+ * count's success tone; `rejected` is the one invoice status that is
+ * genuinely blocked, matching `negative`. `uploaded` has nothing happening
+ * yet — neutral, same as a count's `draft` default below.
+ */
+export function invoiceStatusTone(status: string): PillTone {
+  switch (status) {
+    case "approved":
+      return "success";
+    case "processing":
+    case "needs_review":
+    case "reviewed":
+      return "warning";
+    case "rejected":
+      return "negative";
+    default:
+      return "neutral";
+  }
+}
+
+export function invoiceStatusLabel(status: string): string {
+  return status.replace(/_/g, " ");
+}

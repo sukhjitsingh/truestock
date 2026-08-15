@@ -61,3 +61,56 @@ export const countStatusEnum = [
   "reviewed",
   "closed",
 ] as const;
+
+/**
+ * [AR-4] docs/plans/phase-2.5-invoice-automation/02-architecture.md §2. The
+ * invoice status machine, declared once — the legal transitions themselves
+ * live in `lib/domain/invoices.ts` (`INVOICE_TRANSITIONS`), not here; this
+ * tuple only fixes the closed set of values MariaDB will accept. `approved`
+ * is terminal: nothing transitions out of it, and a correction to an
+ * approved invoice is a new record, never a status edit.
+ */
+export const invoiceStatusEnum = [
+  "uploaded",
+  "processing",
+  "needs_review",
+  "reviewed",
+  "approved",
+  "rejected",
+] as const;
+
+/** How the invoice document arrived. */
+export const invoiceSourceEnum = ["photo", "pdf", "email_forward"] as const;
+
+/**
+ * [AR-6] ONE state machine for `extraction_job`, declared here and nowhere
+ * else. The earlier draft had three incompatible vocabularies: the enum
+ * said "pending", a slice wrote "ready_for_classify" (not in the enum —
+ * MariaDB would reject it), and the cron claimed "pending". The lifecycle is
+ * exactly `awaiting_upload → queued → running → done | failed`.
+ *
+ * A job is created `awaiting_upload`, NOT `queued` — the invoice and job
+ * rows exist before the client has finished uploading the file, and a job
+ * claimable at creation gets picked up by the cron before the object exists.
+ * It only becomes `queued` once the upload is confirmed and its byte length
+ * and SHA-256 match what was declared at upload time. See
+ * `db/schema.ts`'s `extractionJob` table comment for the reaper that
+ * returns a stuck `running` job to `queued` (or `failed` after 3 retries).
+ */
+export const extractionJobStatusEnum = [
+  "awaiting_upload",
+  "queued",
+  "running",
+  "done",
+  "failed",
+] as const;
+
+/**
+ * Progress *within* extraction. Observability only — never a claim
+ * predicate, so adding a pipeline step never changes which jobs the cron
+ * claims.
+ */
+export const extractionPhaseEnum = ["classify", "text_extract", "ocr", "parse"] as const;
+
+/** Set by the classify phase; drives whether OCR (Claude Vision) runs. */
+export const pdfTypeEnum = ["text", "scanned", "mixed", "image"] as const;

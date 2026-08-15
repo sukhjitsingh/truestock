@@ -60,3 +60,28 @@ export class ConflictError extends DomainError {
     super("CONFLICT", message);
   }
 }
+
+/**
+ * Phase 2.5 invariant 1's mirror for invoices: an edge not present in
+ * `INVOICE_TRANSITIONS` (lib/domain/invoices.ts) — including anything OUT of
+ * `approved`, which is terminal — is refused with this rather than attempted.
+ */
+export class InvalidInvoiceTransitionError extends DomainError {
+  constructor(message: string) {
+    super("INVALID_INVOICE_TRANSITION", message);
+  }
+}
+
+/**
+ * Thrown when a transition into `reviewed` is attempted while a required
+ * document field (invoice_date, invoice_number, total_gross, total_net,
+ * currency, retention_until) is still NULL. The database cannot express this
+ * constraint — those columns are nullable because extraction hasn't run yet
+ * at upload time (db/schema.ts's `invoice` table comment) — so it is enforced
+ * here, on the CAS transition itself, with a test asserting it fires.
+ */
+export class InvoiceNotWritableError extends DomainError {
+  constructor(message: string) {
+    super("INVOICE_NOT_WRITABLE", message);
+  }
+}
