@@ -61,4 +61,60 @@ export const listInvoicesSchema = z.object({
 });
 export type ListInvoicesInput = z.infer<typeof listInvoicesSchema>;
 
+export const getInvoiceLinesSchema = getInvoiceSchema;
+
+/**
+ * A `DECIMAL(12,2)` money value as the string form Drizzle round-trips
+ * (`invoiceLine.rawGross`/`rawDiscount`/`rawNet` — see db/schema.ts). Up to
+ * 10 integer digits, an optional leading `-` (a discount line is naturally
+ * negative), and at most 2 decimal places. `null` is a distinct, valid value
+ * — it clears the column, matching `lib/domain/invoice-lines.ts`'s
+ * `LineCorrection` doc comment; `undefined`/omitted leaves it unchanged.
+ */
+const moneyStringSchema = z
+  .string()
+  .regex(/^-?\d{1,10}(\.\d{1,2})?$/, "Must be a number with up to 2 decimal places.");
+
+/**
+ * One line's reviewer correction — mirrors
+ * `lib/domain/invoice-lines.ts`'s `LineCorrection` exactly. `matchMethod`
+ * and `exceptionFlags` are deliberately NOT fields here: both are derived
+ * server-side from `matchedProductId`, never accepted from the client (see
+ * that file's comment on `LineCorrection`).
+ */
+export const lineCorrectionSchema = z.object({
+  id: z.number().int().positive(),
+  rawGross: moneyStringSchema.nullable().optional(),
+  rawDiscount: moneyStringSchema.nullable().optional(),
+  rawNet: moneyStringSchema.nullable().optional(),
+  matchedProductId: z.number().int().positive().nullable().optional(),
+});
+
+/**
+ * The review screen's submit. `corrections` may be an empty array — a
+ * reviewer who touched nothing still needs to be able to move the invoice
+ * `needs_review -> reviewed` (e.g. the pipeline already matched every line
+ * correctly and nothing needs changing).
+ */
+export const reviewInvoiceSchema = z.object({
+  invoiceId: z.number().int().positive(),
+  corrections: z.array(lineCorrectionSchema).max(500),
+});
+export type ReviewInvoiceInput = z.infer<typeof reviewInvoiceSchema>;
+
+/**
+ * A reason is required — an invoice rejection is a permanent, auditable
+ * record (`invoice.rejectionReason`), not a silent status flip.
+ */
+export const rejectInvoiceSchema = z.object({
+  invoiceId: z.number().int().positive(),
+  reason: z.string().trim().min(1, "A rejection reason is required.").max(2000),
+});
+export type RejectInvoiceInput = z.infer<typeof rejectInvoiceSchema>;
+
+export const resendToExtractionSchema = z.object({
+  invoiceId: z.number().int().positive(),
+});
+export type ResendToExtractionInput = z.infer<typeof resendToExtractionSchema>;
+
 export { MAX_INVOICE_BYTES };

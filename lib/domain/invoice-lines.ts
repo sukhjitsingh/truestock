@@ -1,12 +1,19 @@
 /**
- * `invoice_line` writes — Phase 2.5, Slice 2 (extraction drafts).
+ * `invoice_line` reads and writes — Phase 2.5, Slice 2.
  *
- * This module owns exactly one write path: the extraction pipeline
- * (`lib/domain/extraction-pipeline.ts`) replacing an invoice's draft lines
- * with the result of its latest classify/extract/parse pass. It does NOT
- * (yet) own reads or the review screen's per-line edits — those belong to a
- * later slice's `reviewInvoiceAction`, which needs its own ownership-checked
- * read/update helpers this file deliberately leaves room for.
+ * Two write paths live here, deliberately kept apart:
+ *   - `writeExtractedLines` — the extraction pipeline
+ *     (`lib/domain/extraction-pipeline.ts`) replacing an invoice's draft
+ *     lines wholesale with the result of its latest classify/extract/parse
+ *     pass. Runs strictly before the owning invoice reaches `needs_review`.
+ *   - `applyLineReviewTx`/`submitInvoiceReview` — a human reviewer's
+ *     per-line corrections on the review screen, once the invoice IS
+ *     `needs_review`. Updates specific fields on specific rows; never
+ *     deletes or reorders anything the pipeline wrote.
+ * The two are structurally incompatible (wholesale replace vs. targeted
+ * update) precisely because of WHEN each runs — see `writeExtractedLines`'s
+ * own comment for why that ordering is what makes the delete-then-insert
+ * shape safe.
  *
  * ## Why delete-then-insert, not an upsert keyed on (invoiceId, lineNumber)
  *
@@ -31,17 +38,22 @@
  * is authoritative and prior matches are re-done on the new draft, not
  * silently preserved underneath it.
  */
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { invoice, invoiceLine } from "@/db/schema";
-import type { invoiceLineTypeEnum, invoiceLineUomEnum } from "@/db/enums";
+import { invoice, invoiceLine, product } from "@/db/schema";
+import type { invoiceLineTypeEnum, invoiceLineUomEnum, invoiceMatchMethodEnum } from "@/db/enums";
 import type { Actor } from "@/lib/authz";
 import { NotFoundError } from "@/lib/domain/errors";
+import { updateInvoiceStatusTx, type InvoiceRow } from "@/lib/domain/invoices";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 export type InvoiceLineType = (typeof invoiceLineTypeEnum)[number];
 export type InvoiceLineUom = (typeof invoiceLineUomEnum)[number];
+export type InvoiceMatchMethod = (typeof invoiceMatchMethodEnum)[number];
+
+/** The exception badge Slice 2's own pipeline can set — see `parseLinesFromVision`. */
+const UNMATCHED_ITEM_FLAG = "unmatched item";
 
 /**
  * One extracted line, prior to any human review. Every money/quantity field
@@ -139,4 +151,270 @@ export async function writeExtractedLines(
   );
 
   return lines.length;
+}
+
+// ---------------------------------------------------------------------------
+// Reads — owner-only (AR-7: every column here is supplier cost data), scoped
+// and ownership-checked per invariant 9.
+// ---------------------------------------------------------------------------
+
+/** One line, as the review screen renders it — every field the pipeline or a reviewer can write. */
+export interface InvoiceLineRow {
+  id: number;
+  organizationId: number;
+  invoiceId: number;
+  lineNumber: number;
+  rawText: string | null;
+  lineType: InvoiceLineType;
+  vendorItemCode: string | null;
+  description: string | null;
+  packDescription: string | null;
+  quantity: string | null;
+  uom: InvoiceLineUom | null;
+  packSize: number | null;
+  unitCost: string | null;
+  extendedCost: string | null;
+  rawGross: string | null;
+  rawDiscount: string | null;
+  rawNet: string | null;
+  exceptionFlags: string[] | null;
+  matchedProductId: number | null;
+  matchMethod: InvoiceMatchMethod;
+  matchConfidence: string | null;
+  extractionConfidence: string | null;
+  reviewedBy: number | null;
+  reviewedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+function toInvoiceLineRow(row: typeof invoiceLine.$inferSelect): InvoiceLineRow {
+  return {
+    id: row.id,
+    organizationId: row.organizationId,
+    invoiceId: row.invoiceId,
+    lineNumber: row.lineNumber,
+    rawText: row.rawText,
+    lineType: row.lineType,
+    vendorItemCode: row.vendorItemCode,
+    description: row.description,
+    packDescription: row.packDescription,
+    quantity: row.quantity,
+    uom: row.uom,
+    packSize: row.packSize,
+    unitCost: row.unitCost,
+    extendedCost: row.extendedCost,
+    rawGross: row.rawGross,
+    rawDiscount: row.rawDiscount,
+    rawNet: row.rawNet,
+    exceptionFlags: row.exceptionFlags ?? null,
+    matchedProductId: row.matchedProductId,
+    matchMethod: row.matchMethod,
+    matchConfidence: row.matchConfidence,
+    extractionConfidence: row.extractionConfidence,
+    reviewedBy: row.reviewedBy,
+    reviewedAt: row.reviewedAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+/**
+ * Every line on one invoice, in document order (`line_number` ascending —
+ * the pipeline's own renumbering, see `parseLinesFromVision`'s comment).
+ * Ownership-checked against `actor.organizationId` before anything is read
+ * [invariant 9]: a cross-tenant `invoiceId` raises `NotFoundError`, the same
+ * shape `getInvoice` uses, rather than an empty array — an empty array would
+ * be indistinguishable from "your own invoice with zero lines," which is a
+ * real state (see `writeExtractedLines`'s own comment on a blank document).
+ */
+export async function getLinesForInvoice(actor: Actor, invoiceId: number): Promise<InvoiceLineRow[]> {
+  const [owned] = await db
+    .select({ id: invoice.id })
+    .from(invoice)
+    .where(and(eq(invoice.id, invoiceId), eq(invoice.organizationId, actor.organizationId)))
+    .limit(1);
+  if (!owned) {
+    throw new NotFoundError("Invoice");
+  }
+
+  const rows = await db
+    .select()
+    .from(invoiceLine)
+    .where(and(eq(invoiceLine.invoiceId, invoiceId), eq(invoiceLine.organizationId, actor.organizationId)))
+    .orderBy(asc(invoiceLine.lineNumber));
+  return rows.map(toInvoiceLineRow);
+}
+
+// ---------------------------------------------------------------------------
+// Review — a human's per-line corrections on the `needs_review` screen.
+// ---------------------------------------------------------------------------
+
+/**
+ * One line's reviewer correction. Every field but `id` is OPTIONAL —
+ * `undefined` means "leave this column alone," which lets a reviewer
+ * resubmit only the lines they actually touched rather than every line on
+ * the invoice. `matchedProductId: null` is a real, distinct value from
+ * `undefined`: it explicitly clears an existing match (a reviewer undoing a
+ * mis-match), where `undefined` leaves whatever match already exists.
+ *
+ * `matchMethod` and `exceptionFlags`' "unmatched item" badge are
+ * deliberately NOT accepted here — both are DERIVED from `matchedProductId`
+ * by `applyLineReviewTx` below, never trusted from the client. `matchMethod`
+ * is a closed set whose values (`vendor_alias_code`, `barcode`, `fuzzy`, …)
+ * describe HOW a match was made; the only method a human review action can
+ * ever legitimately produce is `manual` (or `unmatched`, clearing it), so
+ * accepting an arbitrary client-supplied value would let a request claim an
+ * automatic-matching provenance it never earned.
+ */
+export interface LineCorrection {
+  id: number;
+  rawGross?: string | null;
+  rawDiscount?: string | null;
+  rawNet?: string | null;
+  matchedProductId?: number | null;
+}
+
+/**
+ * Applies `corrections` to `invoiceId`'s lines, inside the caller-supplied
+ * transaction. The composable half of the review write path — see
+ * `applyLineReview` (opens its own transaction, for standalone/unit use) and
+ * `submitInvoiceReview` (composes this with the invoice's own CAS
+ * atomically, which is what `reviewInvoiceAction` actually calls).
+ *
+ * Three ownership checks, in order, before any row is written:
+ *   1. `invoiceId` belongs to `actor.organizationId`.
+ *   2. Every submitted line `id` belongs to THAT invoice AND that
+ *      organization — checked as one batched `SELECT`, not per-line. A
+ *      crafted line id from a different invoice (even the caller's own
+ *      other invoice) or a different tenant is refused before anything is
+ *      touched; a foreign key on `invoice_line.invoice_id` would prove the
+ *      row exists, not that this invoice review is allowed to touch it.
+ *   3. [AR-2] Every submitted `matchedProductId` belongs to
+ *      `actor.organizationId` — ALSO one batched `SELECT`, before any row is
+ *      written. This is the check `db/schema.ts`'s `invoiceLine.matchedProductId`
+ *      comment names explicitly: the column has no app-level FK-implied
+ *      trust because a human picks it from a client request.
+ *
+ * `reviewedBy`/`reviewedAt` are stamped on every corrected line from `actor`
+ * and `now()` — never accepted from the caller, the same discipline
+ * `count_line`'s audit columns hold.
+ */
+export async function applyLineReviewTx(
+  tx: Tx,
+  actor: Actor,
+  invoiceId: number,
+  corrections: LineCorrection[],
+): Promise<void> {
+  if (corrections.length === 0) {
+    return;
+  }
+
+  const [ownedInvoice] = await tx
+    .select({ id: invoice.id })
+    .from(invoice)
+    .where(and(eq(invoice.id, invoiceId), eq(invoice.organizationId, actor.organizationId)))
+    .limit(1);
+  if (!ownedInvoice) {
+    throw new NotFoundError("Invoice");
+  }
+
+  const uniqueLineIds = Array.from(new Set(corrections.map((c) => c.id)));
+  const ownedLines = await tx
+    .select()
+    .from(invoiceLine)
+    .where(
+      and(
+        eq(invoiceLine.organizationId, actor.organizationId),
+        eq(invoiceLine.invoiceId, invoiceId),
+        inArray(invoiceLine.id, uniqueLineIds),
+      ),
+    );
+  if (ownedLines.length !== uniqueLineIds.length) {
+    // At least one submitted line id isn't this invoice's own — never
+    // distinguish "belongs to someone else" from "doesn't exist" (invariant 9).
+    throw new NotFoundError("Invoice line");
+  }
+  const ownedLinesById = new Map(ownedLines.map((row) => [row.id, row]));
+
+  const uniqueProductIds = Array.from(
+    new Set(corrections.map((c) => c.matchedProductId).filter((id): id is number => id != null)),
+  );
+  if (uniqueProductIds.length > 0) {
+    const ownedProducts = await tx
+      .select({ id: product.id })
+      .from(product)
+      .where(and(eq(product.organizationId, actor.organizationId), inArray(product.id, uniqueProductIds)));
+    if (ownedProducts.length !== uniqueProductIds.length) {
+      throw new NotFoundError("Product");
+    }
+  }
+
+  const now = new Date();
+  for (const correction of corrections) {
+    const current = ownedLinesById.get(correction.id)!;
+    const setValues: Partial<typeof invoiceLine.$inferInsert> = {
+      reviewedBy: actor.userId,
+      reviewedAt: now,
+    };
+    if (correction.rawGross !== undefined) setValues.rawGross = correction.rawGross;
+    if (correction.rawDiscount !== undefined) setValues.rawDiscount = correction.rawDiscount;
+    if (correction.rawNet !== undefined) setValues.rawNet = correction.rawNet;
+
+    if (correction.matchedProductId !== undefined) {
+      setValues.matchedProductId = correction.matchedProductId;
+      setValues.matchMethod = correction.matchedProductId == null ? "unmatched" : "manual";
+      // Derived, not client-supplied (see LineCorrection's comment): matching
+      // a product clears the "unmatched item" badge; explicitly clearing a
+      // match puts it back, since the line is unmatched again.
+      const currentFlags = current.exceptionFlags ?? [];
+      setValues.exceptionFlags =
+        correction.matchedProductId == null
+          ? currentFlags.includes(UNMATCHED_ITEM_FLAG)
+            ? currentFlags
+            : [...currentFlags, UNMATCHED_ITEM_FLAG]
+          : currentFlags.filter((flag) => flag !== UNMATCHED_ITEM_FLAG);
+    }
+
+    await tx
+      .update(invoiceLine)
+      .set(setValues)
+      .where(
+        and(
+          eq(invoiceLine.id, correction.id),
+          eq(invoiceLine.organizationId, actor.organizationId),
+          eq(invoiceLine.invoiceId, invoiceId),
+        ),
+      );
+  }
+}
+
+/** `applyLineReviewTx`, opening its own transaction — for standalone/unit use. */
+export async function applyLineReview(
+  actor: Actor,
+  invoiceId: number,
+  corrections: LineCorrection[],
+): Promise<void> {
+  await db.transaction((tx) => applyLineReviewTx(tx, actor, invoiceId, corrections));
+}
+
+/**
+ * The review screen's actual submit: applies the reviewer's line
+ * corrections AND CAS's the invoice `needs_review -> reviewed`, in ONE
+ * transaction. If the CAS finds the invoice has moved on — rejected or
+ * reviewed by someone else since this reviewer loaded the screen —
+ * `updateInvoiceStatusTx` raises `ConflictError`, and the whole transaction
+ * rolls back: the line corrections are undone along with it, rather than
+ * left applied against an invoice that never actually reached `reviewed`
+ * (04-slices.md's `review_conflicts_when_status_moved`).
+ */
+export async function submitInvoiceReview(
+  actor: Actor,
+  invoiceId: number,
+  corrections: LineCorrection[],
+): Promise<InvoiceRow> {
+  return db.transaction(async (tx) => {
+    await applyLineReviewTx(tx, actor, invoiceId, corrections);
+    return updateInvoiceStatusTx(tx, actor, invoiceId, "needs_review", "reviewed");
+  });
 }

@@ -488,6 +488,28 @@ export async function updateInvoiceStatus(
   to: InvoiceStatus,
   data: Partial<typeof invoice.$inferInsert> = {},
 ): Promise<InvoiceRow> {
+  return db.transaction((tx) => updateInvoiceStatusTx(tx, actor, invoiceId, from, to, data));
+}
+
+/**
+ * The CAS's own core, split out of `updateInvoiceStatus` — Phase 2.5, Slice 2
+ * — so a caller that must hold this transition inside a LARGER transaction
+ * (`lib/domain/invoice-lines.ts:submitInvoiceReview` applies the reviewer's
+ * line corrections and this CAS atomically, so a conflict rolls both back
+ * together rather than leaving corrections applied against an invoice that
+ * never actually became `reviewed`) can do so, mirroring
+ * `lib/domain/extraction.ts`'s `updateJobStatus`/`updateJobStatusTx` split.
+ * `updateInvoiceStatus` above is now just this function plus a transaction
+ * of its own.
+ */
+export async function updateInvoiceStatusTx(
+  tx: Tx,
+  actor: Actor,
+  invoiceId: number,
+  from: InvoiceStatus | InvoiceStatus[],
+  to: InvoiceStatus,
+  data: Partial<typeof invoice.$inferInsert> = {},
+): Promise<InvoiceRow> {
   const fromList = Array.isArray(from) ? from : [from];
   const legalFromAny = fromList.some((candidate) => INVOICE_TRANSITIONS[candidate].includes(to));
   if (!legalFromAny) {
@@ -496,44 +518,90 @@ export async function updateInvoiceStatus(
     );
   }
 
-  return db.transaction(async (tx) => {
-    const [row] = await tx
-      .select()
-      .from(invoice)
-      .where(and(eq(invoice.id, invoiceId), eq(invoice.organizationId, actor.organizationId)))
-      .for("update");
-    if (!row) {
-      throw new NotFoundError("Invoice");
-    }
-    if (!fromList.includes(row.status)) {
-      throw new ConflictError(
-        `Invoice ${invoiceId} must be ${fromList.join(" or ")} to move to ${to}, but it is ${row.status}.`,
+  const [row] = await tx
+    .select()
+    .from(invoice)
+    .where(and(eq(invoice.id, invoiceId), eq(invoice.organizationId, actor.organizationId)))
+    .for("update");
+  if (!row) {
+    throw new NotFoundError("Invoice");
+  }
+  if (!fromList.includes(row.status)) {
+    throw new ConflictError(
+      `Invoice ${invoiceId} must be ${fromList.join(" or ")} to move to ${to}, but it is ${row.status}.`,
+    );
+  }
+
+  if (to === "reviewed") {
+    const merged: Record<string, unknown> = { ...row, ...data };
+    const missing = REQUIRED_FOR_REVIEW.filter((field) => merged[field] == null);
+    if (missing.length > 0) {
+      throw new InvoiceNotWritableError(
+        `Invoice ${invoiceId} cannot move to reviewed — missing: ${missing.join(", ")}.`,
       );
     }
+  }
 
-    if (to === "reviewed") {
-      const merged: Record<string, unknown> = { ...row, ...data };
-      const missing = REQUIRED_FOR_REVIEW.filter((field) => merged[field] == null);
-      if (missing.length > 0) {
-        throw new InvoiceNotWritableError(
-          `Invoice ${invoiceId} cannot move to reviewed — missing: ${missing.join(", ")}.`,
-        );
-      }
-    }
+  await tx
+    .update(invoice)
+    .set({ status: to, ...data })
+    .where(and(eq(invoice.id, invoiceId), eq(invoice.organizationId, actor.organizationId)));
 
-    await tx
-      .update(invoice)
-      .set({ status: to, ...data })
-      .where(and(eq(invoice.id, invoiceId), eq(invoice.organizationId, actor.organizationId)));
+  const [updated] = await tx
+    .select()
+    .from(invoice)
+    .where(and(eq(invoice.id, invoiceId), eq(invoice.organizationId, actor.organizationId)))
+    .limit(1);
+  if (!updated) {
+    throw new NotFoundError("Invoice");
+  }
+  return toInvoiceRow(updated);
+}
 
-    const [updated] = await tx
-      .select()
-      .from(invoice)
-      .where(and(eq(invoice.id, invoiceId), eq(invoice.organizationId, actor.organizationId)))
-      .limit(1);
-    if (!updated) {
-      throw new NotFoundError("Invoice");
-    }
-    return toInvoiceRow(updated);
+// ---------------------------------------------------------------------------
+// Resend to extraction — Phase 2.5, Slice 2. The `rejected -> processing`
+// re-extract entry point [AR-4].
+// ---------------------------------------------------------------------------
+
+export interface ResendToExtractionResult {
+  invoice: InvoiceRow;
+  extractionJobId: number;
+}
+
+/**
+ * CAS `rejected -> processing`, then opens a NEW `extraction_job` row
+ * starting at `queued` — never `awaiting_upload`, because the file behind
+ * this invoice was already confirmed on disk the first time around and
+ * nothing here re-collects it [AR-6]. The invoice's CAS and the job insert
+ * run in one transaction: a conflict on the CAS (the invoice moved on again
+ * before this call landed) must not leave an orphaned job queued against an
+ * invoice that never actually re-entered `processing`.
+ *
+ * The PREVIOUS job row (whatever it ended at — normally `failed`, with its
+ * `error_message`/`retry_count` intact) is never touched by this function.
+ * That is deliberate, not an oversight: those columns are the diagnostic
+ * record of why the first attempt failed, and this is a fresh attempt, not a
+ * correction to the old one. Two job rows now exist for one invoice — the
+ * first time that has ever been possible — see
+ * `lib/domain/extraction.ts:getJobForInvoice`/`lockJobForUpload`'s
+ * `ORDER BY id DESC` for why that is now load-bearing there.
+ */
+export async function resendInvoiceToExtraction(
+  actor: Actor,
+  invoiceId: number,
+): Promise<ResendToExtractionResult> {
+  return db.transaction(async (tx) => {
+    const updated = await updateInvoiceStatusTx(tx, actor, invoiceId, "rejected", "processing");
+
+    const [job] = await tx
+      .insert(extractionJob)
+      .values({
+        organizationId: actor.organizationId,
+        invoiceId,
+        status: "queued",
+      })
+      .$returningId();
+
+    return { invoice: updated, extractionJobId: job.id };
   });
 }
