@@ -151,9 +151,14 @@ const extractedLineSchema = z.object({
   // why an unrecognised value here degrades to "unknown"/"other" rather than
   // failing the whole document's extraction over one bad line.
   lineType: z.string().nullable(),
-  vendorItemCode: z.string().nullable(),
-  description: z.string().nullable(),
-  packDescription: z.string().nullable(),
+  // .max() bounds match db/schema.ts's invoice_line column widths exactly
+  // (vendor_item_code/pack_description varchar(64), description varchar(512))
+  // — a garbled or hallucinated extraction over-length hits a clean Zod
+  // error here, at the AI/domain boundary, instead of an opaque MariaDB
+  // "Data too long" surfacing through processExtractionQueue's generic catch.
+  vendorItemCode: z.string().max(64).nullable(),
+  description: z.string().max(512).nullable(),
+  packDescription: z.string().max(64).nullable(),
   quantity: z.number().nullable(),
   uom: z.string().nullable(),
   packSize: z.number().int().positive().nullable(),
@@ -170,7 +175,9 @@ const extractedInvoiceSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "invoiceDate must be YYYY-MM-DD")
     .nullable(),
-  invoiceNumber: z.string().nullable(),
+  // Matches invoice.invoice_number's varchar(100) — see extractedLineSchema's
+  // own comment on why AI output gets the same boundary bounds as any other.
+  invoiceNumber: z.string().max(100).nullable(),
   totalGross: z.number().nullable(),
   totalDiscount: z.number().nullable(),
   totalNet: z.number().nullable(),
@@ -293,6 +300,15 @@ export async function extractInvoice(doc: ExtractionDoc): Promise<ExtractInvoice
     },
   });
 
+  if (message.stop_reason === "max_tokens") {
+    // Distinguished from the generic "no parsed_output" case below: this is
+    // an actionable, specific failure (raise MAX_OUTPUT_TOKENS, or split the
+    // document) rather than "the model returned nothing," which reads to an
+    // operator as a totally different, unrelated problem.
+    throw new Error(
+      `Claude Vision's response was truncated at MAX_OUTPUT_TOKENS (${MAX_OUTPUT_TOKENS}) — likely a long invoice with many line items. Raise the limit or split the document.`,
+    );
+  }
   if (message.parsed_output == null) {
     throw new Error("Claude Vision returned no parsed_output for this invoice.");
   }
@@ -595,6 +611,24 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
   const arithmetic = arithmeticCheck(lines, header.totalGross != null ? Number(header.totalGross) : null);
   const crossCheck = pdfInspectorCrossCheck(lines, markdown);
   if (!arithmetic.pass || !crossCheck.pass) {
+    if (lines.length === 0) {
+      // A check failure is normally surfaced by flagging every line
+      // "doesn't add up" — but there are no lines to flag here, and writing
+      // zero drafts to needs_review would silently strand the mismatch: an
+      // empty line table looks identical whether the invoice genuinely had
+      // nothing to extract or the pipeline dropped everything on the floor.
+      // Failing the job instead puts a real error in front of an operator,
+      // rather than a plausible-looking "reviewed, all clear" invoice with
+      // nothing on it (AGENTS.md's "nothing looks broken until weeks later"
+      // failure mode).
+      const reasons = [
+        ...(!arithmetic.pass ? arithmetic.details : []),
+        ...(!crossCheck.pass ? crossCheck.droppedLines : []),
+      ];
+      throw new Error(
+        `Invoice ${job.invoiceId}: extraction produced zero lines but a check failed — ${reasons.join(" ")}`,
+      );
+    }
     for (const line of lines) {
       line.exceptionFlags = [...(line.exceptionFlags ?? []), "doesn't add up"];
     }

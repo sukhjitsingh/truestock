@@ -24,7 +24,7 @@
  * job row itself before calling this) are the ones responsible for having
  * resolved the id through a trustworthy path.
  */
-import { and, asc, eq, lt } from "drizzle-orm";
+import { and, asc, eq, isNull, lt, or } from "drizzle-orm";
 import { db } from "@/db";
 import { extractionJob } from "@/db/schema";
 import { extractionJobStatusEnum } from "@/db/enums";
@@ -360,7 +360,20 @@ export async function reapStuckJobs(
   const stuck = await db
     .select({ id: extractionJob.id, retryCount: extractionJob.retryCount })
     .from(extractionJob)
-    .where(and(eq(extractionJob.status, "running"), lt(extractionJob.claimedAt, cutoff)));
+    .where(
+      and(
+        eq(extractionJob.status, "running"),
+        // `claimed_at < cutoff` alone would never match a NULL claimed_at
+        // (SQL's `NULL < x` is unknown, not true) — currently unreachable,
+        // since claimNextJob's atomic UPDATE always sets claimed_at in the
+        // same statement that sets status to running, but the transition
+        // graph's own comment allows queued -> running through the generic
+        // CAS path too, which has no such guarantee. Defense in depth: a
+        // running job with no claimed_at is stuck by definition and must
+        // still be reaped, not silently skipped forever.
+        or(lt(extractionJob.claimedAt, cutoff), isNull(extractionJob.claimedAt)),
+      ),
+    );
 
   let requeued = 0;
   let failed = 0;

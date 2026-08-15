@@ -5,3 +5,4 @@
 - [Multi-tenant boundary audit 2026-07](project_multitenant_audit_2026-07.md) — one real cross-tenant IDOR: count-line writes never validate `locationId` against the caller's org. Everything else (product/count scoping, composite FKs, idempotency ledger, Better Auth additionalFields) verified correct.
 - [Phase 1-1.5 slices audit 2026-08-12](project_phase1-1.5_slices_audit_2026-08-12.md) — locations CRUD, inline cost editing, dashboard reads, session sweep, docker guard: clean, no exploitable findings.
 - [Phase 2 UI redesign audit 2026-08-13](project_phase2_ui_redesign_audit_2026-08-13.md) — TanStack Table v8 catalog, dev scripts, CSP: confirmed presentation-layer-only, no exploitable findings.
+- [Phase 2.5 Slice 2 extraction pipeline audit 2026-08-15](project_phase2.5_slice2_extraction_pipeline_audit_2026-08-15.md) — cron worker, systemActor, Claude Vision boundary, ANTHROPIC_API_KEY handling: clean, two low/theoretical notes only.
