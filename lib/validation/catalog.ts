@@ -179,6 +179,21 @@ export const productSearchSchema = z.object({
 });
 export type ProductSearchInput = z.infer<typeof productSearchSchema>;
 
+/**
+ * Fetch specific products by id — the exact-match complement to
+ * `productSearchSchema`'s text/category search. Exists so a screen that
+ * already holds a set of `productId`s (e.g. the invoice review screen's
+ * `matchedProductId`s) can resolve their names even when a product falls
+ * outside a capped/active-only search result — see
+ * `lib/domain/catalog.ts:getProductsByIds`'s own comment for why that gap is
+ * real, not hypothetical. Capped at 500: comfortably above any one invoice's
+ * line count (`reviewInvoiceSchema` itself caps corrections at 500).
+ */
+export const getProductsByIdsSchema = z.object({
+  ids: z.array(z.number().int().positive()).min(1).max(500),
+});
+export type GetProductsByIdsInput = z.infer<typeof getProductsByIdsSchema>;
+
 export const resolveBarcodeSchema = z.object({
   barcode: barcodeStringSchema,
 });
