@@ -20,6 +20,7 @@ import {
   user as userTable,
   location as locationTable,
   product as productTable,
+  vendor as vendorTable,
 } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
 
@@ -78,6 +79,8 @@ const TABLES_CHILD_FIRST = [
   "product_barcode",
   "product",
   "location",
+  "extraction_job",
+  "invoice",
   "vendor",
   "session",
   "account",
@@ -119,6 +122,9 @@ export interface Fixtures {
   otherOrganizationId: number;
   locationId: number;
   otherLocationId: number;
+  vendorId: number;
+  /** A vendor belonging to the OTHER tenant — invariant 9's negative case. */
+  otherVendorId: number;
   /** A product WITH a cost — valuation should include it. */
   pricedProductId: number;
   /** A product with no cost — valuation must exclude it, never value it at 0. */
@@ -202,6 +208,16 @@ export async function createFixtures(): Promise<Fixtures> {
     .values({ organizationId: otherOrg.id, name: "Their Bar", countMode: "tenths" })
     .$returningId();
 
+  const [vendor] = await db
+    .insert(vendorTable)
+    .values({ organizationId: org.id, name: "Test Distributor" })
+    .$returningId();
+
+  const [otherVendor] = await db
+    .insert(vendorTable)
+    .values({ organizationId: otherOrg.id, name: "Their Distributor" })
+    .$returningId();
+
   // 24.5000 rather than a round number on purpose: DECIMAL(10,4) round-tripping
   // through drizzle's string mode is one of the things under test, and a value
   // that survives being turned into a float by accident proves nothing.
@@ -265,6 +281,8 @@ export async function createFixtures(): Promise<Fixtures> {
     otherOrganizationId: otherOrg.id,
     locationId: location.id,
     otherLocationId: otherLocation.id,
+    vendorId: vendor.id,
+    otherVendorId: otherVendor.id,
     pricedProductId: priced.id,
     unpricedProductId: unpriced.id,
     secondProductId: second.id,

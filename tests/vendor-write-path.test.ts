@@ -73,7 +73,14 @@ describe("updateVendor", () => {
 
     await updateVendor(fx.owner, { id: created.id, contact: "orders@breakthru.example", leadTimeDays: 3 });
 
-    const rows = await db.select().from(vendor).where(eq(vendor.organizationId, fx.organizationId));
+    // Scoped by name, not just organizationId — createFixtures() now also
+    // seeds one vendor per org (fx.vendorId), so counting every row in the
+    // org would conflate that baseline with what this test is actually
+    // proving: that the update did not insert a second row for THIS vendor.
+    const rows = await db
+      .select()
+      .from(vendor)
+      .where(and(eq(vendor.organizationId, fx.organizationId), eq(vendor.name, "Breakthru Beverage")));
     expect(rows).toHaveLength(1);
     expect(rows[0].id).toBe(created.id);
     expect(rows[0].name).toBe("Breakthru Beverage");
@@ -102,9 +109,15 @@ describe("listVendors", () => {
 
     const list = await listVendors(fx.owner);
 
-    expect(list).toHaveLength(1);
-    expect(list[0].id).toBe(mine.id);
+    // createFixtures() also seeds one vendor per org (fx.vendorId /
+    // fx.otherVendorId), so the caller's org has two vendors at this point —
+    // the fixture one plus `mine` — and the assertions below are about
+    // WHICH vendors come back, not a raw count that would conflate the two.
+    expect(list).toHaveLength(2);
+    expect(list.some((v) => v.id === mine.id)).toBe(true);
+    expect(list.some((v) => v.id === fx.vendorId)).toBe(true);
     expect(list.some((v) => v.name === "Theirs Distributing")).toBe(false);
+    expect(list.some((v) => v.id === fx.otherVendorId)).toBe(false);
   });
 });
 

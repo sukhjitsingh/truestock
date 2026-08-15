@@ -975,10 +975,13 @@ export const invoice = mysqlTable(
     // ISO 4217 code (e.g. "USD"). Free text, not an enum — same reasoning as
     // product.category: a small but not worth hardcoding closed set.
     currency: varchar("currency", { length: 3 }),
-    // Derived from `invoice_date` via `computeRetentionUntil` (spec §10's
-    // 2-year window), so it cannot be known before the date is. DATE — the
-    // retention sweep operates on whole days, same as the other three date
-    // columns above.
+    // Derived from `invoice_date` via `computeRetentionUntil` — invoice_date
+    // + 3 years, spec §10's "2 years minimum (3 is safer)" resolved upward
+    // because this is the date before which an invoice must never be deleted
+    // and deleting a legally-required record early is unrecoverable (see that
+    // function's comment). So it cannot be known before the date is. DATE —
+    // the retention sweep operates on whole days, same as the other three
+    // date columns above.
     retentionUntil: date("retention_until", { mode: "string" }),
     // A moment in time (when the CAS to `approved` happened), so TIMESTAMP —
     // unlike the calendar dates above.

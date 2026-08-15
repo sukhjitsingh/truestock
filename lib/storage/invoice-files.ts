@@ -42,6 +42,12 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  ACCEPTED_INVOICE_CONTENT_TYPES,
+  extensionForContentType,
+} from "./invoice-content-types";
+
+export { ACCEPTED_INVOICE_CONTENT_TYPES };
 
 /**
  * Thrown when a stored path resolves outside `INVOICE_STORAGE_DIR`.
@@ -125,23 +131,6 @@ export function invoiceStorageKey(
     String(organizationId),
     `${invoiceId}${extensionForContentType(contentType)}`,
   );
-}
-
-const CONTENT_TYPE_EXTENSIONS: Readonly<Record<string, string>> = {
-  "application/pdf": ".pdf",
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "image/heic": ".heic",
-  "image/webp": ".webp",
-};
-
-/** The upload types this phase accepts. Anything else is refused at validation. */
-export const ACCEPTED_INVOICE_CONTENT_TYPES = Object.keys(
-  CONTENT_TYPE_EXTENSIONS,
-) as readonly string[];
-
-function extensionForContentType(contentType: string): string {
-  return CONTENT_TYPE_EXTENSIONS[contentType] ?? ".bin";
 }
 
 /**
