@@ -1379,3 +1379,39 @@ sat inside it. The one item it raised that *did* produce a change
 is now a go-live check (§2.2): `invoiceStorageRoot()`'s refusal-if-inside-`public/`
 guard resolves `./public` against `process.cwd()`, so a wrong cwd defeats that
 guard silently while `resolveStoredPath`'s containment check still holds.
+
+---
+
+## 32. A failed header-field extraction has no correction path on the review screen
+
+**Trigger: the first time a real invoice reaches `needs_review` with a NULL
+`invoiceDate`, `invoiceNumber`, `totalGross`, `totalNet`, `currency`, or
+`retentionUntil` — i.e. the first time this is tested against a real scanned
+or smudged invoice rather than the seeded fixture, which always populates all
+six.**
+
+Opened 2026-08-15, from the Slice 2 code review
+(`docs/plans/phase-2.5-invoice-automation/04-slices.md`'s "Slice 2 —
+Extraction + Review"). `REQUIRED_FOR_REVIEW` (`lib/domain/invoices.ts`) blocks
+`needs_review → reviewed` while any of those six header columns is NULL — a
+Slice 1 guard that Slice 2 is the first code to actually drive from live UI.
+Slice 2's spec, both in "What's new" and "What the user can see", describes
+only **line-level** editing (`reviewInvoiceAction`'s `corrections` carry
+`rawGross`/`rawDiscount`/`rawNet`/`matchedProductId` per line, nothing at
+invoice-header granularity); the review screen renders the six header fields
+read-only in the page header
+(`app/(office)/office/invoices/[invoiceId]/page.tsx`). This is in scope as
+specified — not a Slice 2 defect — but it leaves a real dead end: if
+extraction can't determine one of those six fields, Approve fails every time
+with a correctly-worded but unfixable `InvoiceNotWritableError`, and the only
+other action, "Retry extraction" (`resendToExtractionAction`), reruns the same
+pipeline against the same document and will most likely reproduce the exact
+same gap. No test exercises this — the fixture invoice
+(`tests/helpers/test-db.ts`) always populates all six.
+
+Fix, when the trigger fires: either extend `lineCorrectionSchema`/
+`reviewInvoiceSchema` and the review form to also accept header-field
+corrections (mirroring the line-correction pattern), or give Reject a way to
+also record which header field blocked it so it surfaces as more than a raw
+domain-error string. Whichever is chosen should have a test using a fixture
+invoice with one of the six fields NULL, not the always-fully-populated one.

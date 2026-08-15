@@ -6,3 +6,4 @@
 - [Phase 1-1.5 slices audit 2026-08-12](project_phase1-1.5_slices_audit_2026-08-12.md) — locations CRUD, inline cost editing, dashboard reads, session sweep, docker guard: clean, no exploitable findings.
 - [Phase 2 UI redesign audit 2026-08-13](project_phase2_ui_redesign_audit_2026-08-13.md) — TanStack Table v8 catalog, dev scripts, CSP: confirmed presentation-layer-only, no exploitable findings.
 - [Phase 2.5 Slice 2 extraction pipeline audit 2026-08-15](project_phase2.5_slice2_extraction_pipeline_audit_2026-08-15.md) — cron worker, systemActor, Claude Vision boundary, ANTHROPIC_API_KEY handling: clean, two low/theoretical notes only.
+- [Phase 2.5 Slice 2 review screen audit 2026-08-15](project_phase2.5_slice2_review_screen_audit_2026-08-15.md) — reviewInvoiceAction/rejectInvoiceAction/resendToExtractionAction, AR-2 batch ownership check, invoice CAS races: clean, one low/theoretical note only.

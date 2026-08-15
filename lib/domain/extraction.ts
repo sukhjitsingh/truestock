@@ -24,7 +24,7 @@
  * job row itself before calling this) are the ones responsible for having
  * resolved the id through a trustworthy path.
  */
-import { and, asc, eq, isNull, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, lt, or } from "drizzle-orm";
 import { db } from "@/db";
 import { extractionJob } from "@/db/schema";
 import { extractionJobStatusEnum } from "@/db/enums";
@@ -159,6 +159,14 @@ export async function claimNextJob(workerId: string): Promise<ExtractionJobRow |
  * without reaching past the domain layer into `extraction_job` itself, and so
  * a cross-tenant `invoiceId` produces the same `NotFoundError` every other
  * lookup does (invariant 9) rather than an answer confirming the row is real.
+ *
+ * `ORDER BY id DESC LIMIT 1` — Phase 2.5, Slice 2's
+ * `lib/domain/invoices.ts:resendInvoiceToExtraction` is the first thing that
+ * can make more than one `extraction_job` row exist for one invoice (a fresh
+ * attempt after a rejection, deliberately leaving the old row's diagnostics
+ * alone). Before that, one invoice ever had exactly one job, so this ordering
+ * was unobservable; now the newest row is the only one that answers "is this
+ * invoice still accepting bytes" correctly.
  */
 export async function getJobForInvoice(
   organizationId: number,
@@ -170,6 +178,7 @@ export async function getJobForInvoice(
     .where(
       and(eq(extractionJob.invoiceId, invoiceId), eq(extractionJob.organizationId, organizationId)),
     )
+    .orderBy(desc(extractionJob.id))
     .limit(1);
   if (!row) {
     throw new NotFoundError("Extraction job");
@@ -276,6 +285,12 @@ export async function lockJobForUpload<T>(
   body: (job: ExtractionJobRow, tx: Tx) => Promise<T>,
 ): Promise<T> {
   return db.transaction(async (tx) => {
+    // `ORDER BY id DESC LIMIT 1` — same reasoning as `getJobForInvoice`
+    // above: Slice 2's `resendInvoiceToExtraction` can leave more than one
+    // job row per invoice, and only the newest is the one a concurrent
+    // upload/confirm should be serializing against. `LIMIT 1` also bounds
+    // this to locking exactly one row rather than every job this invoice has
+    // ever had.
     const [row] = await tx
       .select()
       .from(extractionJob)
@@ -285,6 +300,8 @@ export async function lockJobForUpload<T>(
           eq(extractionJob.organizationId, organizationId),
         ),
       )
+      .orderBy(desc(extractionJob.id))
+      .limit(1)
       .for("update");
     if (!row) {
       throw new NotFoundError("Extraction job");

@@ -319,6 +319,36 @@ Written, reviewed, typechecked — never observed working.
 
 ## Recent history
 
+- **2026-08-15** — **Phase 2.5 Slice 2's review screen shipped, closing the
+  gap the prior entry flagged.** `app/(office)/office/invoices/[invoiceId]/page.tsx`
+  and `components/office/invoice-review-form.tsx`: the owner-only [AR-7]
+  extracted-line table with exception badges (unmatched item, price jump,
+  duplicate, doesn't-add-up), editable gross/discount/net, Approve
+  (`needs_review → reviewed`) and Return-for-re-extraction with a required
+  reason. code-reviewer and security-reviewer both ran clean (zero
+  critical/high). Two Low findings fixed same-day: an empty-lines-row
+  `colSpan` count that didn't match the table's real 7 columns, and a
+  matched-but-deactivated (or outside-the-100-row-cap) product rendering
+  "not entered" instead of its name — the exact "plausible but wrong"
+  failure class this project treats as a real defect, not a nitpick. Fixed
+  with a new `getProductsByIds(actor, ids)` domain function (`lib/domain/
+  catalog.ts`, reusing `selectProducts` with no `active` filter — invariant
+  6, matched history still references a deactivated product) and a page-level
+  merge of any matched id the capped/active search didn't already return. A
+  third finding — no correction path when a NULL header field blocks Approve
+  — is genuinely out of Slice 2's spec scope; deferred as `docs/open-items.md`
+  item #32. All 32 backend tests re-verified passing in an isolated run (the
+  full-suite run showed unrelated timeouts from DB-connection-pool
+  contention across two simultaneous Docker stacks, not a regression).
+  Verified in a real browser against a throwaway isolated Docker stack
+  (`docker-compose.verify.yml`, deleted after use) with a seeded invoice
+  carrying one unmatched line, one active-matched line, and one
+  matched-then-deactivated line: sign-in, review-screen render, editing a
+  match, Approve transitioning the invoice to `reviewed` with lines locked
+  read-only and the matched-product names all correct (including the
+  deactivated one), and the Return form rendering. `00-status.md`'s Slice 2
+  checkbox is now checked.
+
 - **2026-08-15** — **Phase 2.5 Slice 1 shipped in full, Slice 2's backend half
   shipped, both on `feat/phase-2.5-invoice-automation` (not `main` yet).**
   Slice 1 (PR #16): invoice upload handshake (size + SHA-256 verify before

@@ -270,6 +270,27 @@ export async function searchProducts(
 }
 
 /**
+ * Resolve specific products by id, regardless of `active` status.
+ *
+ * `searchProducts` alone cannot back "what product does this line already
+ * point to" — it's capped (`max(100)`) and defaults `activeOnly: true`, so a
+ * matched product can be invisible to it two ways: the org has more active
+ * products than the cap, or the product was deactivated (invariant 6: never
+ * hard-deleted; history — including a past invoice match — still references
+ * it) after the match was made. Either way, a screen that only ever calls
+ * `searchProducts` and looks the id up in the result renders "not entered"
+ * for a line that IS matched — a real, not hypothetical, "plausible but
+ * wrong" display bug (Slice 2 review screen, flagged 2026-08-15). This
+ * function is the fix: an exact-id lookup with no `active`/limit filter, so
+ * a caller can merge it into a search result to guarantee every id it
+ * already knows about resolves to a name.
+ */
+export async function getProductsByIds(actor: Actor, ids: number[]): Promise<ProductSummary[]> {
+  if (ids.length === 0) return [];
+  return selectProducts(actor, inArray(product.id, ids), ids.length);
+}
+
+/**
  * Attaches on-hand and par to an already-selected page of products. Two
  * queries total regardless of page size — the shared on-hand snapshot, and
  * one `IN (...)` over `product_par` for just the ids on this page.

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireOfficeUser } from "@/lib/current-user";
 import { listInvoicesForOwnerAction, listInvoicesRedactedAction } from "@/app/actions/invoices";
 import { listVendorsAction } from "@/app/actions/catalog";
@@ -41,6 +42,14 @@ export const metadata = { title: "Invoices · Truestock" };
  * dead affordance, so the column itself doesn't exist for that role, same
  * "columns built per role" rule as the counts screen.
  *
+ * The Slice 2 "Review" column is the same owner-only affordance, for the
+ * same reason: `/office/invoices/[invoiceId]` is gated by
+ * `getInvoiceAction`'s own `requireRole("owner")`, so a manager's link would
+ * be a dead 403 too. It's a real `<Link>`, not a row `onClick` — AGENTS.md's
+ * "Row-level edit is a real `<button>`" rule (this table also reflows: the
+ * upload form sits above it) applies just as much to a navigation affordance
+ * as an inline edit one.
+ *
  * ## Every Slice 1 row is legitimately half-empty
  *
  * `invoice_number`, `invoice_date`, and `retention_until` (computed FROM
@@ -77,7 +86,7 @@ export default async function InvoicesPage() {
   const vendors = vendorsResult.ok ? vendorsResult.data : [];
   const vendorNameById = new Map(vendors.map((vendor) => [vendor.id, vendor.name]));
 
-  const columnCount = isOwner ? 6 : 5;
+  const columnCount = isOwner ? 7 : 5;
 
   return (
     <div>
@@ -111,6 +120,7 @@ export default async function InvoicesPage() {
                 <TableHead>Status</TableHead>
                 <TableHead>Retention until</TableHead>
                 {isOwner ? <TableHead>File</TableHead> : null}
+                {isOwner ? <TableHead>Review</TableHead> : null}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -167,6 +177,16 @@ export default async function InvoicesPage() {
                         >
                           View
                         </a>
+                      </TableCell>
+                    ) : null}
+                    {isOwner ? (
+                      <TableCell>
+                        <Link
+                          href={`/office/invoices/${invoice.id}`}
+                          className="text-foreground underline"
+                        >
+                          Review
+                        </Link>
                       </TableCell>
                     ) : null}
                   </TableRow>

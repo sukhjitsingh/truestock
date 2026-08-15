@@ -2,15 +2,17 @@
 
 /**
  * Invoice server actions — Phase 2.5, Slice 1 (upload + archive tracer
- * bullet). Every export checks session + role itself (CLAUDE.md invariant
- * 7) via lib/authz.ts, never relying on middleware. All writes run through
- * lib/domain/invoices.ts, which owns the upload/confirm handshake [AR-6],
- * the tenant-ownership checks [AR-2], and the two-query owner/manager split
- * [AR-7].
+ * bullet) and Slice 2 (extraction review). Every export checks session +
+ * role itself (CLAUDE.md invariant 7) via lib/authz.ts, never relying on
+ * middleware. All writes run through lib/domain/invoices.ts and
+ * lib/domain/invoice-lines.ts, which own the upload/confirm handshake
+ * [AR-6], the tenant-ownership checks [AR-2], and the two-query
+ * owner/manager split [AR-7].
  *
  * Upload and confirm are owner + manager, never staff — invoices are not a
- * staff concern (spec §4: staff is count-only). Reading a single invoice
- * with its full (unredacted) detail is owner-only, matching
+ * staff concern (spec §4: staff is count-only). Everything else here —
+ * reading a single invoice's full (unredacted) detail, its lines, reviewing,
+ * rejecting, and resending to extraction — is owner-only, matching
  * `lib/authz.ts:canSeeCost`; the manager archive list goes through
  * `listInvoicesRedactedAction`, backed by a query that never selects a
  * monetary column.
@@ -22,11 +24,16 @@
 import { requireRole } from "@/lib/authz";
 import { runAction, type ActionResult } from "@/lib/action-result";
 import * as invoices from "@/lib/domain/invoices";
+import * as invoiceLines from "@/lib/domain/invoice-lines";
 import {
   uploadInvoiceSchema,
   confirmUploadSchema,
   getInvoiceSchema,
+  getInvoiceLinesSchema,
   listInvoicesSchema,
+  reviewInvoiceSchema,
+  rejectInvoiceSchema,
+  resendToExtractionSchema,
 } from "@/lib/validation/invoices";
 
 export interface UploadInvoiceResult {
@@ -118,5 +125,92 @@ export async function listInvoicesRedactedAction(
     const actor = await requireRole("owner", "manager");
     const parsed = listInvoicesSchema.parse(input);
     return invoices.listInvoicesRedacted(actor, parsed);
+  });
+}
+
+/**
+ * The review screen's line table — every column, including cost. Owner-only,
+ * same gate as `getInvoiceAction`: a manager has no legitimate use for this
+ * screen (04-slices.md's `manager_cannot_open_review_screen`).
+ */
+export async function getInvoiceLinesAction(
+  input: unknown,
+): Promise<ActionResult<invoiceLines.InvoiceLineRow[]>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = getInvoiceLinesSchema.parse(input);
+    return invoiceLines.getLinesForInvoice(actor, parsed.invoiceId);
+  });
+}
+
+/**
+ * The review screen's submit — applies every line correction and CAS's the
+ * invoice `needs_review -> reviewed` atomically (see
+ * `lib/domain/invoice-lines.ts:submitInvoiceReview`). [AR-2]: every
+ * `matchedProductId` in `corrections` is batch ownership-checked against
+ * this organization, in one query, before any row is written. If the
+ * invoice moved on since the reviewer loaded the screen — rejected, or
+ * already reviewed by someone else — this surfaces as a `ConflictError`
+ * (mapped to a plain "conflict" message by `runAction`), and nothing is
+ * written; it never silently overwrites (04-slices.md's
+ * `review_conflicts_when_status_moved`).
+ */
+export async function reviewInvoiceAction(
+  input: unknown,
+): Promise<ActionResult<invoices.InvoiceRow>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = reviewInvoiceSchema.parse(input);
+    return invoiceLines.submitInvoiceReview(actor, parsed.invoiceId, parsed.corrections);
+  });
+}
+
+/**
+ * Rejects an invoice with a required, auditable reason. CAS's
+ * `needs_review | reviewed -> rejected`; `approved` is terminal [AR-4] and
+ * is not in the `from` list, so an attempt to reject an approved invoice
+ * raises the same `ConflictError` any other illegal edge would.
+ */
+export async function rejectInvoiceAction(
+  input: unknown,
+): Promise<ActionResult<invoices.InvoiceRow>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = rejectInvoiceSchema.parse(input);
+    return invoices.updateInvoiceStatus(
+      actor,
+      parsed.invoiceId,
+      ["needs_review", "reviewed"],
+      "rejected",
+      { rejectionReason: parsed.reason },
+    );
+  });
+}
+
+export interface ResendToExtractionResult {
+  invoiceId: number;
+  extractionJobId: number;
+  status: invoices.InvoiceStatus;
+}
+
+/**
+ * Re-extract: opens a NEW `extraction_job` row (`queued`, skipping
+ * `awaiting_upload` — the file is already confirmed and on disk from the
+ * original upload) and CAS's the invoice `rejected -> processing`
+ * [AR-4/AR-6]. The previous job's `error_message`/`retry_count` are left
+ * untouched — they are that attempt's own history, not this one's.
+ */
+export async function resendToExtractionAction(
+  input: unknown,
+): Promise<ActionResult<ResendToExtractionResult>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = resendToExtractionSchema.parse(input);
+    const result = await invoices.resendInvoiceToExtraction(actor, parsed.invoiceId);
+    return {
+      invoiceId: result.invoice.id,
+      extractionJobId: result.extractionJobId,
+      status: result.invoice.status,
+    };
   });
 }

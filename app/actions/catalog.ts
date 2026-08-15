@@ -15,6 +15,7 @@ import {
   productUpdateSchema,
   productDeactivateSchema,
   productSearchSchema,
+  getProductsByIdsSchema,
   resolveBarcodeSchema,
   linkBarcodeSchema,
   vendorCreateSchema,
@@ -39,6 +40,24 @@ export async function searchProductsAction(
     const actor = await requireRole("owner", "manager", "staff");
     const parsed = productSearchSchema.parse(input);
     return catalog.searchProducts(actor, parsed);
+  });
+}
+
+/**
+ * Resolve specific products by id, regardless of `active` status or the
+ * search cap — the exact-match complement to `searchProductsAction`. Same
+ * broad role gate: a caller that already has a `productId` in hand (e.g. an
+ * invoice line's `matchedProductId`) needs to resolve its name at any role
+ * that can view that screen, and cost is still gated inside the domain
+ * function by the caller's actual role.
+ */
+export async function getProductsByIdsAction(
+  input: unknown,
+): Promise<ActionResult<catalog.ProductSummary[]>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager", "staff");
+    const parsed = getProductsByIdsSchema.parse(input);
+    return catalog.getProductsByIds(actor, parsed.ids);
   });
 }
 

@@ -46,11 +46,26 @@ the first pass, 3 from the AR-2 audit, 10 from the AR-4→AR-7 audit).
 ## Slices
 (Full breakdown in `04-slices.md`; this list tracks build status only.)
 - [x] Slice 1 — Upload + Archive (Phase A). PR #16, merged 2026-08-15.
-- [ ] Slice 2 — Extraction + Review (Phase B). **Backend only** — extraction
-      pipeline, job lifecycle/reap sweep, invoice-line drafts (PR #17, merged
-      2026-08-15). The review queue UI (the slice's own success criterion:
-      "Review queue shows extracted lines + exception badges; user can
-      approve/return") is not built yet.
+- [x] Slice 2 — Extraction + Review (Phase B). Backend (PR #17, merged
+      2026-08-15) plus the review screen
+      (`app/(office)/office/invoices/[invoiceId]/page.tsx`,
+      `components/office/invoice-review-form.tsx`), built and verified
+      2026-08-15. All 32 backend tests pass (isolated run, clean); code-reviewer
+      and security-reviewer both returned clean verdicts (zero critical/high).
+      Two Low findings from review were fixed same-day: an empty-lines-row
+      `colSpan` mismatch, and a matched-but-later-deactivated (or
+      outside-the-100-cap) product rendering "not entered" instead of its name
+      — fixed with a new `getProductsByIds` domain function + action that
+      merges any matched product id missing from the capped/active search
+      result (`lib/domain/catalog.ts`, `app/actions/catalog.ts`,
+      `app/(office)/office/invoices/[invoiceId]/page.tsx`). A third finding
+      (no correction path for a NULL header field blocking Approve) is
+      genuinely out of Slice 2's spec scope — deferred as
+      `docs/open-items.md` item #32, triggered on the first real invoice that
+      hits it. Verified in a real browser (not just `tsc`/tests) against an
+      isolated Docker stack: sign-in, review-queue render with exception
+      badges (unmatched item), edit + Approve → `needs_review → reviewed`
+      with lines locked read-only, and the Return-for-re-extraction form.
 - [ ] Slice 3 — Matching (Phase C)
 - [ ] Slice 4 — Cost Flow + Alerts (Phase D)
 - [ ] Slice 5 — Audit Packet (Phase E)
