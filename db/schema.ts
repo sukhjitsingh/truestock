@@ -1063,8 +1063,9 @@ export const invoice = mysqlTable(
 //   WHERE status='queued' ORDER BY id LIMIT 1`) — zero rows affected means
 // another worker won the race, not an error. `reapStuckJobs` is the missing
 // edge back out of `running`: a job whose claimed_at is older than the
-// 15-minute timeout returns to `queued` with retry_count incremented, or to
-// `failed` with error_message = 'worker timeout' once retry_count reaches 3.
+// 10-minute timeout (`DEFAULT_STALE_AFTER_MS`, lib/domain/extraction.ts)
+// returns to `queued` with retry_count incremented, or to `failed` with
+// error_message = 'worker timeout' once retry_count reaches 3.
 // Reclaiming is safe because extraction writes invoice_line drafts keyed by
 // (invoice_id, line_number) — idempotent by construction, and nothing
 // downstream (review, approval) has run yet.

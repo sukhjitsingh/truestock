@@ -85,3 +85,22 @@ export class InvoiceNotWritableError extends DomainError {
     super("INVOICE_NOT_WRITABLE", message);
   }
 }
+
+/**
+ * [AR-6] `extraction_job`'s mirror of `InvalidInvoiceTransitionError`. An
+ * edge not present in the lifecycle `lib/domain/extraction.ts` declares
+ * (`awaiting_upload -> queued -> running -> done | failed`, plus the reap
+ * sweep's `running -> queued` retry) — including anything out of `done` or
+ * `failed`, both terminal — is refused with this BEFORE the CAS `UPDATE` is
+ * attempted, never written even when the row happens to currently be at
+ * `from`. Without this, `updateJobStatus(id, 'done', 'queued')` against a
+ * job that genuinely is `done` would succeed: the CAS only checks "is the row
+ * at the state I expect," not "is this edge legal," and a job silently
+ * un-terminated back onto the queue is exactly the kind of state the
+ * lifecycle was declared to rule out.
+ */
+export class InvalidExtractionTransitionError extends DomainError {
+  constructor(message: string) {
+    super("INVALID_EXTRACTION_TRANSITION", message);
+  }
+}
