@@ -1283,3 +1283,52 @@ None of this is a hazard, and none of it is a data-correctness risk — it is a
 migration that reached four of seven surfaces. Recorded so it is not mistaken for
 a decision. The whole-row-click hazard, which *was* a hazard, is gone everywhere:
 no `<tr>` in the codebase carries an `onClick` (item #27, closed 2026-08-12).
+
+---
+
+## 31. Two Slice 1 security findings were considered and deliberately not fixed
+
+**Trigger: item (a) becomes due the moment any code path lets `invoice.file_path`
+be set by anything other than `invoiceStorageKey()`. Item (b) becomes due if
+`PUT /api/invoices/[id]/file` ever gains a side effect beyond writing the file.**
+
+Opened 2026-08-14, from the Slice 1 backend security audit. Both were reported as
+low severity, both are real descriptions of the code, and neither is being fixed
+now. Recorded here so a later reader does not mistake the silence for an oversight
+and does not re-litigate it from scratch.
+
+**(a) `resolveStoredPath` does not `realpath` — a symlink planted inside the
+storage root would be served.** The containment check
+(`lib/storage/invoice-files.ts:103`) is on the string result of `path.resolve()`,
+so `var/invoices/7/42.pdf` → `/etc/passwd` would pass as contained. Not reachable
+today: `file_path` is written exclusively by `invoiceStorageKey(org, id,
+contentType)` from a zod-enum'd extension allowlist, and planting the symlink
+already requires filesystem write access outside the app — a compromise that makes
+this the least of the problems. The module's own header frames it as
+defence-in-depth against a *future* path, which is exactly the trigger above.
+A one-line `fs.realpath` check is the fix when that day comes.
+
+**(b) The write-once guard is check-then-write, not atomic — and the obvious fix
+does not fix it.** Two concurrent `PUT`s issued before `confirmUploadAction` can
+both observe `awaiting_upload` and both write; last one wins. The suggested remedy
+was a `SELECT ... FOR UPDATE` on the `extraction_job` row, and it is worth writing
+down why that is wrong: **a `PUT` changes no state a second `PUT` would observe.**
+The job sits in `awaiting_upload` until confirm, so serialising the two requests
+leaves both reading the identical value and both passing. The lock buys nothing.
+
+What actually holds the line is two other things. Two concurrent PUTs from one
+actor on their own invoice is a *retry*, and last-write-wins is the correct
+semantics for a retry. And whatever lands must still hash-match the SHA-256
+declared at upload-request time or `markUploadConfirmed` returns `matched: false`
+and leaves the job at `awaiting_upload` — so no unverified bytes are ever accepted
+as an invoice. The guarantee the guard exists for is "no overwrite *after*
+confirm", and that one is enforced, tested, and mutation-checked
+(`invoice_file_is_write_once`).
+
+The audit found no critical or high issues, and all seven surfaces it probed —
+traversal/containment, AR-1 static exposure, authorization, upload abuse,
+write-once ordering, error-message leakage, and hash verification — came back
+clean apart from the two above. The one item it raised that *did* produce a change
+is now a go-live check (§2.2): `invoiceStorageRoot()`'s refusal-if-inside-`public/`
+guard resolves `./public` against `process.cwd()`, so a wrong cwd defeats that
+guard silently while `resolveStoredPath`'s containment check still holds.

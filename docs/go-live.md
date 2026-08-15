@@ -161,6 +161,22 @@ Not with `curl`. See the rule at the top.
 - [ ] **HTTPS is genuinely enforced.** Camera and `BarcodeDetector` refuse to run
       otherwise, so this is a functional requirement, not only a security one.
 - [ ] **No dev credentials work.** Confirm `owner@truestock.local` does not exist.
+- [ ] **`INVOICE_STORAGE_DIR` is outside the web root, verified on the real host**
+      (Phase 2.5, AR-1). Two separate things to check, because they fail
+      independently:
+      1. Fetch a known stored path directly — `https://<host>/var/invoices/1/1.pdf`
+         and whatever the deployed root actually is — and confirm **404**, not the
+         file. The only path that may return bytes is
+         `GET /api/invoices/<id>/file`, and only for an owner.
+      2. Confirm `process.cwd()` at server start is the directory that contains the
+         deployed `public/`. `invoiceStorageRoot()`'s refusal-if-inside-`public/`
+         guard resolves `./public` relative to the working directory, so a cwd that
+         is *not* the standalone output root silently defeats that specific guard —
+         it would compare against a `public/` that isn't the one being served.
+         The containment check in `resolveStoredPath` still holds either way, so
+         this is the belt failing quietly while the braces hold; check it once
+         rather than assume it. Under `output: 'standalone'` the cwd should already
+         be correct — verify, don't reason.
 
 ### 2.3 Tenancy, against real production data
 
