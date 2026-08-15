@@ -21,6 +21,9 @@ import {
   location as locationTable,
   product as productTable,
   vendor as vendorTable,
+  invoice as invoiceTable,
+  extractionJob as extractionJobTable,
+  invoiceLine as invoiceLineTable,
 } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
 
@@ -79,6 +82,10 @@ const TABLES_CHILD_FIRST = [
   "product_barcode",
   "product",
   "location",
+  // invoice_line references invoice (and, nullably, product — already
+  // truncated above); extraction_job references invoice. Both must go
+  // before invoice itself.
+  "invoice_line",
   "extraction_job",
   "invoice",
   "vendor",
@@ -133,6 +140,44 @@ export interface Fixtures {
   secondProductId: number;
   /** A product belonging to the OTHER tenant — invariant 9's negative case. */
   otherProductId: number;
+  /**
+   * Phase 2.5, Slice 2. An invoice already sitting in `needs_review`, with
+   * every `REQUIRED_FOR_REVIEW` field populated (lib/domain/invoices.ts) and
+   * its `extraction_job` at `done` — the state the review screen's own tests
+   * (04-slices.md's `review_conflicts_when_status_moved`,
+   * `manager_cannot_open_review_screen`,
+   * `extraction_status_hides_error_message`,
+   * `manager_invoice_payload_has_no_money`) start from, so they don't each
+   * have to re-derive the upload -> confirm -> claim -> complete pipeline
+   * dance just to get an invoice into a reviewable state.
+   *
+   * Inserted directly (bypassing `createInvoiceForUpload` /
+   * `markUploadConfirmed` / the extraction pipeline entirely) — this is
+   * fixture data describing a state, not a test of how that state is
+   * reached; the pipeline itself is covered by its own tests.
+   *
+   * DELIBERATELY left out of the job queue: `extraction_job.status` here is
+   * `done`, not `queued` or `running`, so `claimNextJob` never sees it and
+   * no test's own queue-claiming assertions are contaminated by a stray job
+   * they didn't create. `invoice.file_path` is a plausible-looking string
+   * with no real file behind it — tests that need to read actual bytes
+   * build their own invoice via `createInvoiceForUpload` +
+   * `writeInvoiceFile`, the same pattern `tests/invoice-write-path.test.ts`
+   * already uses.
+   */
+  invoiceId: number;
+  extractionJobId: number;
+  /**
+   * `invoiceLineId` is `unmatched` and carries an `["unmatched item"]`
+   * exception flag; `matchedInvoiceLineId` is already `manual`-matched to
+   * `pricedProductId` with no exceptions.
+   */
+  invoiceLineId: number;
+  matchedInvoiceLineId: number;
+  /** The OTHER tenant's equivalent — invariant 9's negative case. */
+  otherInvoiceId: number;
+  otherExtractionJobId: number;
+  otherInvoiceLineId: number;
 }
 
 /**
@@ -272,6 +317,140 @@ export async function createFixtures(): Promise<Fixtures> {
     })
     .$returningId();
 
+  // ---------------------------------------------------------------------
+  // Phase 2.5, Slice 2 — a `needs_review` invoice per tenant, with its
+  // extraction_job `done` and two invoice_line rows. See the `Fixtures`
+  // interface above for why this is inserted directly rather than driven
+  // through the real upload/confirm/extraction pipeline.
+  // ---------------------------------------------------------------------
+  const [inv] = await db
+    .insert(invoiceTable)
+    .values({
+      organizationId: org.id,
+      vendorId: vendor.id,
+      status: "needs_review",
+      source: "pdf",
+      filePath: `${org.id}/fixture-invoice.pdf`,
+      fileSha256: "f".repeat(64),
+      fileSizeBytes: 12345,
+      pageCount: 1,
+      invoiceDate: "2026-06-01",
+      invoiceNumber: "FIXTURE-INV-001",
+      totalGross: "310.5000",
+      totalDiscount: "0.0000",
+      totalNet: "310.5000",
+      currency: "USD",
+      // invoice_date + 3 years, matching computeRetentionUntil's own rule
+      // (lib/domain/invoices.ts) — duplicated as a literal here rather than
+      // imported, so this fixture file stays free of domain-layer imports.
+      retentionUntil: "2029-06-01",
+    })
+    .$returningId();
+
+  const [job] = await db
+    .insert(extractionJobTable)
+    .values({
+      organizationId: org.id,
+      invoiceId: inv.id,
+      status: "done",
+      phase: "parse",
+      pdfType: "text",
+      completedAt: new Date(),
+    })
+    .$returningId();
+
+  const [line] = await db
+    .insert(invoiceLineTable)
+    .values({
+      organizationId: org.id,
+      invoiceId: inv.id,
+      lineNumber: 1,
+      description: "Tito's Handmade Vodka 750ml",
+      lineType: "product",
+      quantity: "12.000",
+      uom: "each",
+      unitCost: "24.5000",
+      extendedCost: "294.00",
+      rawGross: "294.00",
+      rawDiscount: "0.00",
+      rawNet: "294.00",
+      matchMethod: "unmatched",
+      exceptionFlags: ["unmatched item"],
+    })
+    .$returningId();
+
+  const [matchedLine] = await db
+    .insert(invoiceLineTable)
+    .values({
+      organizationId: org.id,
+      invoiceId: inv.id,
+      lineNumber: 2,
+      description: "Bulleit Bourbon 750ml",
+      lineType: "product",
+      quantity: "6.000",
+      uom: "each",
+      unitCost: "16.5000",
+      extendedCost: "16.50",
+      rawGross: "16.50",
+      rawDiscount: "0.00",
+      rawNet: "16.50",
+      matchedProductId: priced.id,
+      matchMethod: "manual",
+    })
+    .$returningId();
+
+  const [otherInv] = await db
+    .insert(invoiceTable)
+    .values({
+      organizationId: otherOrg.id,
+      vendorId: otherVendor.id,
+      status: "needs_review",
+      source: "pdf",
+      filePath: `${otherOrg.id}/fixture-invoice.pdf`,
+      fileSha256: "e".repeat(64),
+      fileSizeBytes: 6789,
+      pageCount: 1,
+      invoiceDate: "2026-06-01",
+      invoiceNumber: "FIXTURE-INV-OTHER-001",
+      totalGross: "88.0000",
+      totalDiscount: "0.0000",
+      totalNet: "88.0000",
+      currency: "USD",
+      retentionUntil: "2029-06-01",
+    })
+    .$returningId();
+
+  const [otherJob] = await db
+    .insert(extractionJobTable)
+    .values({
+      organizationId: otherOrg.id,
+      invoiceId: otherInv.id,
+      status: "done",
+      phase: "parse",
+      pdfType: "text",
+      completedAt: new Date(),
+    })
+    .$returningId();
+
+  const [otherLine] = await db
+    .insert(invoiceLineTable)
+    .values({
+      organizationId: otherOrg.id,
+      invoiceId: otherInv.id,
+      lineNumber: 1,
+      description: "Their Distributor line item",
+      lineType: "product",
+      quantity: "4.000",
+      uom: "each",
+      unitCost: "22.0000",
+      extendedCost: "88.00",
+      rawGross: "88.00",
+      rawDiscount: "0.00",
+      rawNet: "88.00",
+      matchMethod: "unmatched",
+    })
+    .$returningId();
+
   return {
     owner: { userId: owner.id, role: "owner", organizationId: org.id },
     manager: { userId: manager.id, role: "manager", organizationId: org.id },
@@ -287,6 +466,13 @@ export async function createFixtures(): Promise<Fixtures> {
     unpricedProductId: unpriced.id,
     secondProductId: second.id,
     otherProductId: otherProduct.id,
+    invoiceId: inv.id,
+    extractionJobId: job.id,
+    invoiceLineId: line.id,
+    matchedInvoiceLineId: matchedLine.id,
+    otherInvoiceId: otherInv.id,
+    otherExtractionJobId: otherJob.id,
+    otherInvoiceLineId: otherLine.id,
   };
 }
 

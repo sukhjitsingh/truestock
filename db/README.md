@@ -123,6 +123,29 @@ open a fresh pool (and fresh database connections) on every file save.
   (1062), `DECIMAL(10,4)` round-trips exactly, and accented product names
   survive. The schema is portable across both engines; no migration needed
   changing.
+- `0004_numerous_diamondback.sql` (Phase 2.5, Slice 1) creates `invoice` and
+  `extraction_job`. `0005_bitter_captain_marvel.sql` (Phase 2.5, Slice 2)
+  creates `invoice_line`, adds `invoice.rejection_reason`, and adds eight
+  provenance/cost-tracking columns to `extraction_job` (`provider`,
+  `model_id`, `prompt_version`, `raw_response`, `input_tokens`,
+  `output_tokens`, `cost_usd`, `error_code`) — see that table's comment in
+  `db/schema.ts` for why they're added to the existing job table rather than
+  a second one. Purely additive; drizzle-kit again emits no down migration,
+  so reversal is:
+
+  ```sql
+  ALTER TABLE invoice DROP COLUMN rejection_reason;
+  ALTER TABLE extraction_job
+    DROP COLUMN error_code, DROP COLUMN cost_usd, DROP COLUMN output_tokens,
+    DROP COLUMN input_tokens, DROP COLUMN raw_response,
+    DROP COLUMN prompt_version, DROP COLUMN model_id, DROP COLUMN provider;
+  DROP TABLE invoice_line;
+  ```
+
+  Verified end-to-end against MariaDB 11.8 in a throwaway database: applying
+  `0005` then running the reversal above leaves `extraction_job` and
+  `invoice` byte-identical (via `SHOW CREATE TABLE`) to their state right
+  after `0004`, and `invoice_line` gone.
 
 ## Seeding
 

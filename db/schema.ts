@@ -94,6 +94,9 @@ import {
   extractionJobStatusEnum,
   extractionPhaseEnum,
   pdfTypeEnum,
+  invoiceLineTypeEnum,
+  invoiceLineUomEnum,
+  invoiceMatchMethodEnum,
 } from "./enums";
 
 export {
@@ -108,6 +111,9 @@ export {
   extractionJobStatusEnum,
   extractionPhaseEnum,
   pdfTypeEnum,
+  invoiceLineTypeEnum,
+  invoiceLineUomEnum,
+  invoiceMatchMethodEnum,
 };
 
 // Reusable audit-timestamp pair. Only added to tables where spec §8 doesn't
@@ -987,10 +993,18 @@ export const invoice = mysqlTable(
     // unlike the calendar dates above.
     approvedAt: timestamp("approved_at"),
     approvedBy: int("approved_by").references(() => user.id, { onDelete: "restrict" }),
+    // Phase 2.5, Slice 2. `rejectInvoiceAction` requires a reason; 04-slices.md
+    // names the requirement but never names where it's stored, so this closes
+    // that gap. Nullable — every OTHER status never has one, and NOT NULL
+    // would force a placeholder string onto every non-rejected invoice.
+    // Free text, not an enum: a rejection reason is written by a human
+    // (the owner) explaining what's wrong with a specific document, not a
+    // small closed set of categories.
+    rejectionReason: text("rejection_reason"),
     ...auditColumns,
   },
   (table) => [
-    // Target of extraction_job's (and later invoice_line's,
+    // Target of extraction_job's, invoice_line's (and later
     // product_cost_history's) composite tenant FK. Same role as
     // `vendor_organization_id_id_unique` / `count_organization_id_id_unique`.
     uniqueIndex("invoice_organization_id_id_unique").on(table.organizationId, table.id),
@@ -1076,6 +1090,41 @@ export const extractionJob = mysqlTable(
     // test rather than assumed. Nullable — most jobs never need OCR pages.
     pagesNeedingOcr: json("pages_needing_ocr").$type<number[]>(),
     errorMessage: text("error_message"),
+    // Phase 2.5, Slice 2 — extraction pipeline / OCR provenance and cost
+    // tracking. Added to this EXISTING table rather than a second job table
+    // (the research doc's draft `invoice_extraction_job` does not exist and
+    // must not be created — see this table's own header comment). All eight
+    // are nullable: they only ever get set once a job actually runs the
+    // Claude Vision path, and a text-based PDF processed via pdf-inspector
+    // never calls the model at all, so provider/model/token/cost columns
+    // stay NULL for the common case rather than being coerced to 0/''.
+    //
+    // `provider` / `modelId` / `promptVersion` are free text, not enums —
+    // same reasoning as `product.category`: which OCR provider or prompt
+    // version ran is an operational detail that will change faster than a
+    // migration should gate it, not a small closed set worth hardcoding.
+    provider: varchar("provider", { length: 32 }),
+    modelId: varchar("model_id", { length: 64 }),
+    promptVersion: varchar("prompt_version", { length: 32 }),
+    // The raw structured response from the vision call, kept verbatim for
+    // audit/debugging — same "store what was observed" reasoning as
+    // count_line_write's deltas. Same MariaDB JSON-is-longtext caveat as
+    // `pages_needing_ocr` above.
+    rawResponse: json("raw_response"),
+    inputTokens: int("input_tokens"),
+    outputTokens: int("output_tokens"),
+    // DECIMAL(10,6): a single-invoice Claude Vision call costs fractions of
+    // a cent to a few cents, and 4dp (this file's usual money precision)
+    // would round that to zero. 6dp keeps real precision on a value this
+    // small; nothing here divides it further the way unit costs are divided,
+    // so it doesn't need product.current_unit_cost's 10,4.
+    costUsd: decimal("cost_usd", { precision: 10, scale: 6 }),
+    // A short machine-matchable code (e.g. "ANTHROPIC_RATE_LIMIT",
+    // "PDF_UNREADABLE") for the reaper and any future retry-classification
+    // logic to branch on, alongside — never instead of — the free-text
+    // `error_message` below, which stays the human-readable detail (and is
+    // NEVER exposed to a non-owner: it can quote invoice text).
+    errorCode: varchar("error_code", { length: 64 }),
     claimedAt: timestamp("claimed_at"),
     // Worker id (hostname/pid-ish string) — makes a stuck job diagnosable.
     // Not a FK: workers aren't a database entity.
@@ -1108,6 +1157,143 @@ export const extractionJob = mysqlTable(
       columns: [table.organizationId, table.invoiceId],
       foreignColumns: [invoice.organizationId, invoice.id],
       name: "extraction_job_organization_invoice_fk",
+    }).onDelete("restrict"),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// InvoiceLine — Phase 2.5, Slice 2 (extraction drafts)
+// ---------------------------------------------------------------------------
+// docs/plans/phase-2.5-invoice-automation/04-slices.md, Slice 2. Based on
+// docs/invoice-automation-research.md's `invoice_line` draft, with three
+// corrections applied (the research doc predates the 2026-08-14 adversarial
+// review and disagrees with the live schema/docs in these places):
+//   1. The draft's `productId` is `matchedProductId` here — it disambiguates
+//      from unrelated `productId` columns elsewhere in this file and matches
+//      04-slices.md's own prose and named tests.
+//   2. `rawGross` / `rawDiscount` / `rawNet` are added — the "per-line
+//      gross/discount/net editable" data the review screen (04-slices.md)
+//      requires, which the research draft's `unitCost`/`extendedCost` alone
+//      don't represent (a supplier discount printed per-line is neither).
+//   3. `exceptionFlags` is added — the "confidence, exception_flags json"
+//      04-slices.md calls for. EXACTLY four flag strings exist in this
+//      slice: "price jump", "duplicate", "doesn't add up", "unmatched item".
+//      No others — the discount/negative-net badges are Slice 4.
+//
+// One row per extracted line, written once by the extraction pipeline and
+// then editable by the owner on the review screen (never by manager/staff —
+// this whole table is supplier cost data, gated by `canSeeCost()`).
+// `lineNumber` is the pipeline's own idempotency key: reclaiming a
+// `running` job that already wrote drafts (see `extractionJob`'s reaper
+// comment) re-writes the same (invoiceId, lineNumber) rows rather than
+// duplicating them.
+export const invoiceLine = mysqlTable(
+  "invoice_line",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    // Denormalized from `invoice` so the unique index below can be
+    // tenant-scoped and every read filters on it without a join — same
+    // pattern as `productBarcode.organizationId`.
+    organizationId: int("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "restrict" }),
+    // Single-column FK, matching the research draft's CASCADE. In practice
+    // this never fires — nothing in the app hard-deletes an invoice (mirrors
+    // invariant 6's soft-delete discipline, same reasoning as
+    // `extraction_job_organization_invoice_fk`'s RESTRICT below) — but it is
+    // kept as the draft specified it rather than silently dropped.
+    invoiceId: int("invoice_id")
+      .notNull()
+      .references(() => invoice.id, { onDelete: "cascade" }),
+    lineNumber: int("line_number").notNull(),
+    rawText: text("raw_text"), // verbatim OCR/text-extract output, for audit
+
+    lineType: mysqlEnum("line_type", invoiceLineTypeEnum).notNull().default("unknown"),
+
+    vendorItemCode: varchar("vendor_item_code", { length: 64 }),
+    description: varchar("description", { length: 512 }),
+    packDescription: varchar("pack_description", { length: 64 }), // "12/750ML"
+
+    quantity: decimal("quantity", { precision: 12, scale: 3 }),
+    uom: mysqlEnum("uom", invoiceLineUomEnum),
+    // Parsed from packDescription. NULL means "not determinable," never 1 —
+    // same "don't coerce an unknown into a plausible-looking number" rule as
+    // count_line's unpriced-line handling.
+    packSize: int("pack_size"),
+    unitCost: decimal("unit_cost", { precision: 10, scale: 4 }), // as billed
+    extendedCost: decimal("extended_cost", { precision: 12, scale: 2 }),
+
+    // Correction 2: the review screen's actual editable fields. Distinct
+    // from unitCost/extendedCost above (the derived per-unit/extended cost
+    // used for matching and downstream valuation) — these three are the raw
+    // as-printed figures a human confirms or corrects on the review screen.
+    // DECIMAL(12,2): line-level money, not a per-unit cost fed into further
+    // division, so this file's aggregate-money precision applies (see the
+    // file header's precision conventions), not product.current_unit_cost's
+    // 10,4.
+    rawGross: decimal("raw_gross", { precision: 12, scale: 2 }),
+    rawDiscount: decimal("raw_discount", { precision: 12, scale: 2 }),
+    rawNet: decimal("raw_net", { precision: 12, scale: 2 }),
+
+    // Correction 3: exactly the four exception badges 04-slices.md names —
+    // "price jump", "duplicate", "doesn't add up", "unmatched item" — never
+    // more, never fewer, in this slice. A JSON array (not four booleans)
+    // because a line can carry more than one at once, and the review
+    // screen's badge row just maps the array to badges. Same MariaDB
+    // JSON-is-longtext caveat as extraction_job.pages_needing_ocr above.
+    exceptionFlags: json("exception_flags").$type<string[]>(),
+
+    // No single-column FK — matched_product_id is client-supplied (a human
+    // picks it on the review screen), so it goes through
+    // reviewInvoiceAction's OWN batched ownership check [AR-2] before
+    // anything is written, same as every other client-supplied id in this
+    // file. ON DELETE RESTRICT: nothing hard-deletes a product either
+    // (invariant 6) — a match must never be silently orphaned.
+    matchedProductId: int("matched_product_id").references(() => product.id, {
+      onDelete: "restrict",
+    }),
+    matchMethod: mysqlEnum("match_method", invoiceMatchMethodEnum).notNull().default("unmatched"),
+    matchConfidence: decimal("match_confidence", { precision: 4, scale: 3 }),
+    extractionConfidence: decimal("extraction_confidence", { precision: 4, scale: 3 }),
+
+    reviewedBy: int("reviewed_by").references(() => user.id, { onDelete: "restrict" }),
+    reviewedAt: timestamp("reviewed_at"),
+    ...auditColumns,
+  },
+  (table) => [
+    // Invariant-shaped: one row per (invoice, line number). Also the
+    // pipeline's re-claim idempotency key — see the table comment above.
+    uniqueIndex("invoice_line_invoice_lineno_unique").on(table.invoiceId, table.lineNumber),
+    // Product-cost-history and catalog-facing lookups: "every invoice line
+    // that ever matched this product."
+    index("invoice_line_organization_matched_product_idx").on(
+      table.organizationId,
+      table.matchedProductId,
+    ),
+    // Vendor-code matching (Slice 3) and manual lookup by the code printed
+    // on the invoice.
+    index("invoice_line_organization_vendor_item_code_idx").on(
+      table.organizationId,
+      table.vendorItemCode,
+    ),
+    // Tenant integrity [AR-2] — mirrors extraction_job's own composite FK
+    // exactly. A cross-tenant invoice_id here would let one tenant's
+    // extraction drafts (and later, the review screen's writes) attach to
+    // another tenant's invoice.
+    //
+    // ON DELETE RESTRICT, matching extraction_job_organization_invoice_fk's
+    // reasoning: nothing hard-deletes an invoice, so this is a backstop, not
+    // a path anything exercises. It coexists safely with the sibling
+    // single-column CASCADE above rather than deadlocking against it —
+    // verified empirically against MariaDB 11.8 (a raw `DELETE FROM invoice`
+    // with a matching invoice_line row cascaded the child row and succeeded,
+    // rather than the RESTRICT constraint blocking it): InnoDB applies the
+    // CASCADE action first, so by the time the RESTRICT constraint is
+    // checked no matching row remains for it to block on.
+    foreignKey({
+      columns: [table.organizationId, table.invoiceId],
+      foreignColumns: [invoice.organizationId, invoice.id],
+      name: "invoice_line_organization_invoice_fk",
     }).onDelete("restrict"),
   ],
 );
