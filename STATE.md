@@ -1,6 +1,6 @@
 # Truestock — current state
 
-Where the project actually is. Updated 2026-08-14.
+Where the project actually is. Updated 2026-08-15.
 
 This file answers one question: **what is proven, what is merely built, and what
 is next.** The distinction matters more here than the feature list, because this
@@ -318,6 +318,44 @@ Written, reviewed, typechecked — never observed working.
 - **The deploy pipeline.** Built, never run against a real host.
 
 ## Recent history
+
+- **2026-08-15** — **Phase 2.5 Slice 1 shipped in full, Slice 2's backend half
+  shipped, both on `feat/phase-2.5-invoice-automation` (not `main` yet).**
+  Slice 1 (PR #16): invoice upload handshake (size + SHA-256 verify before
+  queueing), the archive list screen, `extraction_job` lifecycle machinery.
+  Slice 2 backend (PR #17): the extraction pipeline (Claude Vision +
+  pdf-inspector cross-check, arithmetic check, bounded Zod schemas at the
+  AI/domain boundary), the stuck-job reap sweep, and `writeExtractedLines`
+  (cross-tenant ownership-checked per invariant 9). **Slice 2's review queue
+  UI — the slice's own success criterion — is not built.**
+  Two defects caught after the fact, both by an autonomous-loop CI check
+  rather than by the gates: (1) code-reviewer's pass on `08f685e` found five
+  real gaps (unbounded AI-output fields, `max_tokens` vs. no-output
+  conflated, a zero-lines-with-failed-check case that would have silently
+  stranded a mismatch as a falsely-clean `needs_review` invoice, a
+  NULL-`claimed_at` gap in the reaper, and untested pure pipeline functions)
+  — all fixed and tested before merge. (2) **PR #16 merged with its own
+  `verify` CI check RED**, undetected until a later autonomous-loop tick
+  checked PR status after the fact: `tests/user-write-path.test.ts` and
+  `tests/rapid-scan.test.ts` never called `migrateTestDatabase()` themselves,
+  silently depending on another test file's `beforeAll` having already
+  applied migrations earlier in the same `bun test` process — undocumented,
+  and it broke; `main` itself had been red on this since 2026-08-14T18:26,
+  a full day, before anyone noticed. Fixed in PR #17 alongside the Slice 2
+  findings. **Takeaway: a merged PR's CI status is not automatically
+  re-checked — worth a `gh pr view --json statusCheckRollup` after any
+  merge.**
+  Also surfaced, not yet resolved: `docs/plans/phase-2.5-invoice-automation/`
+  still reads "Gate 2–4 approval... withdrawn... awaiting re-approval" from
+  the 2026-08-14 adversarial review, with no re-approval note added since —
+  yet Slices 1 and 2's backend were built and merged after that review. See
+  `00-status.md`'s new note; needs the project owner's explicit call.
+  `@firecrawl/pdf-inspector` has no `darwin-x64` (Intel Mac) native binary,
+  discovered this session — the host-side test workaround can't run
+  anything importing `extraction-pipeline.ts`; verified instead in a
+  throwaway isolated `node:22-bookworm-slim` container matching
+  `docker/app/Dockerfile`. Detail in
+  `.claude/agent-memory/backend/pdf_inspector_no_darwin_x64_binary.md`.
 
 - **2026-08-14** — **Phase 2 shipped: the UI redesign, merged as PR #13
   (`9cbf64b`).** Nine implementation commits over two days behind one Gate 1

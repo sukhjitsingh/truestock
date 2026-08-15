@@ -44,8 +44,27 @@ uncorrected behaviour first. The Gate 3 adversarial table now holds **32** tests
 the first pass, 3 from the AR-2 audit, 10 from the AR-4→AR-7 audit).
 
 ## Slices
-- [ ] Slice 1 — tracer bullet: the Hostinger native-binary spike (`@firecrawl/pdf-inspector` loads under `output: 'standalone'`)
-- [ ] Slice 2 — (filled at Gate 4)
+(Full breakdown in `04-slices.md`; this list tracks build status only.)
+- [x] Slice 1 — Upload + Archive (Phase A). PR #16, merged 2026-08-15.
+- [ ] Slice 2 — Extraction + Review (Phase B). **Backend only** — extraction
+      pipeline, job lifecycle/reap sweep, invoice-line drafts (PR #17, merged
+      2026-08-15). The review queue UI (the slice's own success criterion:
+      "Review queue shows extracted lines + exception badges; user can
+      approve/return") is not built yet.
+- [ ] Slice 3 — Matching (Phase C)
+- [ ] Slice 4 — Cost Flow + Alerts (Phase D)
+- [ ] Slice 5 — Audit Packet (Phase E)
+- Slice 6 — not built by design (auto-approve deferred, see `04-slices.md`)
+
+**Gate 2–4 approval status has not been reconciled with the above.** The
+header at the top of this file and the banner at the top of `04-slices.md`
+("Gate 2–4 approval is withdrawn until the corrected contract is
+re-approved") still read as unresolved from the 2026-08-14 adversarial
+review, and no re-approval note has been added anywhere in this plan
+directory since — but Slices 1 and 2's backend were built and merged after
+that review. Worth the project owner's explicit call: either record when/how
+the corrected contract was re-approved, or treat this as process debt to
+close before Slice 3.
 
 ## Notes for a fresh session
 Read `docs/invoice-automation-research.md` in full (Parts 1–5) before anything else —
