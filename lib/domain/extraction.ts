@@ -26,7 +26,13 @@ import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { extractionJob } from "@/db/schema";
 import { extractionJobStatusEnum } from "@/db/enums";
-import { ConflictError, NotFoundError } from "@/lib/domain/errors";
+import { ConflictError, InvoiceNotWritableError, NotFoundError } from "@/lib/domain/errors";
+
+/**
+ * The transaction handle `db.transaction` hands its callback. Derived rather
+ * than imported so it cannot drift from the actual driver/dialect pairing.
+ */
+export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 export type ExtractionJobStatus = (typeof extractionJobStatusEnum)[number];
 
@@ -152,18 +158,113 @@ export async function updateJobStatus(
   to: ExtractionJobStatus,
   data: Partial<typeof extractionJob.$inferInsert> = {},
 ): Promise<ExtractionJobRow> {
+  return db.transaction((tx) => updateJobStatusTx(tx, id, from, to, data));
+}
+
+/**
+ * The CAS itself, against a caller-supplied transaction.
+ *
+ * Exists so a caller that must hold `lockJobForUpload`'s row lock across
+ * several steps can still perform the transition through THIS module rather
+ * than issuing its own `.set({ status })` — AR-6's "nothing else may write
+ * `extraction_job.status`" is a rule about there being one implementation,
+ * not about there being one transaction. `updateJobStatus` above is now just
+ * this function plus a transaction of its own.
+ */
+export async function updateJobStatusTx(
+  tx: Tx,
+  id: number,
+  from: ExtractionJobStatus,
+  to: ExtractionJobStatus,
+  data: Partial<typeof extractionJob.$inferInsert> = {},
+): Promise<ExtractionJobRow> {
+  const result = await tx
+    .update(extractionJob)
+    .set({ status: to, ...data })
+    .where(and(eq(extractionJob.id, id), eq(extractionJob.status, from)));
+  if (result[0].affectedRows === 0) {
+    throw new ConflictError(`Extraction job ${id} is not ${from}.`);
+  }
+  const [row] = await tx.select().from(extractionJob).where(eq(extractionJob.id, id)).limit(1);
+  if (!row) {
+    throw new NotFoundError("Extraction job");
+  }
+  return toJobRow(row);
+}
+
+/**
+ * Takes the `extraction_job` row's write lock for one invoice and holds it
+ * for the duration of `body`.
+ *
+ * This is the serialization point between the two operations that race over
+ * an invoice's bytes: the `PUT` that writes them and the `confirmUploadAction`
+ * that hashes them. Both must run under this lock, or the check each performs
+ * describes a file the other is concurrently replacing.
+ *
+ * The race it closes, which a status check alone does not: two `PUT`s for one
+ * invoice are both in flight, both observe `awaiting_upload` and both pass.
+ * A lands first; confirm hashes A's bytes, matches the declared SHA-256, and
+ * CAS's the job to `queued`. B — already past the check — lands afterward and
+ * overwrites the verified file. `file_sha256` still describes A's bytes, the
+ * row reads confirmed, and only the archived document disagrees. Nothing ever
+ * re-hashes it, so it surfaces years later in an audit packet against a
+ * document under statutory retention.
+ *
+ * Note what a row lock does and does not buy here. Between two `PUT`s alone
+ * it changes nothing — a `PUT` mutates no state the other would observe, so
+ * both still see `awaiting_upload` and the last writer still wins, which is
+ * the correct semantics for a retry. What it buys is ordering against
+ * *confirm*: with both sides holding it, confirm's read-hash-CAS can no
+ * longer interleave with a write, so either confirm runs first and B is then
+ * refused with the job at `queued`, or B's bytes land first and confirm
+ * hashes what is actually on disk. Both orderings are correct; the
+ * interleaving was the only wrong one.
+ *
+ * A filesystem write runs inside this transaction, which is normally worth
+ * avoiding. It is bounded at 25 MB to local disk (`MAX_INVOICE_BYTES`), and
+ * the request body has already been fully read before the lock is taken, so
+ * the lock is never held across the network.
+ */
+export async function lockJobForUpload<T>(
+  organizationId: number,
+  invoiceId: number,
+  body: (job: ExtractionJobRow, tx: Tx) => Promise<T>,
+): Promise<T> {
   return db.transaction(async (tx) => {
-    const result = await tx
-      .update(extractionJob)
-      .set({ status: to, ...data })
-      .where(and(eq(extractionJob.id, id), eq(extractionJob.status, from)));
-    if (result[0].affectedRows === 0) {
-      throw new ConflictError(`Extraction job ${id} is not ${from}.`);
-    }
-    const [row] = await tx.select().from(extractionJob).where(eq(extractionJob.id, id)).limit(1);
+    const [row] = await tx
+      .select()
+      .from(extractionJob)
+      .where(
+        and(
+          eq(extractionJob.invoiceId, invoiceId),
+          eq(extractionJob.organizationId, organizationId),
+        ),
+      )
+      .for("update");
     if (!row) {
       throw new NotFoundError("Extraction job");
     }
-    return toJobRow(row);
+    return body(toJobRow(row), tx);
+  });
+}
+
+/**
+ * `lockJobForUpload` plus the assertion that the invoice is still accepting
+ * bytes. Separated so `markUploadConfirmed` can take the same lock without
+ * the assertion — confirm is legitimate against a job that has already left
+ * `awaiting_upload` (it replays as a no-op), whereas a write is not.
+ */
+export async function withUploadSlot<T>(
+  organizationId: number,
+  invoiceId: number,
+  write: () => Promise<T>,
+): Promise<T> {
+  return lockJobForUpload(organizationId, invoiceId, async (job) => {
+    if (job.status !== "awaiting_upload") {
+      throw new InvoiceNotWritableError(
+        `Invoice ${invoiceId} has already been uploaded and verified.`,
+      );
+    }
+    return write();
   });
 }

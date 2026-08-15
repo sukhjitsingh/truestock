@@ -24,8 +24,8 @@ import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { AuthzError, requireRole } from "@/lib/authz";
 import { getInvoice } from "@/lib/domain/invoices";
-import { getJobForInvoice } from "@/lib/domain/extraction";
-import { DomainError } from "@/lib/domain/errors";
+import { getJobForInvoice, withUploadSlot } from "@/lib/domain/extraction";
+import { DomainError, InvoiceNotWritableError } from "@/lib/domain/errors";
 import { resolveStoredPath, writeInvoiceFile, StoragePathError } from "@/lib/storage/invoice-files";
 import { CONTENT_TYPE_EXTENSIONS } from "@/lib/storage/invoice-content-types";
 
@@ -110,6 +110,13 @@ export async function PUT(
     // Checked BEFORE the body is read, so a refused write never reaches the
     // filesystem — a 409 returned after the overwrite would be worse than no
     // guard at all, because it would read as a refusal.
+    //
+    // This check is a FAST PATH, not the guarantee. It is unlocked, so it can
+    // go stale between here and the write below; what actually holds the line
+    // is `withUploadSlot`, which re-asserts the same condition under the
+    // extraction_job row lock. Keeping this one as well means the common
+    // rejection — an already-confirmed invoice — costs nothing and never
+    // reads 25 MB off the wire to then discard it.
     const job = await getJobForInvoice(actor.organizationId, id);
     if (job.status !== "awaiting_upload") {
       return Response.json(
@@ -137,7 +144,35 @@ export async function PUT(
       throw err;
     }
 
-    await writeInvoiceFile(invoice.filePath, bytes);
+    // The write itself runs under the extraction_job row lock, re-asserting
+    // `awaiting_upload` after the body has been read. The body is read first
+    // deliberately: the lock is also taken by `markUploadConfirmed`, and
+    // holding it across a client's upload stream would let a slow connection
+    // block every confirm for that invoice.
+    const storedPath = invoice.filePath;
+    try {
+      await withUploadSlot(actor.organizationId, id, () => writeInvoiceFile(storedPath, bytes));
+    } catch (err) {
+      if (err instanceof InvoiceNotWritableError) {
+        // Lost the race to a confirm that landed while this body was being
+        // read. Same 409 and the same remedy as the fast path above, and no
+        // byte was written either way — but a DIFFERENT message, deliberately.
+        //
+        // The two are indistinguishable to a client and must stay that way in
+        // behaviour, yet a test cannot otherwise tell which guard fired. That
+        // matters here more than usual: a test for this race that is actually
+        // being satisfied by the fast path passes, proves nothing, and reads
+        // as evidence — which is precisely what happened on the first attempt
+        // at `invoice_file_write_once_survives_a_concurrent_put`. Distinct
+        // wording is what lets that test assert it reached the window it
+        // claims to be testing.
+        return Response.json(
+          { error: "This invoice's upload was confirmed while these bytes were still arriving." },
+          { status: 409 },
+        );
+      }
+      throw err;
+    }
     return Response.json({ ok: true });
   } catch (err) {
     return errorResponse(err);

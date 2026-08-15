@@ -1286,16 +1286,19 @@ no `<tr>` in the codebase carries an `onClick` (item #27, closed 2026-08-12).
 
 ---
 
-## 31. Two Slice 1 security findings were considered and deliberately not fixed
+## 31. One Slice 1 security finding was considered and deliberately not fixed
 
-**Trigger: item (a) becomes due the moment any code path lets `invoice.file_path`
-be set by anything other than `invoiceStorageKey()`. Item (b) becomes due if
-`PUT /api/invoices/[id]/file` ever gains a side effect beyond writing the file.**
+**Trigger: this becomes due the moment any code path lets `invoice.file_path`
+be set by anything other than `invoiceStorageKey()`.**
 
-Opened 2026-08-14, from the Slice 1 backend security audit. Both were reported as
-low severity, both are real descriptions of the code, and neither is being fixed
-now. Recorded here so a later reader does not mistake the silence for an oversight
-and does not re-litigate it from scratch.
+Opened 2026-08-14, from the Slice 1 backend security audit. Reported as low
+severity, a real description of the code, and not being fixed now. Recorded here
+so a later reader does not mistake the silence for an oversight and does not
+re-litigate it from scratch.
+
+A second item was recorded here on the same day and has since been **fixed** —
+see "(b), superseded" below. It is left in place rather than deleted because the
+reasoning that closed it is the correction of reasoning written on this page.
 
 **(a) `resolveStoredPath` does not `realpath` — a symlink planted inside the
 storage root would be served.** The containment check
@@ -1308,27 +1311,71 @@ this the least of the problems. The module's own header frames it as
 defence-in-depth against a *future* path, which is exactly the trigger above.
 A one-line `fs.realpath` check is the fix when that day comes.
 
-**(b) The write-once guard is check-then-write, not atomic — and the obvious fix
-does not fix it.** Two concurrent `PUT`s issued before `confirmUploadAction` can
-both observe `awaiting_upload` and both write; last one wins. The suggested remedy
-was a `SELECT ... FOR UPDATE` on the `extraction_job` row, and it is worth writing
-down why that is wrong: **a `PUT` changes no state a second `PUT` would observe.**
-The job sits in `awaiting_upload` until confirm, so serialising the two requests
-leaves both reading the identical value and both passing. The lock buys nothing.
+**(b), superseded — CLOSED 2026-08-14, the same day it was opened. The row lock
+was the fix; the argument recorded here for declining it was wrong.** What
+follows is the original entry's claim, kept verbatim, and then why it fails.
 
-What actually holds the line is two other things. Two concurrent PUTs from one
-actor on their own invoice is a *retry*, and last-write-wins is the correct
-semantics for a retry. And whatever lands must still hash-match the SHA-256
-declared at upload-request time or `markUploadConfirmed` returns `matched: false`
-and leaves the job at `awaiting_upload` — so no unverified bytes are ever accepted
-as an invoice. The guarantee the guard exists for is "no overwrite *after*
-confirm", and that one is enforced, tested, and mutation-checked
-(`invoice_file_is_write_once`).
+The original claim: the write-once guard is check-then-write, not atomic, and
+the suggested `SELECT ... FOR UPDATE` on the `extraction_job` row does not fix
+it, because *a `PUT` changes no state a second `PUT` would observe* — the job
+sits in `awaiting_upload` until confirm, so serialising two `PUT`s leaves both
+reading the identical value and both passing. "The lock buys nothing."
+
+That reasoning is sound and answers the wrong question. It considers only
+`PUT`-versus-`PUT`, where last-write-wins genuinely is correct retry semantics.
+The dangerous interleaving is `PUT`-versus-**confirm**, which the code review
+raised as High after the security audit had rated it Low:
+
+1. `PUT` A and `PUT` B are both in flight; both pass the status check.
+2. A's bytes land.
+3. `confirmUploadAction` reads the file, hashes it, matches A's declared
+   SHA-256, and CAS's the job `awaiting_upload -> queued`.
+4. B — already past its check — writes afterward and overwrites the verified
+   file.
+
+The row now says confirmed, `file_sha256` describes A's bytes, the disk holds
+B's, and nothing ever re-hashes it. The hash check does **not** save this: it
+ran, it passed, and it passed against a file that no longer exists. Unverified
+bytes are accepted as a confirmed invoice under a 3-year statutory retention,
+surfacing years later in an audit packet (Slice 5) when the original is
+unrecoverable.
+
+The lock closes it *because both sides take it*, which is the part the original
+argument never got to. `lockJobForUpload` (`lib/domain/extraction.ts`) holds the
+`extraction_job` row's write lock; the `PUT` takes it via `withUploadSlot`
+around the write, and `markUploadConfirmed` takes it around read-hash-CAS
+together. Step 4 can then no longer interleave with step 3: either confirm runs
+first and B is refused with the job at `queued`, or B lands first and confirm
+hashes what is actually on disk. Both orderings are correct; only the
+interleaving was not.
+
+The handler keeps its unlocked status check as a *fast path* — it rejects the
+common already-confirmed case without reading 25 MB off the wire — but it is no
+longer the guarantee, and its comment says so. The two 409s carry deliberately
+different messages so a test can prove which one fired.
+
+Covered by `invoice_file_write_once_survives_a_concurrent_put` and
+`confirm_replay_is_safe_under_concurrency` in `tests/invoice-write-path.test.ts`,
+both mutation-checked. Worth knowing about the first: its **initial version was a
+false pass** — it asserted only `status === 409`, and the 409 it was actually
+getting came from the fast path, so deleting the entire fix left it green
+(45 pass / 0 fail). It now asserts the lock's specific message. With the fix
+verifiably removed in the same shell command, the file runs 44 pass / 1 fail,
+deterministically. The earlier apparent flake was the mutation being reverted
+between two commands, not a timing race.
+
+A second-order lesson worth keeping: a *sound* argument for declining a fix is
+not a *complete* one, and the gap between the two is invisible from inside it.
+Both reviewers were looking at the same code; the security audit rated this Low
+and the code review rated it High, and the difference was entirely which second
+actor they imagined.
 
 The audit found no critical or high issues, and all seven surfaces it probed —
 traversal/containment, AR-1 static exposure, authorization, upload abuse,
 write-once ordering, error-message leakage, and hash verification — came back
-clean apart from the two above. The one item it raised that *did* produce a change
+clean apart from the two above. Note that its "no high issues" verdict did not
+survive: write-once ordering was one of the seven, and the code review's High
+sat inside it. The one item it raised that *did* produce a change
 is now a go-live check (§2.2): `invoiceStorageRoot()`'s refusal-if-inside-`public/`
 guard resolves `./public` against `process.cwd()`, so a wrong cwd defeats that
 guard silently while `resolveStoredPath`'s containment check still holds.

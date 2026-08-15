@@ -810,4 +810,143 @@ describe("PUT /api/invoices/[id]/file", () => {
     expect(onDisk.toString()).toBe(body);
     expect(sha256Hex(onDisk)).toBe(created.fileSha256);
   });
+
+  test("invoice_file_write_once_survives_a_concurrent_put — a PUT already in flight when the confirm lands cannot overwrite the verified bytes", async () => {
+    // The sequential test above passes even with the guard placed where it
+    // cannot hold: it checks `awaiting_upload` once, near the top of the
+    // handler, and then spends an unbounded amount of time reading up to
+    // 25 MB off the wire before writing. Between those two moments the job
+    // can be confirmed by someone else, and nothing re-checks.
+    //
+    // The real sequence, which is an ordinary flaky-mobile double-submit and
+    // not a contrived attack:
+    //   1. PUT A and PUT B are both issued; both observe `awaiting_upload`.
+    //   2. A lands first.
+    //   3. confirm re-hashes A's bytes, matches the declared SHA-256, and
+    //      CAS's the job to `queued`.
+    //   4. B — still mid-body-read, already past the check — finally writes.
+    // The archived file is now B's bytes while `file_sha256` still describes
+    // A's. The row reads verified. Nothing ever re-hashes it again, so the
+    // disagreement surfaces years later in a Slice 5 audit packet, against a
+    // document under a 3-year statutory retention.
+    //
+    // Driven deterministically rather than by racing two real requests: B's
+    // body is a stream this test holds open, so step 3 provably happens while
+    // B sits between its check and its write. A timing-dependent version of
+    // this test would be worse than none — it would pass most runs and be
+    // read as evidence.
+    const body = "original archived bytes";
+    const created = await createInvoiceForUpload(fx.owner, {
+      source: "pdf",
+      contentType: "application/pdf",
+      fileSha256: sha256Hex(Buffer.from(body)),
+      fileSizeBytes: Buffer.byteLength(body),
+    });
+
+    sessionUserId = fx.owner.userId;
+    const { PUT } = await import("@/app/api/invoices/[id]/file/route");
+
+    const first = await PUT(
+      new Request(`http://localhost/api/invoices/${created.id}/file`, { method: "PUT", body }),
+      fakeParams(String(created.id)),
+    );
+    expect(first.status).toBe(200);
+
+    // B's body: one chunk delivered immediately so the handler is past its
+    // status check, then the stream stays open until this test closes it.
+    let releaseBody: () => void;
+    const bodyReleased = new Promise<void>((resolve) => {
+      releaseBody = resolve;
+    });
+    let firstChunkDelivered: () => void;
+    const handlerIsReading = new Promise<void>((resolve) => {
+      firstChunkDelivered = resolve;
+    });
+
+    const slowBody = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        controller.enqueue(new TextEncoder().encode("tampered "));
+        firstChunkDelivered();
+        await bodyReleased;
+        controller.enqueue(new TextEncoder().encode("replacement bytes"));
+        controller.close();
+      },
+    });
+
+    const inFlight = PUT(
+      new Request(`http://localhost/api/invoices/${created.id}/file`, {
+        method: "PUT",
+        body: slowBody,
+        // Required by the Fetch spec for a streaming request body.
+        duplex: "half",
+      } as RequestInit & { duplex: "half" }),
+      fakeParams(String(created.id)),
+    );
+
+    // B is now demonstrably past its `awaiting_upload` check and blocked on
+    // its body — the exact window the bug lives in.
+    await handlerIsReading;
+
+    const confirmed = await markUploadConfirmed(fx.owner, created.id);
+    expect(confirmed.matched).toBe(true);
+
+    releaseBody!();
+    const second = await inFlight;
+
+    // B must lose. Not "B wins but we noticed" — the bytes on disk are the
+    // ones whose hash was verified, and the response says so.
+    expect(second.status).toBe(409);
+
+    // And it must lose to the LOCK, not to the fast-path check at the top of
+    // the handler. Without this assertion the test passes for the wrong
+    // reason: if the body stream is drained before the handler's status read,
+    // confirm lands first, the fast path returns 409, and the window under
+    // test is never entered. That false pass is not hypothetical — the first
+    // version of this test did exactly that, and survived deleting the fix.
+    const secondBody = (await second.json()) as { error: string };
+    expect(secondBody.error).toBe(
+      "This invoice's upload was confirmed while these bytes were still arriving.",
+    );
+
+    const onDisk = await readFile(resolveStoredPath(created.filePath!));
+    expect(onDisk.toString()).toBe(body);
+    expect(sha256Hex(onDisk)).toBe(created.fileSha256);
+  });
+
+  test("confirm_replay_is_safe_under_concurrency — two simultaneous confirms both succeed instead of one raising ConflictError", async () => {
+    // `markUploadConfirmed`'s contract says replaying a confirm "must produce
+    // the same success it produced the first time". That held only for the
+    // sequential case. Concurrently, both callers used to read
+    // `awaiting_upload` before either wrote, one CAS won, and the loser's
+    // `UPDATE ... WHERE status = 'awaiting_upload'` affected zero rows and
+    // raised ConflictError straight out to the client — a hard failure on a
+    // call documented as safe to retry, which is precisely what a client does
+    // after a request times out but actually succeeded.
+    //
+    // Holding the extraction_job row lock across the read and the CAS makes
+    // the two serialize, so the second caller observes `queued` and takes the
+    // idempotent-replay path it was always supposed to take.
+    const body = "bytes confirmed twice at once";
+    const created = await createInvoiceForUpload(fx.owner, {
+      source: "pdf",
+      contentType: "application/pdf",
+      fileSha256: sha256Hex(Buffer.from(body)),
+      fileSizeBytes: Buffer.byteLength(body),
+    });
+    await writeInvoiceFile(created.filePath!, Buffer.from(body));
+
+    const [a, b] = await Promise.all([
+      markUploadConfirmed(fx.owner, created.id),
+      markUploadConfirmed(fx.owner, created.id),
+    ]);
+
+    expect(a.matched).toBe(true);
+    expect(b.matched).toBe(true);
+
+    const [job] = await db
+      .select()
+      .from(extractionJob)
+      .where(eq(extractionJob.invoiceId, created.id));
+    expect(job.status).toBe("queued");
+  });
 });

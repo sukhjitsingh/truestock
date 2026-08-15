@@ -47,7 +47,7 @@ import {
   invoiceStorageKey,
   sha256Hex,
 } from "@/lib/storage/invoice-files";
-import { updateJobStatus } from "@/lib/domain/extraction";
+import { lockJobForUpload, updateJobStatusTx } from "@/lib/domain/extraction";
 import { extractionJob } from "@/db/schema";
 
 export type InvoiceStatus = (typeof invoiceStatusEnum)[number];
@@ -330,41 +330,46 @@ export async function markUploadConfirmed(
   if (!row.filePath) {
     return { matched: false, invoice: toInvoiceRow(row) };
   }
+  const filePath = row.filePath;
 
-  let actualSha256: string;
-  let actualSize: number;
-  try {
-    const bytes = await readFile(resolveStoredPath(row.filePath));
-    actualSha256 = sha256Hex(bytes);
-    actualSize = bytes.byteLength;
-  } catch {
-    // ENOENT (PUT hasn't landed / never happened) or a StoragePathError
-    // (corrupt file_path) — either way, not yet confirmable. Never a crash.
-    return { matched: false, invoice: toInvoiceRow(row) };
-  }
+  // The read, the hash and the CAS all run under the extraction_job row lock,
+  // and so does the `PUT` that writes the file (`withUploadSlot`). Hashing
+  // outside the lock would verify a file a concurrent writer is in the middle
+  // of replacing: confirm would match the bytes it read, CAS the job to
+  // `queued`, and the writer's bytes would land afterward over a file now
+  // recorded as verified. See `lockJobForUpload`'s comment for the full
+  // ordering argument.
+  return lockJobForUpload(actor.organizationId, invoiceId, async (jobRow, tx) => {
+    let actualSha256: string;
+    let actualSize: number;
+    try {
+      const bytes = await readFile(resolveStoredPath(filePath));
+      actualSha256 = sha256Hex(bytes);
+      actualSize = bytes.byteLength;
+    } catch {
+      // ENOENT (PUT hasn't landed / never happened) or a StoragePathError
+      // (corrupt file_path) — either way, not yet confirmable. Never a crash.
+      return { matched: false, invoice: toInvoiceRow(row) };
+    }
 
-  const matched = actualSha256 === row.fileSha256 && actualSize === row.fileSizeBytes;
-  if (!matched) {
-    return { matched: false, invoice: toInvoiceRow(row) };
-  }
+    const matched = actualSha256 === row.fileSha256 && actualSize === row.fileSizeBytes;
+    if (!matched) {
+      return { matched: false, invoice: toInvoiceRow(row) };
+    }
 
-  const [jobRow] = await db
-    .select({ id: extractionJob.id, status: extractionJob.status })
-    .from(extractionJob)
-    .where(
-      and(eq(extractionJob.organizationId, actor.organizationId), eq(extractionJob.invoiceId, invoiceId)),
-    )
-    .limit(1);
-  if (!jobRow) {
-    throw new NotFoundError("Extraction job");
-  }
-  if (jobRow.status === "awaiting_upload") {
-    await updateJobStatus(jobRow.id, "awaiting_upload", "queued");
-  }
-  // Any other status means a previous confirm already advanced it — treated
-  // as an idempotent replay, not a conflict.
+    if (jobRow.status === "awaiting_upload") {
+      await updateJobStatusTx(tx, jobRow.id, "awaiting_upload", "queued");
+    }
+    // Any other status means a previous confirm already advanced it — treated
+    // as an idempotent replay, not a conflict. Under the lock this is now the
+    // only way a second confirm can reach here: it cannot observe
+    // `awaiting_upload`, race the first caller's CAS, and lose. Before the
+    // lock existed, two concurrent confirms both read `awaiting_upload`, one
+    // CAS won and the other raised ConflictError out of a call this
+    // function's own contract promises is safe to replay.
 
-  return { matched: true, invoice: toInvoiceRow(row) };
+    return { matched: true, invoice: toInvoiceRow(row) };
+  });
 }
 
 // ---------------------------------------------------------------------------
