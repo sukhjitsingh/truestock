@@ -114,3 +114,62 @@ export const extractionPhaseEnum = ["classify", "text_extract", "ocr", "parse"] 
 
 /** Set by the classify phase; drives whether OCR (Claude Vision) runs. */
 export const pdfTypeEnum = ["text", "scanned", "mixed", "image"] as const;
+
+/**
+ * Phase 2.5, Slice 2. §1.4(c) of docs/invoice-automation-research.md — the
+ * line type that keeps deposits and freight out of unit cost. An invoice
+ * line for a keg deposit or a freight surcharge is real money on the
+ * invoice but must never be averaged into `product.current_unit_cost`: a
+ * $10 keg-deposit line billed alongside 24 cases of beer would silently
+ * inflate the beer's derived cost if it were priced as a `product` line
+ * instead of excluded as a `deposit` one. `discount` is its own line type
+ * (not folded into `product`) for the same reason: a supplier discount
+ * printed as its own line item is a price adjustment, not a unit sold.
+ * `unknown` is the extraction default — a badly OCR'd or unrecognized line
+ * stays unclassified rather than defaulting to `product` and polluting a
+ * valuation.
+ */
+export const invoiceLineTypeEnum = [
+  "product",
+  "deposit",
+  "deposit_return",
+  "freight",
+  "tax",
+  "fee",
+  "discount",
+  "unknown",
+] as const;
+
+/**
+ * Unit of measure as printed on the invoice line. Deliberately its own enum,
+ * distinct from `productUnitTypeEnum` (bottle/can/keg) — this describes what
+ * the SUPPLIER billed by, before that line is ever reconciled against a
+ * catalog product. `other` covers anything extraction can't map onto the
+ * three known pack levels (e.g. "LB", "GAL") rather than forcing a guess.
+ */
+export const invoiceLineUomEnum = ["each", "case", "keg", "other"] as const;
+
+/**
+ * How `invoiceLine.matchedProductId` got set, ordered cheapest/most-trusted
+ * first in the pipeline that will eventually try them. Only two of these are
+ * live in Slice 2: every line this slice's extraction pipeline writes starts
+ * `unmatched`, and the only way a line leaves that state is a human picking
+ * the product on the review screen, which sets `manual`.
+ * `vendor_alias_code` / `vendor_alias_desc` are Slice 3's automatic matching
+ * against the (not-yet-built) `vendor_item_alias` table; `barcode` and
+ * `fuzzy` are later automatic strategies; `created_draft` is reserved for a
+ * not-yet-built "create this product from the invoice line" action. The
+ * enum is declared now, in full, because `matchMethod` is a closed set
+ * MariaDB must accept a value from the day the column exists — adding a
+ * value later is itself a migration, whereas building the strategies that
+ * produce these values is ordinary application work.
+ */
+export const invoiceMatchMethodEnum = [
+  "vendor_alias_code",
+  "vendor_alias_desc",
+  "barcode",
+  "fuzzy",
+  "manual",
+  "created_draft",
+  "unmatched",
+] as const;

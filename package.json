@@ -32,6 +32,8 @@
     "verify:browser": "node --env-file=.env.local scripts/verify-browser.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.117.1",
+    "@firecrawl/pdf-inspector": "^1.14.2",
     "@hookform/resolvers": "^5.4.2",
     "@tanstack/react-query": "^5.101.4",
     "@tanstack/react-table": "^8.21.3",

@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeAll, beforeEach } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { product, count, productBarcode, countLine } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
 import { scanCountLine } from "@/lib/domain/counts";
-import { resetDatabase, createFixtures } from "./helpers/test-db";
+import { migrateTestDatabase, resetDatabase, createFixtures } from "./helpers/test-db";
 
 describe("Rapid Scan Logic", () => {
   let actor: Actor;
@@ -15,6 +15,13 @@ describe("Rapid Scan Logic", () => {
   let otherOrganizationId: number;
   const eachBarcode = "EACH-RST-123";
   const caseBarcode = "CASE-RST-123";
+
+  // See tests/user-write-path.test.ts for why this file needs its own
+  // migrateTestDatabase() rather than relying on another file's beforeAll
+  // having already run in the same `bun test` process.
+  beforeAll(async () => {
+    await migrateTestDatabase();
+  });
 
   beforeEach(async () => {
     await resetDatabase();

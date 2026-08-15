@@ -2,9 +2,11 @@
  * `extraction_job` lifecycle — Phase 2.5, Slice 1.
  *
  * [AR-6] ONE state machine, declared once as data (`db/enums.ts`'s
- * `extractionJobStatusEnum`) and driven through exactly two functions here:
- * `claimNextJob` (the cron's atomic claim) and `updateJobStatus` (every other
- * transition, CAS-guarded). Nothing else may write `extraction_job.status`.
+ * `extractionJobStatusEnum`) and driven through exactly three entry points
+ * here: `claimNextJob` (the cron's atomic claim), `updateJobStatus` (every
+ * other transition, CAS-guarded), and `reapStuckJobs` (the timeout sweep,
+ * itself built on `updateJobStatus`'s CAS — not a fourth way to write
+ * `status`). Nothing else may write `extraction_job.status`.
  *
  * Lifecycle: `awaiting_upload -> queued -> running -> done | failed`. A job
  * is created `awaiting_upload` (lib/domain/invoices.ts:createInvoiceForUpload)
@@ -22,11 +24,43 @@
  * job row itself before calling this) are the ones responsible for having
  * resolved the id through a trustworthy path.
  */
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull, lt, or } from "drizzle-orm";
 import { db } from "@/db";
 import { extractionJob } from "@/db/schema";
 import { extractionJobStatusEnum } from "@/db/enums";
-import { ConflictError, InvoiceNotWritableError, NotFoundError } from "@/lib/domain/errors";
+import {
+  ConflictError,
+  InvalidExtractionTransitionError,
+  InvoiceNotWritableError,
+  NotFoundError,
+} from "@/lib/domain/errors";
+
+/** `reapStuckJobs`'s default timeout — 10 minutes. See that function's comment. */
+const DEFAULT_STALE_AFTER_MS = 600_000;
+
+/** A job moves `running -> failed` (rather than another retry) once it has been reaped this many times. */
+const MAX_RETRIES_BEFORE_FAILED = 3;
+
+/**
+ * [AR-6] The lifecycle, declared once as data — same shape and same reason as
+ * `lib/domain/invoices.ts`'s `INVOICE_TRANSITIONS`. `queued -> running` is
+ * listed even though `claimNextJob` normally drives that edge through its own
+ * hardcoded atomic `UPDATE`, not through `updateJobStatusTx` — it stays a
+ * legal edge here too so a test (or a future caller) exercising the same
+ * transition through the generic CAS path is not refused a transition that
+ * IS legal, just not the primitive that usually performs it.
+ *
+ * `running -> queued` is the reap sweep's retry edge (`reapStuckJobs`), not a
+ * user-facing one. `done` and `failed` are both terminal — nothing transitions
+ * out of either, mirroring `approved`'s terminality on the invoice machine.
+ */
+const EXTRACTION_JOB_TRANSITIONS: Record<ExtractionJobStatus, readonly ExtractionJobStatus[]> = {
+  awaiting_upload: ["queued"],
+  queued: ["running"],
+  running: ["done", "failed", "queued"],
+  done: [],
+  failed: [],
+};
 
 /**
  * The transaction handle `db.transaction` hands its callback. Derived rather
@@ -119,15 +153,6 @@ export async function claimNextJob(workerId: string): Promise<ExtractionJobRow |
 }
 
 /**
- * Every OTHER `extraction_job` transition — CAS against a declared `from`,
- * never a silent no-op. Zero rows affected (the job doesn't exist, or is not
- * currently `from`) raises `ConflictError` rather than returning as though
- * the write happened; "the pipeline's own helper cannot bypass the
- * lifecycle" (04-slices.md, `job_transition_is_guarded`) is the point of this
- * function existing at all instead of callers writing `.set({status})`
- * directly.
- */
-/**
  * The job belonging to one invoice, org-scoped.
  *
  * Exists so the upload route can ask "is this invoice still accepting bytes?"
@@ -162,7 +187,21 @@ export async function updateJobStatus(
 }
 
 /**
- * The CAS itself, against a caller-supplied transaction.
+ * Every OTHER `extraction_job` transition — graph-guarded, THEN CAS against a
+ * declared `from`, never a silent no-op.
+ *
+ * Two separate refusals, deliberately not collapsed into one:
+ *   1. `(from, to)` must be a legal edge in `EXTRACTION_JOB_TRANSITIONS`,
+ *      checked BEFORE touching the database. This is what makes
+ *      `updateJobStatus(id, 'done', 'queued')` throw even when the row
+ *      genuinely is `done` right now — "the row happens to currently be
+ *      `from`" and "this edge is one the lifecycle allows" are different
+ *      questions, and a CAS alone only ever answers the first one
+ *      (04-slices.md, `job_transition_is_guarded`).
+ *   2. Zero rows affected by the `UPDATE` (the job doesn't exist, or isn't
+ *      currently `from` even though the edge itself is legal) raises
+ *      `ConflictError` — someone else moved it first, never treated as
+ *      though this write happened.
  *
  * Exists so a caller that must hold `lockJobForUpload`'s row lock across
  * several steps can still perform the transition through THIS module rather
@@ -178,6 +217,12 @@ export async function updateJobStatusTx(
   to: ExtractionJobStatus,
   data: Partial<typeof extractionJob.$inferInsert> = {},
 ): Promise<ExtractionJobRow> {
+  if (!EXTRACTION_JOB_TRANSITIONS[from].includes(to)) {
+    throw new InvalidExtractionTransitionError(
+      `Cannot move an extraction job from ${from} to ${to}.`,
+    );
+  }
+
   const result = await tx
     .update(extractionJob)
     .set({ status: to, ...data })
@@ -267,4 +312,100 @@ export async function withUploadSlot<T>(
     }
     return write();
   });
+}
+
+/**
+ * [AR-6] The missing edge back out of `running`. A worker that dies
+ * mid-extraction (deploy, OOM on a 10-page scan, process restart) otherwise
+ * strands its job in `running` forever: `claimNextJob`'s predicate is
+ * `status = 'queued'`, so nothing ever re-claims it, and the owning invoice
+ * shows `processing` indefinitely with no error surfaced anywhere.
+ *
+ * Every `running` job whose `claimed_at` is older than `staleAfterMs`
+ * (default 10 minutes) is swept:
+ *   - `retry_count` is incremented. If the incremented count is still below
+ *     the limit, the job returns to `queued` — the next `claimNextJob` call
+ *     picks it up and re-runs the pipeline from the top.
+ *   - Once the incremented count reaches `MAX_RETRIES_BEFORE_FAILED` (3), the
+ *     job moves to `failed` instead, with `error_message = 'worker timeout'`
+ *     — a reliably-fatal document (corrupt PDF, a page that hangs the
+ *     classifier) must stop re-entering the queue on every sweep rather than
+ *     looping forever.
+ *
+ * `claimed_at` / `claimed_by` are cleared either way: once a job is out of
+ * `running`, whichever worker last held it is no longer meaningful — a
+ * `queued` job is about to be claimed fresh, and a `failed` job's useful
+ * diagnostic is `error_message` + `retry_count`, not a stale worker id.
+ *
+ * Re-running the pipeline after a reap is safe: `lib/domain/invoice-lines.ts`
+ * `writeExtractedLines` deletes and re-inserts an invoice's drafts as one
+ * unit, and this can only ever run BEFORE the owning invoice reaches
+ * `needs_review` (no job that already wrote drafts and finished is still
+ * `running`), so there is nothing downstream for a reclaim to disturb.
+ *
+ * Each job's CAS runs independently, after a single probe `SELECT` — the
+ * same two-step shape as `claimNextJob`, for the same reason: a sweep and a
+ * worker's own completion can race (the job finishes and moves to `done`
+ * between this function's probe and its CAS), and losing that race for one
+ * job must not abort the sweep for every other stuck job it already found.
+ * A `ConflictError` from that race is swallowed for exactly that reason; any
+ * other error propagates, since it does not represent "someone else already
+ * handled this."
+ */
+export async function reapStuckJobs(
+  staleAfterMs: number = DEFAULT_STALE_AFTER_MS,
+): Promise<{ requeued: number; failed: number }> {
+  const cutoff = new Date(Date.now() - staleAfterMs);
+
+  const stuck = await db
+    .select({ id: extractionJob.id, retryCount: extractionJob.retryCount })
+    .from(extractionJob)
+    .where(
+      and(
+        eq(extractionJob.status, "running"),
+        // `claimed_at < cutoff` alone would never match a NULL claimed_at
+        // (SQL's `NULL < x` is unknown, not true) — currently unreachable,
+        // since claimNextJob's atomic UPDATE always sets claimed_at in the
+        // same statement that sets status to running, but the transition
+        // graph's own comment allows queued -> running through the generic
+        // CAS path too, which has no such guarantee. Defense in depth: a
+        // running job with no claimed_at is stuck by definition and must
+        // still be reaped, not silently skipped forever.
+        or(lt(extractionJob.claimedAt, cutoff), isNull(extractionJob.claimedAt)),
+      ),
+    );
+
+  let requeued = 0;
+  let failed = 0;
+
+  for (const job of stuck) {
+    const nextRetryCount = job.retryCount + 1;
+    try {
+      if (nextRetryCount >= MAX_RETRIES_BEFORE_FAILED) {
+        await updateJobStatus(job.id, "running", "failed", {
+          retryCount: nextRetryCount,
+          errorMessage: "worker timeout",
+          errorCode: "WORKER_TIMEOUT",
+          claimedAt: null,
+          claimedBy: null,
+          completedAt: new Date(),
+        });
+        failed += 1;
+      } else {
+        await updateJobStatus(job.id, "running", "queued", {
+          retryCount: nextRetryCount,
+          claimedAt: null,
+          claimedBy: null,
+        });
+        requeued += 1;
+      }
+    } catch (err) {
+      if (err instanceof ConflictError) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  return { requeued, failed };
 }
