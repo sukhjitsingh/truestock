@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeAll, beforeEach } from "bun:test";
 import { db } from "@/db";
 import { user, session, organization } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { listUsers, setUserActive, setUserRole } from "@/lib/domain/users";
 import { NotFoundError } from "@/lib/domain/errors";
 import type { Actor } from "@/lib/authz";
-import { resetDatabase } from "./helpers/test-db";
+import { migrateTestDatabase, resetDatabase } from "./helpers/test-db";
 
 const makeActor = (userId: number, organizationId: number, role: "owner" | "manager" | "staff"): Actor => ({
   userId,
@@ -18,6 +18,20 @@ describe("User Write Path", () => {
   let org2Id: number;
   let owner1Id: number;
   let staff1Id: number;
+
+  // This file's own beforeEach truncates every table via resetDatabase(),
+  // which requires the migration chain to already exist. Every other
+  // *-write-path.test.ts file runs migrateTestDatabase() itself for exactly
+  // this reason; this file was the one exception, silently depending on
+  // some other test file's beforeAll having run first in the same `bun
+  // test` process. That's not guaranteed by anything — bun's file discovery
+  // order isn't a documented contract — and it broke: this file has been
+  // failing on every branch (including main) since 2026-08-14 with "Table
+  // 'truestock_test.count_line_write' doesn't exist", the same error every
+  // other write-path test guards against with this call.
+  beforeAll(async () => {
+    await migrateTestDatabase();
+  });
 
   beforeEach(async () => {
     await resetDatabase();
