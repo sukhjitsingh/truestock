@@ -949,4 +949,55 @@ describe("PUT /api/invoices/[id]/file", () => {
       .where(eq(extractionJob.invoiceId, created.id));
     expect(job.status).toBe("queued");
   });
+
+  test("confirm_after_a_409_still_reports_verified — the retry path's premise holds", async () => {
+    // `components/office/invoice-upload-form.tsx` treats a 409 from the PUT
+    // as "already uploaded, go confirm" rather than as a failure, because the
+    // only way its retry button can produce one is a confirm whose RESPONSE
+    // was lost: the bytes are on disk, the job is already past
+    // `awaiting_upload`, and the invoice is in the archive. Showing "the file
+    // failed to upload" there would loop the user on work that is done.
+    //
+    // That behaviour is only correct if confirm actually replays cleanly
+    // after the 409 — which is a SERVER guarantee, asserted here rather than
+    // assumed from the client. If `markUploadConfirmed` ever starts throwing
+    // or returning `matched: false` on an already-confirmed invoice, the form
+    // silently starts reporting a successful archive as a verification
+    // failure, and this test is what catches it.
+    const body = "bytes that land exactly once";
+    const created = await createInvoiceForUpload(fx.owner, {
+      source: "pdf",
+      contentType: "application/pdf",
+      fileSha256: sha256Hex(Buffer.from(body)),
+      fileSizeBytes: Buffer.byteLength(body),
+    });
+
+    sessionUserId = fx.owner.userId;
+    const { PUT } = await import("@/app/api/invoices/[id]/file/route");
+    expect(
+      (
+        await PUT(
+          new Request(`http://localhost/api/invoices/${created.id}/file`, { method: "PUT", body }),
+          fakeParams(String(created.id)),
+        )
+      ).status,
+    ).toBe(200);
+
+    expect((await markUploadConfirmed(fx.owner, created.id)).matched).toBe(true);
+
+    // The retry: its PUT is refused, and the confirm that follows must still
+    // say verified.
+    const refused = await PUT(
+      new Request(`http://localhost/api/invoices/${created.id}/file`, { method: "PUT", body }),
+      fakeParams(String(created.id)),
+    );
+    expect(refused.status).toBe(409);
+
+    const replay = await markUploadConfirmed(fx.owner, created.id);
+    expect(replay.matched).toBe(true);
+
+    // And the refused write left the archived bytes alone.
+    const onDisk = await readFile(resolveStoredPath(created.filePath!));
+    expect(onDisk.toString()).toBe(body);
+  });
 });

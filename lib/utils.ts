@@ -86,3 +86,32 @@ export function formatDate(value: Date | string): string {
     year: "numeric",
   });
 }
+
+/**
+ * Formats a calendar-only date string (`YYYY-MM-DD` — a MariaDB `DATE`
+ * column with no time-of-day, e.g. `invoice.invoice_date`,
+ * `invoice.retention_until`) for display.
+ *
+ * Deliberately does NOT reuse `formatDate` above. `formatDate` is correct
+ * for a genuine timestamp (`count.startedAt`) where the underlying instant
+ * is real and a local-timezone conversion is the right thing to show. A
+ * calendar-only string has no instant to convert: `new Date("2026-08-14")`
+ * parses as UTC midnight, and `toLocaleDateString` with no `timeZone` then
+ * renders in the browser's local zone — every US timezone is a negative UTC
+ * offset, so that path prints Aug 13 for a document dated Aug 14.
+ * `lib/domain/invoices.ts`'s `computeRetentionUntil` documents the exact
+ * same failure mode on the write side (why it parses with `Date.UTC` instead
+ * of a bare `new Date(string)`); this is its read-path counterpart.
+ */
+export function formatCalendarDate(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return value;
+  const [, yearStr, monthStr, dayStr] = match;
+  const date = new Date(Date.UTC(Number(yearStr), Number(monthStr) - 1, Number(dayStr)));
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
