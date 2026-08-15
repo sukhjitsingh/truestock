@@ -24,6 +24,9 @@
  * it either created itself or restores; see restoreLog at the end of the run.
  */
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { unlink } from "node:fs/promises";
+import path from "node:path";
 import mysql from "mysql2/promise";
 import { chromium } from "playwright";
 
@@ -164,6 +167,12 @@ await page.addInitScript(() => {
  * counting its own truncated array.
  */
 const sql = await mysql.createConnection(process.env.DATABASE_URL);
+
+// Set by the Phase 2.5 invoices section below; read by the cleanup pass at
+// the end of the run so the fixture this script creates doesn't accumulate
+// in the dev archive on every re-run, mirroring the throwaway-locations
+// cleanup already at the bottom of this file.
+let invoiceIdToCleanup = null;
 
 try {
   // ---- sign in ------------------------------------------------------------
@@ -786,6 +795,120 @@ try {
   }
 
   // ======================================================================
+  // Phase 2.5 Slice 1 (docs/plans/phase-2.5-invoice-automation) — the
+  // invoice upload + archive tracer bullet. Runs the REAL three-step
+  // handshake through the actual form (create -> PUT -> confirm), then reads
+  // the bytes back through the owner-only file route and compares them
+  // byte-for-byte against what was uploaded. A row appearing in the table
+  // proves the client believes it worked; only the round-trip byte compare
+  // proves the archive actually holds what was sent — the whole point of
+  // AR-1's "verify what actually landed" contract, not the declared size and
+  // hash the browser claimed in step 1.
+  // ======================================================================
+  let invoiceFileHref = null;
+  await page.goto(`${BASE}/office/invoices`, { waitUntil: "networkidle" });
+  await waitForHydration(page, "form");
+  record("invoices page hydrates for the owner", true);
+
+  // Scoped to the table header, not a whole-page substring search — the
+  // upload form above the table has its OWN "File" field label
+  // (components/ui/field.tsx's <label>) that both owner and manager see, so
+  // a bare `page.content().includes(">File<")` is a false positive/negative
+  // trap: it would "pass" for the owner and "fail to fail" for the manager
+  // for the wrong reason (the form's label, not the table's column).
+  const ownerFileColumnCount = await page.locator("table thead th", { hasText: /^File$/ }).count();
+  record(
+    "owner's DOM contains the File column header — positive control for the manager check below",
+    ownerFileColumnCount > 0,
+    ownerFileColumnCount > 0 ? "present, as required" : "MISSING — the table may not be rendering the owner-only column",
+  );
+
+  const fixtureBytes = Buffer.from(`%PDF-1.4 truestock verify-browser fixture ${Date.now()}\n%%EOF`);
+  const fixtureSha256 = createHash("sha256").update(fixtureBytes).digest("hex");
+  // NOT `table tbody tr` count: the empty state (`EmptyState` inside a
+  // colSpan `<td>`) renders as exactly ONE `<tr>`, same as one real invoice
+  // row does — so on a fresh archive "0 invoices -> 1 invoice" is a `tr`
+  // count of 1 -> 1, not 0 -> 1 or N -> N+1. A File link only ever renders on
+  // a real row for the owner, never on the empty state, so it's the signal
+  // that's actually true regardless of how many invoices existed before.
+  const fileLinksBefore = await page.locator('a[href^="/api/invoices/"]').count();
+
+  await page.setInputFiles("#invoice-file", {
+    name: "verify-browser-fixture.pdf",
+    mimeType: "application/pdf",
+    buffer: fixtureBytes,
+  });
+  await page.getByRole("button", { name: /upload invoice/i }).click();
+
+  const verified = await page
+    .getByText(/uploaded and verified/i)
+    .waitFor({ timeout: 20000 })
+    .then(() => true)
+    .catch(() => false);
+  // On failure, read whatever the form is actually showing — the generic
+  // "never reached" message alone doesn't distinguish a slow server action
+  // from a real client-side rejection, and the whole point of a Slice 1
+  // browser check is not to hide that difference behind a timeout.
+  const failureDetail = verified
+    ? "form reports uploaded and verified"
+    : await page
+        .locator('[role="alert"], [role="status"]')
+        .first()
+        .innerText()
+        .then((t) => `no success text after 20s — visible banner: "${t}"`)
+        .catch(() => "no success text after 20s — no alert/status banner visible either");
+  record("the 3-step upload handshake completes end-to-end (create → PUT → confirm)", verified, failureDetail);
+
+  // `router.refresh()` runs after confirm and re-fetches the server
+  // component tree — poll instead of a fixed sleep, since a Next dev server
+  // compiling the invoices server action for the first time in this run can
+  // legitimately take longer than a single short timeout.
+  let fileLinksAfter = fileLinksBefore;
+  for (let i = 0; i < 20; i++) {
+    fileLinksAfter = await page.locator('a[href^="/api/invoices/"]').count();
+    if (fileLinksAfter > fileLinksBefore) break;
+    await page.waitForTimeout(500);
+  }
+  record(
+    "a new row lands in the archive after upload",
+    fileLinksAfter > fileLinksBefore,
+    `${fileLinksBefore} -> ${fileLinksAfter} File links`,
+  );
+
+  // Newest first (listInvoicesForOwner orders by createdAt desc), so the row
+  // just created is the table's first body row.
+  const newRow = page.locator("table tbody tr").first();
+  const newRowText = (await newRow.innerText()).replace(/\s+/g, " ");
+  record(
+    "the new row shows placeholders for fields extraction hasn't filled in yet (Slice 2)",
+    /Not yet extracted/.test(newRowText),
+    newRowText.slice(0, 160),
+  );
+  record(
+    "the new row's status pill shows the invoice's real DB status (uploaded), not a fabricated one",
+    /\buploaded\b/i.test(newRowText),
+    newRowText.slice(0, 160),
+  );
+
+  const fileHref = await newRow.locator('a[href^="/api/invoices/"]').getAttribute("href");
+  record("the new row has a File link (owner)", Boolean(fileHref), fileHref ?? "none found");
+
+  if (fileHref) {
+    invoiceFileHref = fileHref; // reused by the manager role-gating check below
+    invoiceIdToCleanup = Number(fileHref.match(/\/api\/invoices\/(\d+)\/file/)?.[1]) || null;
+    const fileResponse = await page.request.get(`${BASE}${fileHref}`);
+    const servedBytes = Buffer.from(await fileResponse.body());
+    const servedSha256 = createHash("sha256").update(servedBytes).digest("hex");
+    record(
+      "GET on the File link serves back the EXACT bytes that were uploaded",
+      fileResponse.status() === 200 && servedSha256 === fixtureSha256 && servedBytes.equals(fixtureBytes),
+      `status=${fileResponse.status()} sha256 served=${servedSha256.slice(0, 12)}… expected=${fixtureSha256.slice(0, 12)}…`,
+    );
+  } else {
+    skip("File link byte round-trip", "no href found on the new row — see the File-link check above");
+  }
+
+  // ======================================================================
   // Role gating in a browser (invariant 8 / invariant 7)
   //
   // The test suite already proves the ACTION layer strips cost for a manager
@@ -865,6 +988,52 @@ try {
           caseInputs > 0,
           `${caseInputs} case-size inputs (0 would mean the page simply did not render)`,
         );
+
+        // ---- AR-7 on the invoices archive: same rule, different screen ----
+        // Scoped to the table header, not a whole-page substring — see the
+        // owner-side comment above on why ">File<" alone is a trap (the
+        // upload form's own "File" field label is legitimately present for
+        // a manager too, since manager can also upload invoices).
+        await rolePage.goto(`${BASE}/office/invoices`, { waitUntil: "networkidle" });
+        const invoiceHtml = await rolePage.content();
+        const invoiceFileColumnCount = await rolePage.locator("table thead th", { hasText: /^File$/ }).count();
+        const invoiceFileLinks = await rolePage.locator('a[href^="/api/invoices/"]').count();
+        const invoiceRows = await rolePage.locator("table tbody tr").count();
+        record(
+          'a manager\'s invoices archive has no "File" column header and no File link anywhere in the DOM',
+          invoiceFileColumnCount === 0 && invoiceFileLinks === 0,
+          `File column headers=${invoiceFileColumnCount} File links=${invoiceFileLinks}`,
+        );
+        record(
+          "a manager CAN still see the invoices table itself — positive control",
+          invoiceRows > 0,
+          `${invoiceRows} rows (0 would mean the page simply did not render)`,
+        );
+
+        // The redaction is enforced at the query layer (listInvoicesRedacted
+        // never SELECTs these columns — lib/domain/invoices.ts), so this is a
+        // second, independent proof that the omission actually reaches the
+        // page: these strings should never be typed into a manager's DOM at
+        // all, not even in a data attribute.
+        record(
+          "a manager's invoices DOM contains no file-hash/size internals",
+          !/\bfileSha256\b|\bfileSizeBytes\b/.test(invoiceHtml),
+          "checked for the raw field names leaking into the payload",
+        );
+
+        // The file route itself is owner-only regardless of what the page
+        // renders — a manager who somehow obtains the URL (it's not secret,
+        // just gated) must still be refused the bytes.
+        if (invoiceFileHref) {
+          const managerFileResponse = await rolePage.request.get(`${BASE}${invoiceFileHref}`);
+          record(
+            "a manager GETting the owner-only file route is refused, not served bytes",
+            managerFileResponse.status() !== 200,
+            `status=${managerFileResponse.status()}`,
+          );
+        } else {
+          skip("manager GET on the file route", "no invoice was created in the owner pass above to test against");
+        }
       } else {
         await rolePage.goto(`${BASE}/office/locations`, { waitUntil: "networkidle" });
         record(
@@ -874,6 +1043,16 @@ try {
         );
         const navLinks = await rolePage.locator('a[href="/office/locations"]').count();
         record("staff see no Locations link", navLinks === 0, `${navLinks} links to /office/locations`);
+
+        // Staff has no back-office surface at all (requireOfficeUser) —
+        // invoices is no exception, same bounce to /count as every other
+        // office screen.
+        await rolePage.goto(`${BASE}/office/invoices`, { waitUntil: "networkidle" });
+        record(
+          "staff are redirected away from /office/invoices",
+          !rolePage.url().includes("/office"),
+          `landed on ${rolePage.url()}`,
+        );
       }
     } finally {
       await roleContext.close();
@@ -907,6 +1086,26 @@ try {
   // still holds: the app only ever retired it, which is what was verified above.
   const [res] = await sql.execute("DELETE FROM location WHERE name LIKE 'Verify Bar %' OR name LIKE 'Verify Patio %'");
   record("throwaway verification locations removed", true, `${res.affectedRows} rows`);
+
+  // The Slice 1 fixture invoice — deleted here by the harness (not by any
+  // app code; invoices have no delete affordance and shouldn't) so repeated
+  // runs don't accumulate rows and files in the dev archive.
+  if (invoiceIdToCleanup) {
+    const [[invoiceRow]] = await sql.query("SELECT file_path AS filePath FROM invoice WHERE id = ?", [
+      invoiceIdToCleanup,
+    ]);
+    await sql.execute("DELETE FROM extraction_job WHERE invoice_id = ?", [invoiceIdToCleanup]);
+    await sql.execute("DELETE FROM invoice WHERE id = ?", [invoiceIdToCleanup]);
+    if (invoiceRow?.filePath) {
+      const root = path.resolve((process.env.INVOICE_STORAGE_DIR ?? "").trim() || "./var/invoices");
+      await unlink(path.resolve(root, invoiceRow.filePath)).catch(() => {});
+    }
+    record(
+      "throwaway verification invoice removed",
+      true,
+      `invoice #${invoiceIdToCleanup}, its extraction_job row, and its stored file deleted`,
+    );
+  }
 } catch (err) {
   record("dev data restored", false, `MANUAL CLEANUP NEEDED — ${String(err).split("\n")[0]}; intended: ${JSON.stringify(restoreLog)}`);
 }

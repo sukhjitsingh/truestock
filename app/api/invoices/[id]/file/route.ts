@@ -13,12 +13,21 @@
  * computed. Owner + manager, matching the upload action's own role gate.
  *
  * `GET` — owner-only [AR-7], matching `lib/authz.ts:canSeeCost`. Every
- * failure mode — wrong role, no session, unknown id, cross-tenant id, a
- * `file_path` that hasn't been set yet, a stored path that fails the
- * containment check — resolves to the SAME 404 shape. A `StoragePathError`
- * in particular must never surface its own message: reaching one means
- * either corrupt data or someone probing the filesystem, and telling them
- * which is free reconnaissance (see that error class's doc comment).
+ * failure mode that touches WHICH invoice or WHERE it lives — unknown id,
+ * cross-tenant id, a `file_path` that hasn't been set yet, a stored path
+ * that fails the containment check — resolves to the SAME 404 shape. A
+ * `StoragePathError` in particular must never surface its own message:
+ * reaching one means either corrupt data or someone probing the filesystem,
+ * and telling them which is free reconnaissance (see that error class's doc
+ * comment).
+ *
+ * Wrong role or no session is a DIFFERENT axis and is deliberately NOT
+ * folded into that 404: `requireRole("owner")` throws `AuthzError` (401 with
+ * no session, 403 for a signed-in manager/staff), which `errorResponse`
+ * below returns as-is. That is an ordinary auth-boundary response, not a
+ * cross-tenant existence leak — it says nothing about whether `id` names a
+ * real invoice, only that this caller isn't allowed to read invoice files at
+ * all, which the client already knows from its own role.
  */
 import path from "node:path";
 import { readFile } from "node:fs/promises";
