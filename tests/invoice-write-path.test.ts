@@ -15,7 +15,7 @@
  * `@/lib/authz` transitively — are ever resolved.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach, mock } from "bun:test";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db, closePool } from "@/db";
 import { invoice, extractionJob } from "@/db/schema";
 import {
@@ -165,7 +165,14 @@ describe("createInvoiceForUpload", () => {
     });
     await expect(attempt).rejects.toBeInstanceOf(NotFoundError);
 
-    const rows = await db.select().from(invoice).where(eq(invoice.organizationId, fx.organizationId));
+    // Scoped to the vendor the rejected attempt tried to use, not to the org
+    // as a whole — the fixture seeds a legitimate baseline invoice for this
+    // org (against its own vendor), so a bare "0 invoices for this org" count
+    // would fail on that baseline row and prove nothing about this attempt.
+    const rows = await db
+      .select()
+      .from(invoice)
+      .where(and(eq(invoice.organizationId, fx.organizationId), eq(invoice.vendorId, fx.otherVendorId)));
     expect(rows).toHaveLength(0);
   });
 
