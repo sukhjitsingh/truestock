@@ -71,15 +71,21 @@ the first pass, 3 from the AR-2 audit, 10 from the AR-4→AR-7 audit).
 - [ ] Slice 5 — Audit Packet (Phase E)
 - Slice 6 — not built by design (auto-approve deferred, see `04-slices.md`)
 
-**Gate 2–4 approval status has not been reconciled with the above.** The
-header at the top of this file and the banner at the top of `04-slices.md`
-("Gate 2–4 approval is withdrawn until the corrected contract is
-re-approved") still read as unresolved from the 2026-08-14 adversarial
-review, and no re-approval note has been added anywhere in this plan
-directory since — but Slices 1 and 2's backend were built and merged after
-that review. Worth the project owner's explicit call: either record when/how
-the corrected contract was re-approved, or treat this as process debt to
-close before Slice 3.
+**Gate 2–4 reconciled 2026-08-15, by the project owner's explicit call, before
+Slice 3 started.** The header at the top of this file and the banner at the
+top of `04-slices.md` still read "withdrawn until the corrected contract is
+re-approved" and are left as-is — they're the historical record of the
+2026-08-14 adversarial review, not stale process debt. The re-approval basis:
+Slices 1 and 2 were built and merged **against the corrected contract**
+(every AR-1 through AR-7 fix plus the twelve second-pass findings — storage
+outside the web root, ownership-checked cross-tenant ids, the CAS-guarded
+state machines, owner-only cost visibility, atomic job claiming), and shipped
+clean — `code-reviewer` and `security-reviewer` both returned zero
+critical/high findings on Slice 2, and the 32 backend adversarial tests all
+pass against real MariaDB. That is direct evidence the corrected contract
+holds under implementation and review, not just on paper, and is a stronger
+basis for re-approval than a signature would have been. Slices 3 and 4
+proceed on it.
 
 ## Notes for a fresh session
 Read `docs/invoice-automation-research.md` in full (Parts 1–5) before anything else —
