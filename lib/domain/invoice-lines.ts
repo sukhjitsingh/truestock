@@ -49,6 +49,7 @@ import { db } from "@/db";
 import { invoice, invoiceLine, product } from "@/db/schema";
 import type { invoiceLineTypeEnum, invoiceLineUomEnum, invoiceMatchMethodEnum } from "@/db/enums";
 import type { Actor } from "@/lib/authz";
+import { withLockRetry } from "@/lib/domain/db-errors";
 import { NotFoundError } from "@/lib/domain/errors";
 import { updateInvoiceStatusTx, type InvoiceRow } from "@/lib/domain/invoices";
 import { upsertAliasTx } from "@/lib/domain/matching";
@@ -482,14 +483,29 @@ export async function applyLineReview(
  * rolls back: the line corrections are undone along with it, rather than
  * left applied against an invoice that never actually reached `reviewed`
  * (04-slices.md's `review_conflicts_when_status_moved`).
+ *
+ * `withLockRetry` (see db-errors.ts): a manual match inside
+ * `applyLineReviewTx` calls `lib/domain/matching.ts:upsertAliasTx`, whose
+ * duplicate-key recovery branch takes a `SELECT ... FOR UPDATE` on the
+ * existing `vendor_alias` row — so two reviewers submitting corrections that
+ * both map the SAME `(organizationId, vendorId, vendorItemCode)` at once can
+ * have InnoDB pick one as a deadlock victim (1213). That can only be fixed
+ * HERE, at the outer transaction, not inside `upsertAliasTx`/`upsertAliasCore`
+ * itself: those run mid-transaction, sharing this call's `tx`, and a deadlock
+ * rolls the WHOLE transaction back — including the CAS below — so only
+ * re-running the whole thing (not just the alias write) recovers. Same
+ * reasoning `lib/domain/counts.ts` already applies at its own
+ * `db.transaction(...)` call sites.
  */
 export async function submitInvoiceReview(
   actor: Actor,
   invoiceId: number,
   corrections: LineCorrection[],
 ): Promise<InvoiceRow> {
-  return db.transaction(async (tx) => {
-    await applyLineReviewTx(tx, actor, invoiceId, corrections);
-    return updateInvoiceStatusTx(tx, actor, invoiceId, "needs_review", "reviewed");
-  });
+  return withLockRetry(() =>
+    db.transaction(async (tx) => {
+      await applyLineReviewTx(tx, actor, invoiceId, corrections);
+      return updateInvoiceStatusTx(tx, actor, invoiceId, "needs_review", "reviewed");
+    }),
+  );
 }

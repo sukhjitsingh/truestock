@@ -32,7 +32,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { vendorAlias } from "@/db/schema";
-import { isDuplicateKeyError } from "@/lib/domain/db-errors";
+import { isDuplicateKeyError, withLockRetry } from "@/lib/domain/db-errors";
 import type { DraftInvoiceLine } from "@/lib/domain/invoice-lines";
 
 /** Mirrors every other domain file's `Tx` extraction — see e.g. `lib/domain/extraction.ts`. */
@@ -267,14 +267,28 @@ export async function upsertAliasTx(
   return upsertAliasCore(tx, orgId, vendorId, vendorItemCode, productId);
 }
 
-/** `upsertAliasTx`, opening its own transaction — for standalone/unit use (mirrors `applyLineReview` next to `applyLineReviewTx`). */
+/**
+ * `upsertAliasTx`, opening its own transaction — for standalone/unit use (mirrors `applyLineReview` next to `applyLineReviewTx`).
+ *
+ * Wrapped in `withLockRetry` (see db-errors.ts): `upsertAliasCore`'s duplicate-key
+ * recovery branch takes a `SELECT ... FOR UPDATE` on the existing row before
+ * deciding reconfirm-vs-reset, and 3+ concurrent callers upserting the SAME
+ * `(orgId, vendorId, vendorItemCode)` — e.g. two reviewers correcting the same
+ * vendor SKU at once — can have InnoDB pick one as a deadlock victim (1213)
+ * while it waits on that lock behind another. `isDuplicateKeyError` only
+ * recognises 1062 and does not catch this, so without the retry it would
+ * propagate as a raw driver error instead of the transaction simply
+ * re-running. Retrying the WHOLE transaction is safe for the same reason it is
+ * in `lib/domain/counts.ts`: InnoDB rolls the deadlock victim back completely,
+ * so a retry starts from the same state the first attempt saw.
+ */
 export async function upsertAlias(
   orgId: number,
   vendorId: number,
   vendorItemCode: string,
   productId: number,
 ): Promise<VendorAliasRow> {
-  return db.transaction((tx) => upsertAliasCore(tx, orgId, vendorId, vendorItemCode, productId));
+  return withLockRetry(() => db.transaction((tx) => upsertAliasCore(tx, orgId, vendorId, vendorItemCode, productId)));
 }
 
 /**

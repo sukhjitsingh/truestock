@@ -1415,3 +1415,31 @@ corrections (mirroring the line-correction pattern), or give Reject a way to
 also record which header field blocked it so it surfaces as more than a raw
 domain-error string. Whichever is chosen should have a test using a fixture
 invoice with one of the six fields NULL, not the always-fully-populated one.
+
+---
+
+## 33. `matchLinesToProducts` is only proven in isolation, never through the real extraction pipeline
+
+**Trigger: whenever `@firecrawl/pdf-inspector`'s native binding starts loading
+in this dev environment (see the memory `pdf-inspector-no-darwin-x64-binary`),
+or `classifyPdf`/`processPdf` get added to `ProcessExtractionQueueDeps` so
+they can be mocked instead.**
+
+Opened 2026-08-15, from the Slice 3 code review (vendor SKU matching and
+alias learning, commit 7843806). `tests/matching.test.ts` calls
+`matchLinesToProducts` directly, and other extraction tests re-derive the
+same matching loop inline, both of which prove the matching logic correct on
+its own — but no test drives it through the actual production entry point,
+`runClaimedJob` → `processExtractionQueue`, where it is really invoked mid
+pipeline after `classifyPdf`/`processPdf`. That path is currently untestable
+in this environment: `@firecrawl/pdf-inspector` has no native binding for
+Intel-Mac (`darwin-x64`) dev machines, so anything importing
+`extraction-pipeline.ts` fails to load before a test body even runs — which
+blocks every `processExtractionQueue` integration test, not just this one.
+
+Fix, when the trigger fires: add a real end-to-end test that calls
+`processExtractionQueue` (or `runClaimedJob`) against a seeded vendor alias
+and asserts the resulting `invoice_line` rows carry the matched
+`matchedProductId`/`matchedVendorAliasId`/`matchConfidence` — closing the gap
+between "the matching function is correct" and "the pipeline actually calls
+it correctly with the right `vendorId`."

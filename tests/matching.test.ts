@@ -25,7 +25,7 @@ import { and, eq } from "drizzle-orm";
 import { db, closePool } from "@/db";
 import { invoice, invoiceLine, vendorAlias } from "@/db/schema";
 import { findAlias, upsertAlias, matchLinesToProducts } from "@/lib/domain/matching";
-import { applyLineReview, type DraftInvoiceLine } from "@/lib/domain/invoice-lines";
+import { applyLineReview, submitInvoiceReview, type DraftInvoiceLine } from "@/lib/domain/invoice-lines";
 import { migrateTestDatabase, resetDatabase, createFixtures, type Fixtures } from "./helpers/test-db";
 
 let fx: Fixtures;
@@ -296,4 +296,104 @@ describe("tenant isolation [invariant 9]", () => {
       fx.otherProductId,
     );
   });
+});
+
+/**
+ * Code-reviewer finding (post-Slice-3 review, 2026-08-15): `upsertAliasCore`'s
+ * duplicate-key recovery branch takes a `SELECT ... FOR UPDATE` on the
+ * existing row before branching reconfirm-vs-reset. Under 3+ concurrent
+ * callers upserting the SAME `(organizationId, vendorId, vendorItemCode)` —
+ * e.g. two reviewers correcting the same vendor SKU at once — InnoDB can pick
+ * one as a deadlock victim (1213), which `isDuplicateKeyError` does not
+ * recognise (it only matches 1062), so the raw driver error used to propagate
+ * out of `upsertAliasTx` -> `applyLineReviewTx` -> `submitInvoiceReview`'s
+ * enclosing transaction and roll back an entire review submission. Fixed by
+ * wrapping the outer `db.transaction(...)` call in `withLockRetry` (reusing
+ * `lib/domain/db-errors.ts`'s existing helper — the same one
+ * `lib/domain/counts.ts` already uses for the analogous `count_line` gap-lock
+ * deadlock) at BOTH of `upsertAliasCore`'s two callers: `matching.ts`'s own
+ * standalone `upsertAlias`, and `invoice-lines.ts`'s `submitInvoiceReview`
+ * (which cannot be fixed by wrapping `upsertAliasTx`'s own call alone, since
+ * that runs mid-transaction sharing the caller's `tx` — a deadlock rolls the
+ * WHOLE transaction back, so only retrying the whole thing recovers).
+ *
+ * Both tests below run REAL concurrent transactions against real MariaDB
+ * (`Promise.all`, not mocks) so they actually contend for the same row lock —
+ * without the fix, either could intermittently surface an unhandled 1213
+ * instead of the assertions below.
+ */
+describe("concurrent upserts of the same alias key — the lock-conflict retry fix", () => {
+  test(
+    "3 simultaneous upsertAlias calls for the SAME (org, vendor, vendorItemCode) all resolve — none surfaces a raw 1213 — and converge to exactly the state a sequential run would produce: one row, confidence walked 0.500 -> 0.750 -> 0.875. " +
+      "That final value is deterministic regardless of which call wins the INSERT race or how withLockRetry's retries interleave: exactly one call ever inserts (0.500 default), and the other two are forced through the SAME row lock in upsertAliasCore's `SELECT ... FOR UPDATE` recovery branch one at a time, each reconfirming whatever the immediately-prior commit left behind.",
+    async () => {
+      const results = await Promise.all([
+        upsertAlias(fx.organizationId, fx.vendorId, "SKU-CONCURRENT", fx.pricedProductId),
+        upsertAlias(fx.organizationId, fx.vendorId, "SKU-CONCURRENT", fx.pricedProductId),
+        upsertAlias(fx.organizationId, fx.vendorId, "SKU-CONCURRENT", fx.pricedProductId),
+      ]);
+
+      for (const row of results) {
+        expect(row.productId).toBe(fx.pricedProductId);
+      }
+
+      const rows = await selectAliasRows(fx.organizationId, fx.vendorId, "SKU-CONCURRENT");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].matchConfidence).toBe("0.875");
+    },
+  );
+
+  test(
+    "3 simultaneous submitInvoiceReview calls — three DIFFERENT invoices, each with one line carrying the SAME vendor_item_code for the SAME vendor, each reviewer mapping it to the SAME product — mirrors 'two reviewers correcting the same vendor SKU at once' through the REAL production path (submitInvoiceReview, not upsertAlias directly). All three submissions must reach `reviewed` and the alias table converges to one row, proving the retry belongs at submitInvoiceReview's OUTER transaction: wrapping upsertAliasTx's own call alone could not recover here, since a deadlock rolls the corrections and the status CAS back together.",
+    async () => {
+      const vendorItemCode = "SKU-REVIEW-CONCURRENT";
+      const targets: { invoiceId: number; lineId: number }[] = [];
+      for (let i = 0; i < 3; i++) {
+        const [inv] = await db
+          .insert(invoice)
+          .values({
+            organizationId: fx.organizationId,
+            vendorId: fx.vendorId,
+            status: "needs_review",
+            source: "pdf",
+            filePath: `${fx.organizationId}/concurrent-review-${i}.pdf`,
+            fileSha256: `${i}`.repeat(64).slice(0, 64),
+            fileSizeBytes: 100 + i,
+            invoiceDate: "2026-06-01",
+            invoiceNumber: `CONCURRENT-REVIEW-${i}`,
+            totalGross: "10.0000",
+            totalDiscount: "0.0000",
+            totalNet: "10.0000",
+            currency: "USD",
+            retentionUntil: "2029-06-01",
+          })
+          .$returningId();
+        const [line] = await db
+          .insert(invoiceLine)
+          .values({
+            organizationId: fx.organizationId,
+            invoiceId: inv.id,
+            lineNumber: 1,
+            vendorItemCode,
+            matchMethod: "unmatched",
+          })
+          .$returningId();
+        targets.push({ invoiceId: inv.id, lineId: line.id });
+      }
+
+      const results = await Promise.all(
+        targets.map(({ invoiceId, lineId }) =>
+          submitInvoiceReview(fx.owner, invoiceId, [{ id: lineId, matchedProductId: fx.pricedProductId }]),
+        ),
+      );
+
+      for (const row of results) {
+        expect(row.status).toBe("reviewed");
+      }
+
+      const rows = await selectAliasRows(fx.organizationId, fx.vendorId, vendorItemCode);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].productId).toBe(fx.pricedProductId);
+    },
+  );
 });
