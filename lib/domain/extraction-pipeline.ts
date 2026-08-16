@@ -1,25 +1,30 @@
 /**
- * The extraction pipeline itself — Phase 2.5, Slice 2.
+ * The extraction pipeline itself — Phase 2.5, Slices 2 and 3.
  *
  * `processExtractionQueue` is the cron tick body (`instrumentation.ts` calls
  * it on an interval): claim -> CAS invoice `uploaded -> processing` -> classify
- * (`@firecrawl/pdf-inspector`) -> extract (Claude Vision) -> parse -> checks ->
- * write lines + header -> CAS invoice `processing -> needs_review` -> CAS job
+ * (`@firecrawl/pdf-inspector`) -> extract (Claude Vision) -> parse -> MATCH
+ * (`lib/domain/matching.ts:matchLinesToProducts`, Slice 3) -> checks -> write
+ * lines + header -> CAS invoice `processing -> needs_review` -> CAS job
  * `running -> done`. Every other function here is one stage of that pipeline,
  * exported individually so each is unit-testable without a network call or a
  * real PDF.
  *
  * ## Scope this slice deliberately does NOT cover
  *
- * `matchedProductId`/`matchMethod` stay `unmatched` on every line this
- * pipeline writes (Slice 3's `vendor_item_alias` matching does not exist
- * yet). Of the four exception badges `invoice_line.exceptionFlags` can carry
- * ("price jump", "duplicate", "doesn't add up", "unmatched item"), this
- * pipeline only ever emits two: "unmatched item" (universal this slice, for
- * the same reason `matchMethod` is universal) and "doesn't add up" (from
- * `arithmeticCheck`/`pdfInspectorCrossCheck` failing). "price jump" needs
- * `product_cost_history` (Slice 4) and "duplicate" needs cross-invoice
- * comparison — neither exists yet, so neither is invented here.
+ * `matchLinesToProducts` (Slice 3, wired into `runClaimedJob` below) resolves
+ * a line's `matchedProductId`/`matchedVendorAliasId`/`matchMethod`/
+ * `matchConfidence` ONLY via an existing `vendor_alias` keyed on
+ * `vendor_item_code` — never a barcode, description, or fuzzy match, even
+ * though `invoiceMatchMethodEnum` (db/enums.ts) already has room for those.
+ * `runClaimedJob` sets the "unmatched item" exception badge on whatever is
+ * STILL unmatched after that call. Of the four exception badges
+ * `invoice_line.exceptionFlags` can carry ("price jump", "duplicate",
+ * "doesn't add up", "unmatched item"), this pipeline only ever emits two:
+ * "unmatched item" and "doesn't add up" (from `arithmeticCheck`/
+ * `pdfInspectorCrossCheck` failing). "price jump" needs `product_cost_history`
+ * (Slice 4) and "duplicate" needs cross-invoice comparison — neither exists
+ * yet, so neither is invented here.
  *
  * ## Why every job routes through Claude Vision, not a markdown-only path
  *
@@ -54,7 +59,14 @@ import { pdfTypeEnum, invoiceLineTypeEnum, invoiceLineUomEnum, extractionPhaseEn
 import type { Actor, Role } from "@/lib/authz";
 import { claimNextJob, updateJobStatus, type ExtractionJobRow } from "@/lib/domain/extraction";
 import { getInvoice, updateInvoiceStatus, computeRetentionUntil } from "@/lib/domain/invoices";
-import { writeExtractedLines, type DraftInvoiceLine, type InvoiceLineType, type InvoiceLineUom } from "@/lib/domain/invoice-lines";
+import {
+  writeExtractedLines,
+  UNMATCHED_ITEM_FLAG,
+  type DraftInvoiceLine,
+  type InvoiceLineType,
+  type InvoiceLineUom,
+} from "@/lib/domain/invoice-lines";
+import { matchLinesToProducts } from "@/lib/domain/matching";
 import { resolveStoredPath } from "@/lib/storage/invoice-files";
 import { DomainError } from "@/lib/domain/errors";
 
@@ -379,6 +391,14 @@ function normalizeUom(value: string | null): InvoiceLineUom | null {
  * would reject the whole write on the first duplicate — document order
  * (the array's own order) is the only numbering signal this pipeline
  * actually needs.
+ *
+ * Every line starts unmatched (`matchedProductId`/`matchedVendorAliasId:
+ * null`, `matchMethod: "unmatched"`, `matchConfidence: null`) and
+ * `exceptionFlags: null` — NOT `["unmatched item"]`. Matching
+ * (`matchLinesToProducts`, called by `runClaimedJob` right after this
+ * function) may resolve some lines before anything is flagged; `runClaimedJob`
+ * sets "unmatched item" afterward on whatever is STILL unmatched, so this
+ * function itself must not pre-judge which lines that will be.
  */
 export function parseLinesFromVision(raw: unknown): ParsedExtraction {
   const parsed = extractedInvoiceSchema.parse(raw);
@@ -407,8 +427,12 @@ export function parseLinesFromVision(raw: unknown): ParsedExtraction {
     rawGross: toDecimalString(line.rawGross, 2),
     rawDiscount: toDecimalString(line.rawDiscount, 2),
     rawNet: toDecimalString(line.rawNet, 2),
-    exceptionFlags: ["unmatched item"],
+    exceptionFlags: null,
     extractionConfidence: toDecimalString(line.confidence, 3),
+    matchedProductId: null,
+    matchedVendorAliasId: null,
+    matchMethod: "unmatched",
+    matchConfidence: null,
   }));
 
   return { header, lines };
@@ -607,6 +631,22 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
 
   await setJobPhase(job.id, "parse");
   const { header, lines } = parseLinesFromVision(extraction.raw);
+
+  // Slice 3: resolve whatever this vendor's SKUs already have an alias for.
+  // Runs inside the existing "parse" phase — `extractionPhaseEnum`
+  // (db/enums.ts) is a closed set and matching is fast, in-process, and part
+  // of turning raw output into the draft this job persists, not a separate
+  // observability-worthy phase of its own. `invoiceRow.vendorId` is already
+  // tenant-scoped (this file's own header comment on the trust boundary
+  // matching.ts documents) — resolved by `getInvoice(actor, ...)` above,
+  // itself only ever set from an ownership-checked value when the invoice
+  // was created.
+  await matchLinesToProducts(lines, actor.organizationId, invoiceRow.vendorId);
+  for (const line of lines) {
+    if (line.matchedProductId == null) {
+      line.exceptionFlags = [...(line.exceptionFlags ?? []), UNMATCHED_ITEM_FLAG];
+    }
+  }
 
   const arithmetic = arithmeticCheck(lines, header.totalGross != null ? Number(header.totalGross) : null);
   const crossCheck = pdfInspectorCrossCheck(lines, markdown);
