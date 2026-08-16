@@ -1255,6 +1255,33 @@ export const invoiceLine = mysqlTable(
     }),
     matchMethod: mysqlEnum("match_method", invoiceMatchMethodEnum).notNull().default("unmatched"),
     matchConfidence: decimal("match_confidence", { precision: 4, scale: 3 }),
+
+    // Phase 2.5, Slice 3. Set by lib/domain/matching.ts:matchLinesToProducts
+    // (an internal domain function that already has orgId/vendorId resolved
+    // from THIS invoice's own tenant-scoped row), never taken directly from
+    // a client payload — unlike matchedProductId above, which IS
+    // client-supplied on the review screen and is deliberately a bare FK for
+    // that reason. Same reasoning applies here, so this stays a bare
+    // single-column FK too, not a composite tenant FK: matchLinesToProducts
+    // can only ever resolve an alias id via a query it has already scoped to
+    // (organizationId, vendorId) — see vendorAlias's own unique index below
+    // — so there is no code path that could hand this column another
+    // tenant's alias id the way a raw client payload could.
+    //
+    // ON DELETE SET NULL, not RESTRICT like reviewedBy's FK to `user` a few
+    // lines down. reviewedBy points at `user`, which (invariant 11) is only
+    // ever deactivated, never deleted, so RESTRICT there is a backstop that
+    // never actually fires. vendor_alias has no such soft-delete flag, and
+    // correcting a bad mapping (wrong product picked, or a vendor_item_code
+    // that turns out to be shared by two different products) is exactly the
+    // kind of row a human may need to delete outright rather than upsert.
+    // SET NULL means that correction is never blocked by every invoice_line
+    // that ever matched through the alias — affected lines just revert to
+    // unmatched-by-alias; matchMethod/matchedProductId above are untouched
+    // by this FK, so each line's own audit record survives regardless.
+    matchedVendorAliasId: int("matched_vendor_alias_id").references(() => vendorAlias.id, {
+      onDelete: "set null",
+    }),
     extractionConfidence: decimal("extraction_confidence", { precision: 4, scale: 3 }),
 
     reviewedBy: int("reviewed_by").references(() => user.id, { onDelete: "restrict" }),
@@ -1270,6 +1297,12 @@ export const invoiceLine = mysqlTable(
     index("invoice_line_organization_matched_product_idx").on(
       table.organizationId,
       table.matchedProductId,
+    ),
+    // Slice 3: "which lines matched through this alias" — audit/debugging,
+    // same role as the matched-product index above.
+    index("invoice_line_organization_matched_vendor_alias_idx").on(
+      table.organizationId,
+      table.matchedVendorAliasId,
     ),
     // Vendor-code matching (Slice 3) and manual lookup by the code printed
     // on the invoice.
@@ -1295,6 +1328,106 @@ export const invoiceLine = mysqlTable(
       columns: [table.organizationId, table.invoiceId],
       foreignColumns: [invoice.organizationId, invoice.id],
       name: "invoice_line_organization_invoice_fk",
+    }).onDelete("restrict"),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// VendorAlias — Phase 2.5, Slice 3 (matching persistence)
+// ---------------------------------------------------------------------------
+// docs/plans/phase-2.5-invoice-automation/04-slices.md, Slice 3: "the 'fix
+// once' memory — vendor-alias upsert — persists across invoices." One row
+// per (organization, vendor, the vendor's OWN item code) mapping to one of
+// OUR products; `lib/domain/matching.ts:findAlias` / `upsertAlias` are the
+// only things that read/write it (not built in this migration).
+//
+// The composite tenant FK on vendorId below is the specific fix named by
+// the 2026-08-14 adversarial review's second pass (00-status.md): "the
+// `vendor_alias` had no tenant foreign key at all — and it is the one table
+// whose bad rows persist and re-apply to every future invoice from that
+// vendor." Every other client-adjacent id in this file gets an AR-2
+// ownership check because a wrong value corrupts one write; a wrong alias
+// row corrupts every future review of that vendor's invoices until a human
+// happens to notice, which is a strictly worse failure to leave open.
+//
+// Referenced by invoiceLine.matchedVendorAliasId — see that column's
+// comment for why that FK is bare (not composite) and ON DELETE SET NULL.
+export const vendorAlias = mysqlTable(
+  "vendor_alias",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    organizationId: int("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "restrict" }),
+    // No single-column FK — the composite tenant FK below covers it, same
+    // pattern as count_line.countId / invoice_line.invoiceId. This is the
+    // AR-2 fix itself: a bare vendor_id FK only proves the vendor row
+    // exists, not that it belongs to this organization, and this table's
+    // whole purpose is to be trusted, unattended, on every future invoice.
+    vendorId: int("vendor_id").notNull(),
+    // The code printed on the VENDOR's own invoice/catalog for this item —
+    // not our internal product id. This plus (organizationId, vendorId) is
+    // the upsert key (unique index below).
+    vendorItemCode: varchar("vendor_item_code", { length: 64 }).notNull(),
+    // Bare FK, not composite — matching invoice_line.matchedProductId's own
+    // precedent: this id is supplied by a human picking a product on the
+    // review screen's "map to product" action, so it goes through that
+    // action's OWN ownership check before upsertAlias ever writes it here,
+    // the same way reviewInvoiceAction batch-checks matched_product_id
+    // [AR-2], rather than through a DB-level composite FK. NOT NULL: unlike
+    // invoice_line (a draft that starts unmatched and gets a product later),
+    // a vendor_alias row's entire reason to exist is the mapping — there is
+    // no unmapped state for this table. ON DELETE RESTRICT: invariant 6,
+    // products are never hard-deleted, so this never actually fires; kept
+    // for consistency with every other product FK in this file.
+    productId: int("product_id")
+      .notNull()
+      .references(() => product.id, { onDelete: "restrict" }),
+    // How many times this mapping has been confirmed, expressed as a
+    // 0.000-1.000 confidence (same scale as invoice_line.matchConfidence,
+    // so the review UI can format both with one rule) rather than a raw
+    // count. This migration only sets the starting value — the increment
+    // rule is advisory for whoever builds lib/domain/matching.ts, not
+    // enforced by the schema:
+    //   - 0.500 on first creation (upsertAlias's INSERT branch) — one human
+    //     confirmation is a real signal, but not yet proven to generalize
+    //     to the NEXT invoice from this vendor.
+    //   - Each later confirmation (upsertAlias's UPDATE branch — the same
+    //     vendor_item_code auto-matches again and a human leaves it as-is,
+    //     or explicitly re-confirms it) should move the value toward 1.000
+    //     without ever reaching or exceeding it, e.g.
+    //     `confidence = 1 - 1 / (timesConfirmed + 1)` — so the column keeps
+    //     meaning "how many times has this been confirmed," never "was it
+    //     ever confirmed."
+    matchConfidence: decimal("match_confidence", { precision: 4, scale: 3 })
+      .notNull()
+      .default("0.500"),
+    ...auditColumns,
+  },
+  (table) => [
+    // The upsert key — 04-slices.md, verbatim: "unique on (organization_id,
+    // vendor_id, vendor_item_code)". Also serves as the index for
+    // findAlias(orgId, vendorId, vendorItemCode) and for any
+    // (organizationId) / (organizationId, vendorId)-only query, since both
+    // are left prefixes of this index — a separate index on either would be
+    // redundant (and is deliberately not added).
+    uniqueIndex("vendor_alias_organization_vendor_item_code_unique").on(
+      table.organizationId,
+      table.vendorId,
+      table.vendorItemCode,
+    ),
+    // "Every alias mapped to this product" — a catalog-facing lookup, same
+    // role as invoice_line's own matched-product index.
+    index("vendor_alias_organization_product_idx").on(table.organizationId, table.productId),
+    // Tenant integrity [AR-2] — the fix the second-pass adversarial review
+    // named specifically for this table. ON DELETE RESTRICT: nothing
+    // hard-deletes a vendor (mirrors product/location/invariant 6's
+    // discipline), so this is a backstop, matching every sibling
+    // composite tenant FK in this file (product's own FK to vendor, above).
+    foreignKey({
+      columns: [table.organizationId, table.vendorId],
+      foreignColumns: [vendor.organizationId, vendor.id],
+      name: "vendor_alias_organization_vendor_fk",
     }).onDelete("restrict"),
   ],
 );

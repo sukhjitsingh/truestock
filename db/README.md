@@ -146,6 +146,46 @@ open a fresh pool (and fresh database connections) on every file save.
   `0005` then running the reversal above leaves `extraction_job` and
   `invoice` byte-identical (via `SHOW CREATE TABLE`) to their state right
   after `0004`, and `invoice_line` gone.
+- `0006_colorful_pretty_boy.sql` (Phase 2.5, Slice 3) creates `vendor_alias`
+  and adds `invoice_line.matched_vendor_alias_id`. `vendor_alias` carries a
+  composite tenant foreign key on `(organization_id, vendor_id)` — the
+  specific gap the 2026-08-14 adversarial review's second pass named: "the
+  `vendor_alias` had no tenant foreign key at all... it is the one table
+  whose bad rows persist and re-apply to every future invoice from that
+  vendor." Verified against MariaDB 11.8.8 in the dev database: a
+  cross-tenant `vendor_id` insert is rejected (1452,
+  `vendor_alias_organization_vendor_fk`), a same-tenant insert succeeds, and
+  a duplicate `(organization_id, vendor_id, vendor_item_code)` is rejected
+  (1062, `vendor_alias_organization_vendor_item_code_unique`) — the exact
+  upsert key `lib/domain/matching.ts:upsertAlias` (not yet built) will rely
+  on. `invoice_line.matched_vendor_alias_id` is a bare FK (`ON DELETE SET
+  NULL`), not composite — see that column's comment in `db/schema.ts` for
+  why: it's set by an internal domain function that already has a
+  tenant-scoped `vendorId`, never taken from a raw client payload the way
+  `matched_product_id` is. Purely additive; reversal is:
+
+  ```sql
+  ALTER TABLE invoice_line DROP FOREIGN KEY invoice_line_matched_vendor_alias_id_vendor_alias_id_fk;
+  ALTER TABLE invoice_line DROP INDEX invoice_line_organization_matched_vendor_alias_idx;
+  ALTER TABLE invoice_line DROP COLUMN matched_vendor_alias_id;
+  DROP TABLE vendor_alias;
+  ```
+
+  The `DROP INDEX` line is required, not optional cleanup: MariaDB does not
+  drop a composite index when only one of its columns is dropped, it just
+  narrows the index to whichever columns remain — so
+  `DROP COLUMN matched_vendor_alias_id` alone silently leaves a stray
+  single-column `(organization_id)` index behind instead of removing
+  `invoice_line_organization_matched_vendor_alias_idx` entirely. Verified
+  end-to-end against MariaDB 11.8.8 in a throwaway database: applying `0006`
+  then the corrected reversal above leaves `invoice_line` byte-identical
+  (via `SHOW CREATE TABLE`) to its state right after `0005`, and
+  `vendor_alias` gone — the first attempt, without the `DROP INDEX` line,
+  was caught by exactly that diff.
+
+  Also verified: the full chain `0000` → `0006` applies clean from empty
+  (`tests/helpers/test-db.ts:migrateTestDatabase()` against a fresh
+  `truestock_test` database on MariaDB 11.8.8).
 
 ## Seeding
 
