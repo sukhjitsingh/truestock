@@ -37,7 +37,7 @@ afterAll(async () => {
   await closePool();
 });
 
-/** A minimal, fully-null draft line — every test overrides only the fields it cares about. */
+/** A minimal, fully-null/unmatched draft line — every test overrides only the fields it cares about. */
 function draftLine(overrides: Partial<DraftInvoiceLine> = {}): DraftInvoiceLine {
   return {
     lineNumber: 1,
@@ -56,6 +56,10 @@ function draftLine(overrides: Partial<DraftInvoiceLine> = {}): DraftInvoiceLine 
     rawNet: null,
     exceptionFlags: null,
     extractionConfidence: null,
+    matchedProductId: null,
+    matchedVendorAliasId: null,
+    matchMethod: "unmatched",
+    matchConfidence: null,
     ...overrides,
   };
 }

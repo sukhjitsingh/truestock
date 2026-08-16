@@ -83,9 +83,14 @@ const TABLES_CHILD_FIRST = [
   "product",
   "location",
   // invoice_line references invoice (and, nullably, product — already
-  // truncated above); extraction_job references invoice. Both must go
-  // before invoice itself.
+  // truncated above, and vendor_alias — truncated next); extraction_job
+  // references invoice. All three must go before invoice itself.
   "invoice_line",
+  // Phase 2.5, Slice 3. References organization/vendor/product; listed
+  // before "vendor" below for the same reason invoice_line is listed before
+  // "invoice" — FOREIGN_KEY_CHECKS=0 makes the order non-functional (see the
+  // comment on resetDatabase), but it documents the real dependency anyway.
+  "vendor_alias",
   "extraction_job",
   "invoice",
   "vendor",

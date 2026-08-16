@@ -66,20 +66,60 @@ the first pass, 3 from the AR-2 audit, 10 from the AR-4→AR-7 audit).
       isolated Docker stack: sign-in, review-queue render with exception
       badges (unmatched item), edit + Approve → `needs_review → reviewed`
       with lines locked read-only, and the Return-for-re-extraction form.
-- [ ] Slice 3 — Matching (Phase C)
-- [ ] Slice 4 — Cost Flow + Alerts (Phase D)
+- [x] Slice 3 — Matching (Phase C). PR open (`feat/phase-2.5-slice-3` →
+      `feat/phase-2.5-invoice-automation`), not yet merged. `lib/domain/matching.ts`
+      (`findAlias`, `upsertAlias`/`upsertAliasTx`, `matchLinesToProducts`) plus
+      `vendor_alias` (composite tenant FK, `UNIQUE(organization_id, vendor_id,
+      vendor_item_code)`) and `invoiceLine.matchedVendorAliasId`. Wired into both
+      `extraction-pipeline.ts` (auto-match after parse, before the "unmatched item"
+      badge is decided) and `invoice-lines.ts`'s `applyLineReviewTx` (a manual match
+      on the review screen teaches the alias table). 48/48 backend tests pass
+      against real MariaDB, including two real `Promise.all` concurrency races
+      (3-way `upsertAlias`, 3-way `submitInvoiceReview`) that found and fixed a
+      deadlock (1213) and a `SELECT ... FOR UPDATE` snapshot race (1020,
+      `ER_CHECKREAD`) — both now retried whole-transaction via `withLockRetry`.
+      `code-reviewer` and `security-reviewer` both clean (zero critical/high); the
+      AR-2 tenant-crossing pattern this exact code was warned about is confirmed
+      closed. One integration-test gap deferred as `docs/open-items.md` #33
+      (`matchLinesToProducts` proven in isolation, not yet through the real
+      `runClaimedJob`/`processExtractionQueue` cron path — blocked on an
+      environment-wide native-binding issue, not a known-wrong behavior). Verified
+      in a real, isolated-Docker browser run via `scripts/verify-browser.mjs`
+      (twice, for idempotency): an unmatched line shows its badge and an empty
+      product picker, manually matching through the real Approve button creates a
+      real `vendor_alias` row, and a second invoice with the same vendor+item code
+      arrives pre-matched with no badge.
+- [ ] Slice 4 — Cost Flow + Alerts (Phase D). **Deferred to a fresh session** —
+      stopped before starting per the project owner's explicit call (2026-08-15,
+      out of session budget). Spec: `04-slices.md` ~lines 125-159 —
+      `product_cost_history` table, `product.current_unit_cost`,
+      `approveInvoiceAction` (owner-only, single transaction, CAS
+      `reviewed → approved` as the concurrency gate, `deriveUnitCost`,
+      `SELECT ... FOR UPDATE` on the previous cost inside the transaction,
+      `UNIQUE(source_invoice_line_id)` on cost history so re-approval can't
+      double-apply), alert badges ("discount > 50%", "negative net"), nine
+      adversarial tests including idempotent-on-replay and correct cost chaining.
+      Branch plan: stack `feat/phase-2.5-slice-4` on `feat/phase-2.5-slice-3`'s
+      tip (not on the not-yet-merged integration branch), so it doesn't have to
+      wait on a human PR merge to start.
 - [ ] Slice 5 — Audit Packet (Phase E)
 - Slice 6 — not built by design (auto-approve deferred, see `04-slices.md`)
 
-**Gate 2–4 approval status has not been reconciled with the above.** The
-header at the top of this file and the banner at the top of `04-slices.md`
-("Gate 2–4 approval is withdrawn until the corrected contract is
-re-approved") still read as unresolved from the 2026-08-14 adversarial
-review, and no re-approval note has been added anywhere in this plan
-directory since — but Slices 1 and 2's backend were built and merged after
-that review. Worth the project owner's explicit call: either record when/how
-the corrected contract was re-approved, or treat this as process debt to
-close before Slice 3.
+**Gate 2–4 reconciled 2026-08-15, by the project owner's explicit call, before
+Slice 3 started.** The header at the top of this file and the banner at the
+top of `04-slices.md` still read "withdrawn until the corrected contract is
+re-approved" and are left as-is — they're the historical record of the
+2026-08-14 adversarial review, not stale process debt. The re-approval basis:
+Slices 1 and 2 were built and merged **against the corrected contract**
+(every AR-1 through AR-7 fix plus the twelve second-pass findings — storage
+outside the web root, ownership-checked cross-tenant ids, the CAS-guarded
+state machines, owner-only cost visibility, atomic job claiming), and shipped
+clean — `code-reviewer` and `security-reviewer` both returned zero
+critical/high findings on Slice 2, and the 32 backend adversarial tests all
+pass against real MariaDB. That is direct evidence the corrected contract
+holds under implementation and review, not just on paper, and is a stronger
+basis for re-approval than a signature would have been. Slices 3 and 4
+proceed on it.
 
 ## Notes for a fresh session
 Read `docs/invoice-automation-research.md` in full (Parts 1–5) before anything else —
