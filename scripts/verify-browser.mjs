@@ -174,6 +174,15 @@ const sql = await mysql.createConnection(process.env.DATABASE_URL);
 // cleanup already at the bottom of this file.
 let invoiceIdToCleanup = null;
 
+// Set by the Phase 2.5 Slice 3 matching section below; read by the cleanup
+// pass at the end of the run. `slice3CreatedVendor` distinguishes "we made
+// a throwaway vendor" from "we reused an existing one" so cleanup never
+// deletes a vendor real invoices in this org depend on.
+let slice3UnmatchedInvoiceId = null;
+let slice3PrematchedInvoiceId = null;
+let slice3VendorId = null;
+let slice3CreatedVendor = false;
+
 try {
   // ---- sign in ------------------------------------------------------------
   const loginResponse = await page.goto(`${BASE}/login`, { waitUntil: "domcontentloaded" });
@@ -909,6 +918,193 @@ try {
   }
 
   // ======================================================================
+  // Phase 2.5 Slice 3 (docs/plans/phase-2.5-invoice-automation) — matching.
+  //
+  // tests/matching.test.ts already proves matchLinesToProducts and the
+  // vendor_alias upsert in isolation, against a real MariaDB but by calling
+  // the domain function directly. What only a browser can prove:
+  //
+  //   A. a human's manual match on the REAL review UI — a real product
+  //      <select>, a real Approve button, not page.evaluate or a direct call
+  //      to applyLineReviewTx — persists as a NEW vendor_alias row through
+  //      the real reviewInvoiceAction server action.
+  //   B. a line that arrives PRE-matched (what the pipeline's own
+  //      matchLinesToProducts, already unit-tested, would have produced)
+  //      renders correctly on the review screen: no "unmatched item" badge,
+  //      the product-select shows the right product already selected.
+  // ======================================================================
+  const [[ownerUserRow]] = await sql.query(
+    "SELECT id, organization_id AS organizationId FROM user WHERE email = ?",
+    [EMAIL],
+  );
+  const slice3OrgId = ownerUserRow?.organizationId ?? null;
+
+  if (!slice3OrgId) {
+    skip(
+      "slice 3 matching (manual alias creation + pre-matched rendering)",
+      `could not resolve organization_id for ${EMAIL}`,
+    );
+    skipped.push("slice 3 matching — owner user row not found by email");
+  } else {
+    // Reuse an existing vendor for this org if one exists; the catalog seed
+    // creates none (db/README.md), so in practice this always creates one —
+    // but reusing is still correct if an earlier manual run left one behind.
+    const [existingVendors] = await sql.query(
+      "SELECT id FROM vendor WHERE organization_id = ? ORDER BY id LIMIT 1",
+      [slice3OrgId],
+    );
+    if (existingVendors.length > 0) {
+      slice3VendorId = existingVendors[0].id;
+    } else {
+      const [vendorInsert] = await sql.execute(
+        "INSERT INTO vendor (organization_id, name) VALUES (?, ?)",
+        [slice3OrgId, "Verify Slice 3 Vendor"],
+      );
+      slice3VendorId = vendorInsert.insertId;
+      slice3CreatedVendor = true;
+    }
+
+    const [[matchProductRow]] = await sql.query(
+      "SELECT id FROM product WHERE organization_id = ? AND active = 1 ORDER BY id LIMIT 1",
+      [slice3OrgId],
+    );
+    const slice3ProductId = matchProductRow?.id ?? null;
+
+    if (!slice3ProductId) {
+      skip(
+        "slice 3 matching (manual alias creation + pre-matched rendering)",
+        "no active product in the catalog to match against",
+      );
+      skipped.push("slice 3 matching — no active product found");
+    } else {
+      const vendorItemCode = `VERIFY-${Date.now()}`;
+      const today = new Date().toISOString().slice(0, 10);
+      const retentionUntil = `${Number(today.slice(0, 4)) + 3}${today.slice(4)}`;
+
+      // ---- Part A: seed one unmatched invoice + line -----------------------
+      const [invoiceAInsert] = await sql.execute(
+        `INSERT INTO invoice
+           (organization_id, vendor_id, status, source, file_sha256, file_size_bytes,
+            invoice_date, invoice_number, total_gross, total_discount, total_net,
+            currency, retention_until)
+         VALUES (?, ?, 'needs_review', 'pdf', ?, 100, ?, ?, '100.00', '0.00', '100.00',
+                 'USD', ?)`,
+        [slice3OrgId, slice3VendorId, "a".repeat(64), today, `VERIFY-SLICE3-A-${Date.now()}`, retentionUntil],
+      );
+      slice3UnmatchedInvoiceId = invoiceAInsert.insertId;
+
+      await sql.execute(
+        `INSERT INTO invoice_line
+           (organization_id, invoice_id, line_number, line_type, vendor_item_code, description,
+            quantity, uom, unit_cost, extended_cost, raw_gross, raw_discount, raw_net,
+            exception_flags, matched_product_id, match_method)
+         VALUES (?, ?, 1, 'product', ?, 'Verify Slice 3 — unmatched line', '12.000', 'each',
+                 '8.3300', '100.00', '100.00', '0.00', '100.00', ?, NULL, 'unmatched')`,
+        [slice3OrgId, slice3UnmatchedInvoiceId, vendorItemCode, JSON.stringify(["unmatched item"])],
+      );
+
+      // ---- confirm the seeded state on the real review page -----------------
+      await page.goto(`${BASE}/office/invoices/${slice3UnmatchedInvoiceId}`, { waitUntil: "networkidle" });
+      await waitForHydration(page, "form");
+
+      const unmatchedBadgeVisible = await page
+        .getByText("Unmatched item", { exact: true })
+        .first()
+        .isVisible()
+        .catch(() => false);
+      record("slice 3: unmatched item badge is visible on the seeded line", unmatchedBadgeVisible);
+
+      const unmatchedSelect = page.locator('select[aria-label="Matched product for line 1"]');
+      const selectValueBefore = await unmatchedSelect.inputValue().catch(() => null);
+      record(
+        "slice 3: product-select starts empty for an unmatched line",
+        selectValueBefore === "",
+        `value="${selectValueBefore}"`,
+      );
+
+      // ---- Part A continued: match it through the REAL UI, real Approve ----
+      await unmatchedSelect.selectOption(String(slice3ProductId));
+      await page.getByRole("button", { name: "Approve", exact: true }).click();
+
+      const approved = await page
+        .getByText(/Reviewed — awaiting approval/i)
+        .first()
+        .waitFor({ timeout: 20000 })
+        .then(() => true)
+        .catch(() => false);
+      const approveFailureDetail = approved
+        ? 'form shows the post-approve "Reviewed — awaiting approval" banner'
+        : await page
+            .locator('[role="alert"], [role="status"]')
+            .first()
+            .innerText()
+            .then((t) => `no success banner after 20s — visible banner: "${t}"`)
+            .catch(() => "no success banner after 20s — no alert/status banner visible either");
+      record(
+        "slice 3: manual match approves through the real Approve button (real server action, not a direct domain call)",
+        approved,
+        approveFailureDetail,
+      );
+
+      // ---- ground truth: a NEW vendor_alias row exists -----------------------
+      const [aliasRows] = await sql.query(
+        `SELECT id, product_id AS productId FROM vendor_alias
+         WHERE organization_id = ? AND vendor_id = ? AND vendor_item_code = ?`,
+        [slice3OrgId, slice3VendorId, vendorItemCode],
+      );
+      record(
+        "slice 3: the manual match persisted a NEW vendor_alias(organization_id, vendor_id, vendor_item_code, product_id) row",
+        aliasRows.length === 1 && aliasRows[0].productId === slice3ProductId,
+        aliasRows.length === 1
+          ? `vendor_alias id=${aliasRows[0].id} product_id=${aliasRows[0].productId} (expected ${slice3ProductId})`
+          : `expected exactly 1 matching row, found ${aliasRows.length}`,
+      );
+
+      // ---- Part B: seed a pre-matched line for the SAME vendor + item code,
+      // simulating what matchLinesToProducts (already unit-tested in
+      // tests/matching.test.ts) would have produced at extraction time. -------
+      const [invoiceBInsert] = await sql.execute(
+        `INSERT INTO invoice
+           (organization_id, vendor_id, status, source, file_sha256, file_size_bytes,
+            invoice_date, invoice_number, total_gross, total_discount, total_net,
+            currency, retention_until)
+         VALUES (?, ?, 'needs_review', 'pdf', ?, 100, ?, ?, '50.00', '0.00', '50.00',
+                 'USD', ?)`,
+        [slice3OrgId, slice3VendorId, "b".repeat(64), today, `VERIFY-SLICE3-B-${Date.now()}`, retentionUntil],
+      );
+      slice3PrematchedInvoiceId = invoiceBInsert.insertId;
+
+      await sql.execute(
+        `INSERT INTO invoice_line
+           (organization_id, invoice_id, line_number, line_type, vendor_item_code, description,
+            quantity, uom, unit_cost, extended_cost, raw_gross, raw_discount, raw_net,
+            exception_flags, matched_product_id, match_method)
+         VALUES (?, ?, 1, 'product', ?, 'Verify Slice 3 — pre-matched line', '6.000', 'each',
+                 '8.3300', '50.00', '50.00', '0.00', '50.00', NULL, ?, 'vendor_alias_code')`,
+        [slice3OrgId, slice3PrematchedInvoiceId, vendorItemCode, slice3ProductId],
+      );
+
+      await page.goto(`${BASE}/office/invoices/${slice3PrematchedInvoiceId}`, { waitUntil: "networkidle" });
+      await waitForHydration(page, "form");
+
+      const prematchedBadgeCount = await page.getByText("Unmatched item", { exact: true }).count();
+      record(
+        "slice 3: a pre-matched line renders with NO unmatched-item badge",
+        prematchedBadgeCount === 0,
+        `${prematchedBadgeCount} "Unmatched item" badges found (expected 0)`,
+      );
+
+      const prematchedSelect = page.locator('select[aria-label="Matched product for line 1"]');
+      const prematchedValue = await prematchedSelect.inputValue().catch(() => null);
+      record(
+        "slice 3: a pre-matched line's product-select shows the correct product already selected",
+        prematchedValue === String(slice3ProductId),
+        `value="${prematchedValue}" expected="${slice3ProductId}"`,
+      );
+    }
+  }
+
+  // ======================================================================
   // Role gating in a browser (invariant 8 / invariant 7)
   //
   // The test suite already proves the ACTION layer strips cost for a manager
@@ -1104,6 +1300,40 @@ try {
       "throwaway verification invoice removed",
       true,
       `invoice #${invoiceIdToCleanup}, its extraction_job row, and its stored file deleted`,
+    );
+  }
+
+  // The Slice 3 matching fixtures — two invoices + lines, the vendor_alias
+  // row the manual-match check created, and (only if this run created one)
+  // the throwaway vendor. Deleted here by the harness, same reasoning as the
+  // Slice 1 cleanup above: no app code deletes any of these, so nothing here
+  // exercises a real deletion path — it is fixture teardown, not a feature.
+  if (slice3UnmatchedInvoiceId || slice3PrematchedInvoiceId) {
+    let removedAliasRows = 0;
+    if (slice3VendorId) {
+      const [aliasDelete] = await sql.execute("DELETE FROM vendor_alias WHERE vendor_id = ?", [
+        slice3VendorId,
+      ]);
+      removedAliasRows = aliasDelete.affectedRows;
+    }
+    for (const id of [slice3UnmatchedInvoiceId, slice3PrematchedInvoiceId]) {
+      if (!id) continue;
+      await sql.execute("DELETE FROM invoice_line WHERE invoice_id = ?", [id]);
+      await sql.execute("DELETE FROM extraction_job WHERE invoice_id = ?", [id]);
+      await sql.execute("DELETE FROM invoice WHERE id = ?", [id]);
+    }
+    let removedVendor = false;
+    if (slice3CreatedVendor && slice3VendorId) {
+      await sql.execute("DELETE FROM vendor WHERE id = ?", [slice3VendorId]);
+      removedVendor = true;
+    }
+    record(
+      "throwaway slice 3 matching fixtures removed",
+      true,
+      `invoices #${[slice3UnmatchedInvoiceId, slice3PrematchedInvoiceId].filter(Boolean).join(", #")}, ` +
+        `their lines and extraction_job rows, ${removedAliasRows} vendor_alias row(s)` +
+        (removedVendor ? `, and the throwaway vendor #${slice3VendorId}` : " (vendor was pre-existing, left alone)") +
+        " deleted",
     );
   }
 } catch (err) {
