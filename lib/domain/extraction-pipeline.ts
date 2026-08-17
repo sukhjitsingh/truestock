@@ -3,7 +3,8 @@
  *
  * `processExtractionQueue` is the cron tick body (`instrumentation.ts` calls
  * it on an interval): claim -> CAS invoice `uploaded -> processing` -> classify
- * (`@firecrawl/pdf-inspector`) -> extract (Claude Vision) -> parse -> MATCH
+ * (`@firecrawl/pdf-inspector`) -> extract (markdown for text PDFs, Claude
+ * Vision for scanned/mixed/image PDFs) -> parse -> MATCH
  * (`lib/domain/matching.ts:matchLinesToProducts`, Slice 3) -> checks -> write
  * lines + header -> CAS invoice `processing -> needs_review` -> CAS job
  * `running -> done`. Every other function here is one stage of that pipeline,
@@ -26,26 +27,11 @@
  * (Slice 4) and "duplicate" needs cross-invoice comparison — neither exists
  * yet, so neither is invented here.
  *
- * ## Why every job routes through Claude Vision, not a markdown-only path
- *
- * `03-program-design.md` names a `parseLinesFromMarkdown` for `TextBased`
- * PDFs, as a non-AI alternative to the vision call. This file does not build
- * it: every classification (`text`, `mixed`, `scanned`, `image`) calls
- * `extractInvoice`, varying only `effort` (`low` for `text`, `medium`
- * otherwise) and whether pdf-inspector's markdown is attached as anchor text
- * alongside the raw PDF bytes. Two reasons. First, a real invoice's layout
- * (multi-column, footnoted discounts, a totals block that doesn't reconcile
- * to the line items without an aside) is exactly what a bespoke
- * markdown-table parser gets wrong first, and this project has exactly zero
- * real invoice samples to develop or test one against yet — the AI path
- * degrades to "extraction confidence is a little lower without an OCR page,"
- * not "silently drops a column." Second, one call path is one thing to keep
- * correct instead of two, and `pdfInspectorCrossCheck` still gets full value
- * from pdf-inspector's markdown as an independent check against whatever
- * Claude returns, whichever classification produced it. Flagged here as an
- * interpretation of an ambiguous brief, not a silent scope cut — worth
- * revisiting once real invoices are on hand to benchmark a markdown-only
- * path's accuracy against this one's token cost.
+ * Text PDFs deliberately do not depend on Anthropic. pdf-inspector preserves
+ * their table layout as Markdown, which this module maps conservatively into
+ * review drafts: unknown fields remain null and every row still requires a
+ * human review. Mixed/scanned/image PDFs keep the Vision path because their
+ * text layer is incomplete or absent.
  */
 import { readFile } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
@@ -57,8 +43,18 @@ import { db } from "@/db";
 import { extractionJob } from "@/db/schema";
 import { pdfTypeEnum, invoiceLineTypeEnum, invoiceLineUomEnum, extractionPhaseEnum } from "@/db/enums";
 import type { Actor, Role } from "@/lib/authz";
-import { claimNextJob, updateJobStatus, type ExtractionJobRow } from "@/lib/domain/extraction";
-import { getInvoice, updateInvoiceStatus, computeRetentionUntil } from "@/lib/domain/invoices";
+import {
+  claimNextJob,
+  updateJobStatus,
+  updateJobStatusTx,
+  type ExtractionJobRow,
+} from "@/lib/domain/extraction";
+import {
+  getInvoice,
+  updateInvoiceStatus,
+  updateInvoiceStatusTx,
+  computeRetentionUntil,
+} from "@/lib/domain/invoices";
 import {
   writeExtractedLines,
   UNMATCHED_ITEM_FLAG,
@@ -150,6 +146,363 @@ export async function processPdf(filePath: string): Promise<ProcessPdfResult> {
   return {
     markdown: result.markdown && result.markdown.length > 0 ? result.markdown : null,
     pagesWithTables: result.pagesWithTables,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Text-based extraction — deterministic pdf-inspector Markdown
+// ---------------------------------------------------------------------------
+
+interface MarkdownTable {
+  headers: string[];
+  rows: string[][];
+}
+
+function splitMarkdownRow(row: string): string[] {
+  const trimmed = row.trim().replace(/^\|/, "").replace(/\|$/, "");
+  const cells: string[] = [];
+  let cell = "";
+  let escaped = false;
+  for (const character of trimmed) {
+    if (escaped) {
+      cell += character;
+      escaped = false;
+    } else if (character === "\\") {
+      escaped = true;
+    } else if (character === "|") {
+      cells.push(cell.trim());
+      cell = "";
+    } else {
+      cell += character;
+    }
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+
+function isMarkdownSeparator(cells: string[]): boolean {
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+}
+
+function normalizeHeader(value: string): string {
+  return value
+    .replace(/<br\s*\/?\s*>/gi, " ")
+    .replace(/[*_`]/g, "")
+    .replace(/[^a-zA-Z0-9#]+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+const HEADER_CONTINUATION_WORDS = new Set([
+  "order",
+  "ship",
+  "shipped",
+  "quantity",
+  "qty",
+  "unit",
+  "size",
+  "brand",
+  "item number",
+  "description",
+  "# of",
+  "ru",
+  "un",
+  "rc un",
+  "tax",
+  "unit price",
+  "extension",
+  "gross",
+  "discount",
+  "net",
+]);
+
+function looksLikeHeaderContinuation(row: string[]): boolean {
+  const headerish = row.filter((cell) => HEADER_CONTINUATION_WORDS.has(normalizeHeader(cell))).length;
+  const numeric = row.filter((cell) => parsePrintedNumber(cell) != null).length;
+  return headerish >= 2 && numeric === 0;
+}
+
+function parseMarkdownTables(markdown: string): MarkdownTable[] {
+  const sourceLines = markdown.split(/\r?\n/);
+  const tables: MarkdownTable[] = [];
+  for (let index = 0; index < sourceLines.length - 1; index += 1) {
+    if (!sourceLines[index].includes("|")) {
+      continue;
+    }
+    const headers = splitMarkdownRow(sourceLines[index]);
+    const separator = splitMarkdownRow(sourceLines[index + 1]);
+    if (headers.length < 2 || separator.length !== headers.length || !isMarkdownSeparator(separator)) {
+      continue;
+    }
+
+    const rows: string[][] = [];
+    index += 2;
+    while (index < sourceLines.length && sourceLines[index].includes("|")) {
+      const cells = splitMarkdownRow(sourceLines[index]);
+      const nextCells = index + 1 < sourceLines.length ? splitMarkdownRow(sourceLines[index + 1]) : [];
+      if (cells.length >= 2 && nextCells.length === cells.length && isMarkdownSeparator(nextCells)) {
+        // pdf-inspector may emit adjacent tables without a blank line. Leave
+        // this header for the outer scanner instead of swallowing it as data
+        // belonging to the preceding table.
+        break;
+      }
+      if (cells.length === headers.length && cells.some(Boolean)) {
+        rows.push(cells);
+      }
+      index += 1;
+    }
+    index -= 1;
+
+    if (rows[0] && looksLikeHeaderContinuation(rows[0])) {
+      const continuation = rows.shift()!;
+      for (let column = 0; column < headers.length; column += 1) {
+        const base = normalizeHeader(headers[column]);
+        const child = normalizeHeader(continuation[column] ?? "");
+        headers[column] = child && child !== base ? `${headers[column]} ${continuation[column]}` : headers[column];
+      }
+    }
+    tables.push({ headers: headers.map(normalizeHeader), rows });
+  }
+  return tables;
+}
+
+function parsePrintedNumber(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+  const normalized = value.trim().replace(/[$,\s]/g, "");
+  const parenthesized = /^\((.+)\)$/.exec(normalized);
+  const unsignedToken = parenthesized ? parenthesized[1] : normalized;
+  // Invoice numbers are ordinary printed decimals, not JavaScript numeric
+  // literals. This rejects empty formatting-only cells (`$`, `,`), hex,
+  // exponents, Infinity, and other strings Number() would coerce into a
+  // plausible value. Leading-decimal forms such as `.038` remain valid.
+  if (!/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(unsignedToken)) {
+    return null;
+  }
+  const numeric = Number(parenthesized ? `-${unsignedToken}` : unsignedToken);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function columnIndex(headers: string[], patterns: RegExp[]): number {
+  for (const pattern of patterns) {
+    const index = headers.findIndex((header) => pattern.test(header));
+    if (index >= 0) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function cellAt(row: string[], index: number): string | null {
+  const value = index >= 0 ? row[index]?.trim() : "";
+  return value ? value : null;
+}
+
+function boundedValue(value: string | null, maxLength: number): string | null {
+  return value && value.length <= maxLength ? value : null;
+}
+
+function inferUom(value: string | null): InvoiceLineUom | null {
+  if (!value) {
+    return null;
+  }
+  const normalized = normalizeHeader(value);
+  if (/^(cs|case|cases)$/.test(normalized)) {
+    return "case";
+  }
+  if (/^(ea|each|unit|units)$/.test(normalized)) {
+    return "each";
+  }
+  if (/^(keg|kegs)$/.test(normalized)) {
+    return "keg";
+  }
+  return "other";
+}
+
+function inferLineType(description: string): InvoiceLineType {
+  const normalized = description.toLowerCase().trim();
+  if (
+    /^(?:(?:keg|bottle)\s+)?deposit\s+(?:return|credit)\b|^return(?:ed)?\s+(?:keg\s+|bottle\s+)?deposit\b/.test(
+      normalized,
+    )
+  ) {
+    return "deposit_return";
+  }
+  if (/^(?:keg\s+|bottle\s+)?deposit\b/.test(normalized)) return "deposit";
+  if (/^(?:freight(?:\s+charge)?|delivery\s+(?:charge|fee)|fuel surcharge)$/.test(normalized)) return "freight";
+  if (/^(?:state\s+)?(?:liquor\s+|sales\s+)?tax$/.test(normalized)) return "tax";
+  if (/^discount(?:\s+applied)?$/.test(normalized)) return "discount";
+  if (/^(?:(?:crv|recycling)\s+)?fee$|^(?:surcharge|service charge)$/.test(normalized)) return "fee";
+  return "product";
+}
+
+function parsePackSize(packDescription: string | null): number | null {
+  const match = packDescription && /^(\d+)\s*(?:\/|x|×)/i.exec(packDescription.trim());
+  if (!match) {
+    return null;
+  }
+  const value = Number(match[1]);
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+function parseDateValue(value: string): string | null {
+  const iso = /\b(\d{4})-(\d{2})-(\d{2})\b/.exec(value);
+  if (iso) {
+    return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  }
+  const us = /\b(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})\b/.exec(value);
+  if (!us) {
+    return null;
+  }
+  const year = us[3].length === 2 ? Number(us[3]) + (Number(us[3]) >= 70 ? 1900 : 2000) : Number(us[3]);
+  return `${year}-${us[1].padStart(2, "0")}-${us[2].padStart(2, "0")}`;
+}
+
+function searchableMarkdown(markdown: string): string {
+  return markdown
+    .replace(/<br\s*\/?\s*>/gi, " ")
+    .replace(/[|*_`#]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function findLabeledText(source: string, labels: RegExp[], valuePattern: string): string | null {
+  for (const label of labels) {
+    const after = new RegExp(`${label.source}\\s*(?:no\\.?|number|#|:|-)?\\s*(${valuePattern})`, "i").exec(source);
+    if (after?.[1]) {
+      return after[1];
+    }
+  }
+  return null;
+}
+
+function findLabeledAmount(source: string, labels: RegExp[]): number | null {
+  const amountPattern = "\\(?\\$?\\d[\\d,]*(?:\\.\\d{1,4})?\\)?";
+  const after = findLabeledText(source, labels, amountPattern);
+  if (after) {
+    return parsePrintedNumber(after);
+  }
+  for (const label of labels) {
+    const before = new RegExp(`(${amountPattern})\\s*${label.source}`, "i").exec(source);
+    if (before?.[1]) {
+      return parsePrintedNumber(before[1]);
+    }
+  }
+  return null;
+}
+
+function findMarkdownTableValue(tables: MarkdownTable[], headerPatterns: RegExp[]): string | null {
+  for (const table of tables) {
+    const index = columnIndex(table.headers, headerPatterns);
+    if (index < 0) {
+      continue;
+    }
+    for (const row of table.rows) {
+      const value = cellAt(row, index);
+      if (value) {
+        return value;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Converts pdf-inspector's layout-aware Markdown into conservative review
+ * drafts. It intentionally recognizes only common invoice column labels; a
+ * table it cannot identify fails loudly instead of manufacturing lines.
+ */
+export function parseLinesFromMarkdown(markdown: string): ParsedExtraction {
+  const source = searchableMarkdown(markdown);
+  const tables = parseMarkdownTables(markdown);
+  const invoiceDate = parseDateValue(
+    findMarkdownTableValue(tables, [/^invoice\s*date$/, /^delivery\s*date$/, /^date$/]) ??
+      findLabeledText(source, [/invoice\s*date/, /delivery\s*date/, /delv\s*date/, /\bdate\b/], "\\d{1,4}[-/]\\d{1,2}[-/]\\d{1,4}") ??
+      "",
+  );
+  const invoiceNumber = boundedValue(
+    findMarkdownTableValue(tables, [/^invoice(?:\s+(?:number|no|#))?$/]) ??
+      findLabeledText(source, [/invoice\s*(?:number|no\.?|#)/], "[A-Z0-9][A-Z0-9._/-]{0,99}"),
+    100,
+  );
+  const totalGross = findLabeledAmount(source, [/total\s*gross/, /gross\s*total/]);
+  const totalDiscount = findLabeledAmount(source, [/total\s*discount/, /discount\s*total/]);
+  const totalNet = findLabeledAmount(source, [/pay\s+this\s+amount/, /amount\s*due/, /invoice\s*total/, /total\s*net/]);
+
+  const draftLines: DraftInvoiceLine[] = [];
+  for (const table of tables) {
+    const descriptionIndex = columnIndex(table.headers, [/^description$/, /^(?:item|product)\s+description$/, /^product$/]);
+    const amountIndex = columnIndex(table.headers, [/^extension$/, /^extended(?:\s+(?:cost|price))?$/, /^amount$/, /^line\s+total$/]);
+    const quantityIndex = columnIndex(table.headers, [/^(?:quantity\s+)?ship(?:ped)?$/, /^ship\s+quantity$/, /^qty\s+shipped$/, /^quantity$/, /^qty$/, /^order\s+quantity$/]);
+    if (descriptionIndex < 0 || (amountIndex < 0 && quantityIndex < 0)) {
+      continue;
+    }
+
+    const codeIndex = columnIndex(table.headers, [/^item\s+(?:number|no|#)$/, /^vendor\s+(?:item|sku)/, /^sku$/, /^product\s+code$/]);
+    const brandIndex = columnIndex(table.headers, [/^brand$/]);
+    const uomIndex = columnIndex(table.headers, [/^unit$/, /^uom$/, /^order\s+unit$/, /^ru\s+un$/]);
+    const packIndex = columnIndex(table.headers, [/^unit\s+size$/, /^pack\s+size$/, /^size$/, /^pack$/]);
+    const unitCostIndex = columnIndex(table.headers, [/^unit\s+price$/, /^unit\s+cost$/, /^price$/]);
+    const grossIndex = columnIndex(table.headers, [/^(?:line\s+)?gross$/]);
+    const discountIndex = columnIndex(table.headers, [/^(?:line\s+)?discount$/]);
+    const netIndex = columnIndex(table.headers, [/^(?:line\s+)?net$/]);
+
+    for (const row of table.rows) {
+      const rawDescription = cellAt(row, descriptionIndex);
+      const brand = cellAt(row, brandIndex);
+      const description = boundedValue(
+        [brand, rawDescription].filter((value, index, values) => value && values.indexOf(value) === index).join(" ") || null,
+        512,
+      );
+      const quantity = parsePrintedNumber(cellAt(row, quantityIndex));
+      const extension = parsePrintedNumber(cellAt(row, amountIndex));
+      const unitCost = parsePrintedNumber(cellAt(row, unitCostIndex));
+      const vendorItemCode = boundedValue(cellAt(row, codeIndex), 64);
+      if (!description || (!vendorItemCode && quantity == null && extension == null)) {
+        continue;
+      }
+
+      const packDescription = boundedValue(cellAt(row, packIndex), 64);
+      draftLines.push({
+        lineNumber: draftLines.length + 1,
+        rawText: row.filter(Boolean).join(" | "),
+        lineType: rawDescription ? inferLineType(rawDescription) : "unknown",
+        vendorItemCode,
+        description,
+        packDescription,
+        quantity: toDecimalString(quantity, 3),
+        uom: inferUom(cellAt(row, uomIndex)),
+        packSize: parsePackSize(packDescription),
+        unitCost: toDecimalString(unitCost, 4),
+        extendedCost: toDecimalString(extension, 2),
+        rawGross: toDecimalString(parsePrintedNumber(cellAt(row, grossIndex)), 2),
+        rawDiscount: toDecimalString(parsePrintedNumber(cellAt(row, discountIndex)), 2),
+        rawNet: toDecimalString(parsePrintedNumber(cellAt(row, netIndex)), 2),
+        exceptionFlags: null,
+        extractionConfidence: null,
+        matchedProductId: null,
+        matchedVendorAliasId: null,
+        matchMethod: "unmatched",
+        matchConfidence: null,
+      });
+    }
+  }
+
+  if (draftLines.length === 0) {
+    throw new Error("pdf-inspector extracted text but no recognizable invoice line-item table was found.");
+  }
+
+  return {
+    header: {
+      invoiceDate,
+      invoiceNumber,
+      totalGross: toDecimalString(totalGross, 4),
+      totalDiscount: toDecimalString(totalDiscount, 4),
+      totalNet: toDecimalString(totalNet, 4),
+      currency: /\b(?:usd|u\.?s\.?\s+currency)\b/i.test(source) ? "USD" : null,
+    },
+    lines: draftLines,
   };
 }
 
@@ -269,7 +622,9 @@ function getAnthropicClient(): Anthropic {
     // Caught by processExtractionQueue's try/catch and recorded as a clear,
     // non-internal errorMessage on the job — never an uncaught throw that
     // could crash the interval. See db/schema.ts's extractionJob.errorMessage.
-    throw new Error("ANTHROPIC_API_KEY is not set.");
+    throw new Error(
+      "ANTHROPIC_API_KEY is not set; it is required for scanned, mixed, or image-based invoice extraction.",
+    );
   }
   anthropicClient ??= new Anthropic({ apiKey });
   return anthropicClient;
@@ -489,18 +844,57 @@ export function arithmeticCheck(lines: DraftInvoiceLine[], expectedTotal: number
 export type CrossCheckResult = { pass: true } | { pass: false; droppedLines: string[] };
 
 function countMarkdownTableDataRows(markdown: string): number {
-  const pipeRows = markdown.split("\n").filter((row) => /^\s*\|.*\|\s*$/.test(row));
-  // Every markdown pipe-table pdf-inspector emits has one header row and one
-  // separator row (`|---|---|`) ahead of its data rows.
-  const separatorRows = pipeRows.filter((row) => /^\s*\|[\s:|-]+\|\s*$/.test(row)).length;
-  return Math.max(0, pipeRows.length - separatorRows * 2);
+  let count = 0;
+  for (const table of parseMarkdownTables(markdown)) {
+    const descriptionIndex = columnIndex(table.headers, [
+      /^description$/,
+      /^(?:item|product)\s+description$/,
+      /^item$/,
+      /^product$/,
+    ]);
+    const quantityIndex = columnIndex(table.headers, [
+      /^(?:quantity\s+)?ship(?:ped)?$/,
+      /^ship\s+quantity$/,
+      /^qty\s+shipped$/,
+      /^quantity$/,
+      /^qty$/,
+      /^order\s+quantity$/,
+    ]);
+    const amountIndex = columnIndex(table.headers, [
+      /^extension$/,
+      /^extended(?:\s+(?:cost|price))?$/,
+      /^amount$/,
+      /^line\s+total$/,
+      /^(?:line\s+)?gross$/,
+      /^(?:line\s+)?net$/,
+    ]);
+    const codeIndex = columnIndex(table.headers, [
+      /^item\s+(?:number|no|#)$/,
+      /^vendor\s+(?:item|sku)/,
+      /^sku$/,
+      /^product\s+code$/,
+    ]);
+    if (descriptionIndex < 0 || (quantityIndex < 0 && amountIndex < 0)) {
+      continue;
+    }
+    count += table.rows.filter((row) => {
+      const hasDescription = cellAt(row, descriptionIndex) != null;
+      const hasLineSignal =
+        cellAt(row, codeIndex) != null ||
+        parsePrintedNumber(cellAt(row, quantityIndex)) != null ||
+        parsePrintedNumber(cellAt(row, amountIndex)) != null;
+      return hasDescription && hasLineSignal;
+    }).length;
+  }
+  return count;
 }
 
 /**
  * A heuristic, not a guaranteed line-level diff: counts pdf-inspector's own
- * markdown table rows and compares that count against how many lines Claude
- * actually returned. Fewer structured lines than markdown table rows is a
- * plausible signal that Claude dropped one, worth a human's attention — it
+ * recognizable line-item rows and compares that count against how many lines
+ * extraction returned. Metadata tables, multi-row headers, and section-label
+ * rows are excluded. Fewer structured lines than source line-item rows is a
+ * plausible signal that extraction dropped one, worth a human's attention — it
  * is not proof, and it produces no signal at all (`pass: true`) when there is
  * no markdown (a scanned/image PDF with no text layer to cross-check against)
  * or no table syntax in it (an invoice pdf-inspector rendered as prose).
@@ -543,6 +937,9 @@ export type ProcessExtractionQueueResult =
 
 export interface ProcessExtractionQueueDeps {
   extractInvoice?: ExtractInvoiceFn;
+  classifyPdf?: typeof classifyPdf;
+  processPdf?: typeof processPdf;
+  readPdfFile?: (filePath: string) => Promise<Buffer>;
 }
 
 /**
@@ -568,16 +965,46 @@ export async function processExtractionQueue(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const errorCode = err instanceof DomainError ? err.code : "PIPELINE_ERROR";
+    let terminalizedAtomically = false;
     try {
-      await updateJobStatus(job.id, "running", "failed", {
-        errorMessage: message.slice(0, 2000),
-        errorCode,
-        completedAt: new Date(),
+      const actor = systemActor(job.organizationId);
+      await db.transaction(async (tx) => {
+        // `processing` must not become a dead-end when extraction fails. The
+        // three writes are one terminal operation: clear drafts from any
+        // prior extraction attempt, expose the invoice's Reject/re-extract
+        // action in the review queue, and retain the diagnostic on this job.
+        // A crash can therefore produce neither stale approvable lines nor a
+        // needs_review invoice whose failed job is later reaped as running.
+        await updateInvoiceStatusTx(tx, actor, job.invoiceId, "processing", "needs_review");
+        await writeExtractedLines(tx, actor, job.invoiceId, []);
+        await updateJobStatusTx(tx, job.id, "running", "failed", {
+          errorMessage: message.slice(0, 2000),
+          errorCode,
+          completedAt: new Date(),
+        });
       });
-    } catch (casErr) {
-      // The job may already have moved (e.g. a concurrent reap won this same
-      // race) — never let a failure to RECORD a failure crash the worker.
-      console.error(`[extraction-pipeline] could not mark job ${job.id} as failed`, casErr);
+      terminalizedAtomically = true;
+    } catch (terminalizeErr) {
+      // The failure may have happened before `uploaded -> processing`, or a
+      // concurrent reaper may already have moved the job. Preserve the
+      // original pipeline error and fall back to recording the job alone.
+      console.error(
+        `[extraction-pipeline] could not atomically terminalize failed job ${job.id} / invoice ${job.invoiceId}`,
+        terminalizeErr,
+      );
+    }
+    if (!terminalizedAtomically) {
+      try {
+        await updateJobStatus(job.id, "running", "failed", {
+          errorMessage: message.slice(0, 2000),
+          errorCode,
+          completedAt: new Date(),
+        });
+      } catch (casErr) {
+        // The job may already have moved (e.g. a concurrent reap won this same
+        // race) — never let a failure to RECORD a failure crash the worker.
+        console.error(`[extraction-pipeline] could not mark job ${job.id} as failed`, casErr);
+      }
     }
     return { claimed: true, jobId: job.id, invoiceId: job.invoiceId, outcome: "failed", errorMessage: message };
   }
@@ -610,27 +1037,52 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
   const resolvedPath = resolveStoredPath(invoiceRow.filePath);
 
   await setJobPhase(job.id, "classify");
-  const classification = await classifyPdf(resolvedPath);
+  const classifyFn = deps.classifyPdf ?? classifyPdf;
+  const processPdfFn = deps.processPdf ?? processPdf;
+  const classification = await classifyFn(resolvedPath);
+  // Persist classification immediately rather than only on `done`: it is the
+  // evidence that explains why a failed job did or did not require Vision.
+  await db
+    .update(extractionJob)
+    .set({ pdfType: classification.pdfType, pagesNeedingOcr: classification.pagesNeedingOcr })
+    .where(eq(extractionJob.id, job.id));
 
   let markdown: string | null = null;
   if (classification.pdfType === "text" || classification.pdfType === "mixed") {
     await setJobPhase(job.id, "text_extract");
-    const processed = await processPdf(resolvedPath);
+    const processed = await processPdfFn(resolvedPath);
     markdown = processed.markdown;
   } else {
     await setJobPhase(job.id, "ocr");
   }
 
-  const bytes = await readFile(resolvedPath);
-  const extractFn = deps.extractInvoice ?? extractInvoice;
-  const extraction = await extractFn({
-    pdfType: classification.pdfType,
-    markdown,
-    pdfBase64: bytes.toString("base64"),
-  });
-
-  await setJobPhase(job.id, "parse");
-  const { header, lines } = parseLinesFromVision(extraction.raw);
+  let parsed: ParsedExtraction;
+  let extraction: ExtractInvoiceResult | null = null;
+  if (classification.pdfType === "text") {
+    if (!markdown) {
+      throw new Error("pdf-inspector classified this PDF as text-based but returned no usable Markdown.");
+    }
+    await setJobPhase(job.id, "parse");
+    parsed = parseLinesFromMarkdown(markdown);
+  } else {
+    // Mixed PDFs still need Vision because the extracted text layer is
+    // incomplete; attach whatever markdown exists as ground truth for the
+    // pages pdf-inspector could read.
+    if (classification.pdfType === "mixed") {
+      await setJobPhase(job.id, "ocr");
+    }
+    const readPdfFile = deps.readPdfFile ?? readFile;
+    const bytes = await readPdfFile(resolvedPath);
+    const extractFn = deps.extractInvoice ?? extractInvoice;
+    extraction = await extractFn({
+      pdfType: classification.pdfType,
+      markdown,
+      pdfBase64: bytes.toString("base64"),
+    });
+    await setJobPhase(job.id, "parse");
+    parsed = parseLinesFromVision(extraction.raw);
+  }
+  const { header, lines } = parsed;
 
   // Slice 3: resolve whatever this vendor's SKUs already have an alias for.
   // Runs inside the existing "parse" phase — `extractionPhaseEnum`
@@ -691,13 +1143,13 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
   await updateJobStatus(job.id, "running", "done", {
     pdfType: classification.pdfType,
     pagesNeedingOcr: classification.pagesNeedingOcr,
-    provider: extraction.provider,
-    modelId: extraction.modelId,
-    promptVersion: extraction.promptVersion,
-    rawResponse: extraction.rawResponse,
-    inputTokens: extraction.inputTokens,
-    outputTokens: extraction.outputTokens,
-    costUsd: extraction.costUsd,
+    provider: extraction?.provider ?? null,
+    modelId: extraction?.modelId ?? null,
+    promptVersion: extraction?.promptVersion ?? null,
+    rawResponse: extraction?.rawResponse ?? null,
+    inputTokens: extraction?.inputTokens ?? null,
+    outputTokens: extraction?.outputTokens ?? null,
+    costUsd: extraction?.costUsd ?? null,
     completedAt: new Date(),
   });
 }

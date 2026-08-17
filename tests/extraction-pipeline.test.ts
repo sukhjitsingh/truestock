@@ -12,11 +12,15 @@
  * is running, not the job's own state machine.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test";
+import { eq } from "drizzle-orm";
 import { db, closePool } from "@/db";
+import { extractionJob, invoice } from "@/db/schema";
 import {
+  parseLinesFromMarkdown,
   parseLinesFromVision,
   arithmeticCheck,
   pdfInspectorCrossCheck,
+  processExtractionQueue,
 } from "@/lib/domain/extraction-pipeline";
 import { writeExtractedLines, type DraftInvoiceLine } from "@/lib/domain/invoice-lines";
 import { NotFoundError } from "@/lib/domain/errors";
@@ -63,6 +67,265 @@ function draftLine(overrides: Partial<DraftInvoiceLine> = {}): DraftInvoiceLine 
     ...overrides,
   };
 }
+
+const PERFORMANCE_TEXT_INVOICE_MARKDOWN = `
+Performance Foodservice - Arizona
+Fed ID: 84-0629503  Delv Date: 07/30/26
+
+| DATE | INVOICE | TRIP | ACCT NO | STOP | PAGE |
+|---|---|---|---|---|---|
+| 07/30/26 | 693655 | 455 | 4733 | 160 | 1 |
+
+| QUANTITY | QUANTITY | UNIT | SIZE | BRAND | ITEM NUMBER | DESCRIPTION | PORTION | PORTION | PORTION | PORTION | TAX | UNIT PRICE | EXTENSION |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| ORDER | SHIP | UNIT | SIZE | BRAND | ITEM NUMBER | DESCRIPTION | # OF | RU | UN | RC UN | TAX | UNIT PRICE | EXTENSION |
+|  | 1 | CS | 4/10 LB | WSTCRK | FD252 | CHICKEN LEG QTR RAW CVP FRFZ | 640 | 1 | OZ | .038 |  | 24.53 | 24.53 |
+|  | 2 | CS | 1/25 LB | PKFRSH | NH700 | ONION RED MED FRESH | 400 | 1 | OZ | .021 |  | 8.55 | 17.10 |
+|  | 1 | EA | 1/1 CNT | CATG78 | F4794 | FUEL SURCHARGE | 1 | 1 | EA | 9.000 |  | 9.00 | 9.00 |
+
+559.86  PAY THIS AMOUNT
+ALL PAYMENTS IN U.S. CURRENCY
+`;
+
+describe("parseLinesFromMarkdown", () => {
+  test("maps a text invoice's multi-row table without Claude and leaves unprinted values null", () => {
+    const parsed = parseLinesFromMarkdown(PERFORMANCE_TEXT_INVOICE_MARKDOWN);
+
+    expect(parsed.header).toEqual({
+      invoiceDate: "2026-07-30",
+      invoiceNumber: "693655",
+      totalGross: null,
+      totalDiscount: null,
+      totalNet: "559.8600",
+      currency: "USD",
+    });
+    expect(parsed.lines).toHaveLength(3);
+    expect(parsed.lines[0]).toMatchObject({
+      lineNumber: 1,
+      lineType: "product",
+      vendorItemCode: "FD252",
+      description: "WSTCRK CHICKEN LEG QTR RAW CVP FRFZ",
+      packDescription: "4/10 LB",
+      quantity: "1.000",
+      uom: "case",
+      packSize: 4,
+      unitCost: "24.5300",
+      extendedCost: "24.53",
+      rawGross: null,
+      rawNet: null,
+      extractionConfidence: null,
+    });
+    expect(parsed.lines[2].lineType).toBe("freight");
+  });
+
+  test("fails explicitly when text exists but no recognizable line-item table exists", () => {
+    expect(() => parseLinesFromMarkdown("Invoice 1234\nNo table was recovered.")).toThrow(
+      "no recognizable invoice line-item table",
+    );
+  });
+
+  test("classifies common standalone charges conservatively without keyword-matching product names", () => {
+    const parsed = parseLinesFromMarkdown(`
+| DESCRIPTION | ITEM NUMBER | QUANTITY | AMOUNT |
+|---|---|---|---|
+| STATE LIQUOR TAX | TAX-1 | 1 | 12.00 |
+| CRV FEE | FEE-1 | 1 | 3.00 |
+| BOTTLE DEPOSIT CREDIT | DEP-1 | 1 | (5.00) |
+| DELIVERY VODKA 750ML | SKU-1 | 1 | 20.00 |
+`);
+
+    expect(parsed.lines.map((line) => line.lineType)).toEqual(["tax", "fee", "deposit_return", "product"]);
+  });
+
+  test("does not coerce formatting-only or JavaScript numeric syntax into plausible invoice amounts", () => {
+    const parsed = parseLinesFromMarkdown(`
+| DESCRIPTION | ITEM NUMBER | QUANTITY | AMOUNT |
+|---|---|---|---|
+| FORMAT ONLY | SKU-1 | 1 | $ |
+| COMMA ONLY | SKU-2 | 1 | , |
+| HEX TOKEN | SKU-3 | 1 | 0x10 |
+| EXPONENT TOKEN | SKU-4 | 1 | 1e3 |
+`);
+
+    expect(parsed.lines.map((line) => line.extendedCost)).toEqual([null, null, null, null]);
+  });
+});
+
+describe("text-PDF queue routing", () => {
+  test("a text job reaches needs_review/done without invoking the Claude dependency", async () => {
+    await db
+      .update(invoice)
+      .set({
+        status: "uploaded",
+        pageCount: null,
+        invoiceDate: null,
+        invoiceNumber: null,
+        totalGross: null,
+        totalDiscount: null,
+        totalNet: null,
+        currency: null,
+        retentionUntil: null,
+      })
+      .where(eq(invoice.id, fx.invoiceId));
+    await db
+      .update(extractionJob)
+      .set({
+        status: "queued",
+        phase: null,
+        pdfType: null,
+        completedAt: null,
+      })
+      .where(eq(extractionJob.id, fx.extractionJobId));
+
+    let claudeWasCalled = false;
+    const result = await processExtractionQueue("text-routing-test", {
+      classifyPdf: async () => ({
+        pdfType: "text",
+        pageCount: 1,
+        confidence: 1,
+        pagesNeedingOcr: [],
+      }),
+      processPdf: async () => ({ markdown: PERFORMANCE_TEXT_INVOICE_MARKDOWN, pagesWithTables: [1] }),
+      extractInvoice: async () => {
+        claudeWasCalled = true;
+        throw new Error("Claude must not be called for a text PDF");
+      },
+    });
+
+    expect(result).toMatchObject({
+      claimed: true,
+      jobId: fx.extractionJobId,
+      invoiceId: fx.invoiceId,
+      outcome: "done",
+    });
+    expect(claudeWasCalled).toBe(false);
+
+    const [savedInvoice, savedJob, savedLines] = await Promise.all([
+      db.query.invoice.findFirst({ where: (row, { eq }) => eq(row.id, fx.invoiceId) }),
+      db.query.extractionJob.findFirst({ where: (row, { eq }) => eq(row.id, fx.extractionJobId) }),
+      db.query.invoiceLine.findMany({
+        where: (row, { eq }) => eq(row.invoiceId, fx.invoiceId),
+        orderBy: (row, { asc }) => asc(row.lineNumber),
+      }),
+    ]);
+    expect(savedInvoice?.status).toBe("needs_review");
+    expect(savedInvoice?.invoiceNumber).toBe("693655");
+    expect(savedJob).toMatchObject({
+      status: "done",
+      phase: "parse",
+      pdfType: "text",
+      provider: null,
+      modelId: null,
+      inputTokens: null,
+      outputTokens: null,
+      costUsd: null,
+    });
+    expect(savedLines.map((line) => line.vendorItemCode)).toEqual(["FD252", "NH700", "F4794"]);
+    expect(savedLines.map((line) => line.exceptionFlags)).toEqual([
+      ["unmatched item"],
+      ["unmatched item"],
+      ["unmatched item"],
+    ]);
+  });
+
+  test("a text parser failure fails the job but moves the invoice out of processing into the review queue", async () => {
+    await db
+      .update(invoice)
+      .set({ status: "uploaded" })
+      .where(eq(invoice.id, fx.invoiceId));
+    await db
+      .update(extractionJob)
+      .set({ status: "queued", phase: null, pdfType: null, completedAt: null })
+      .where(eq(extractionJob.id, fx.extractionJobId));
+
+    const result = await processExtractionQueue("text-parser-failure-test", {
+      classifyPdf: async () => ({
+        pdfType: "text",
+        pageCount: 1,
+        confidence: 1,
+        pagesNeedingOcr: [],
+      }),
+      processPdf: async () => ({ markdown: "Invoice 693655\nNo table was recovered.", pagesWithTables: [] }),
+      extractInvoice: async () => {
+        throw new Error("Claude must not be called for a text PDF");
+      },
+    });
+
+    expect(result).toMatchObject({
+      claimed: true,
+      jobId: fx.extractionJobId,
+      invoiceId: fx.invoiceId,
+      outcome: "failed",
+      errorMessage: expect.stringContaining("no recognizable invoice line-item table"),
+    });
+    const [savedInvoice, savedJob, savedLines] = await Promise.all([
+      db.query.invoice.findFirst({ where: (row, { eq }) => eq(row.id, fx.invoiceId) }),
+      db.query.extractionJob.findFirst({ where: (row, { eq }) => eq(row.id, fx.extractionJobId) }),
+      db.query.invoiceLine.findMany({ where: (row, { eq }) => eq(row.invoiceId, fx.invoiceId) }),
+    ]);
+    expect(savedInvoice?.status).toBe("needs_review");
+    expect(savedJob?.status).toBe("failed");
+    expect(savedJob?.pdfType).toBe("text");
+    expect(savedJob?.errorMessage).toContain("no recognizable invoice line-item table");
+    expect(savedLines).toHaveLength(0);
+  });
+
+  test("a scanned job without the Anthropic key fails specifically in the Vision branch and clears stale drafts", async () => {
+    await db
+      .update(invoice)
+      .set({ status: "uploaded" })
+      .where(eq(invoice.id, fx.invoiceId));
+    await db
+      .update(extractionJob)
+      .set({ status: "queued", phase: null, pdfType: null, completedAt: null })
+      .where(eq(extractionJob.id, fx.extractionJobId));
+
+    const missingKeyMessage =
+      "ANTHROPIC_API_KEY is not set; it is required for scanned, mixed, or image-based invoice extraction.";
+    const previousApiKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    let result: Awaited<ReturnType<typeof processExtractionQueue>>;
+    try {
+      result = await processExtractionQueue("scanned-missing-key-test", {
+        classifyPdf: async () => ({
+          pdfType: "scanned",
+          pageCount: 1,
+          confidence: 1,
+          pagesNeedingOcr: [0],
+        }),
+        readPdfFile: async () => Buffer.from("%PDF-1.4 test fixture"),
+      });
+    } finally {
+      if (previousApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = previousApiKey;
+      }
+    }
+
+    expect(result).toMatchObject({
+      claimed: true,
+      jobId: fx.extractionJobId,
+      invoiceId: fx.invoiceId,
+      outcome: "failed",
+      errorMessage: missingKeyMessage,
+    });
+    const [savedInvoice, savedJob, savedLines] = await Promise.all([
+      db.query.invoice.findFirst({ where: (row, { eq }) => eq(row.id, fx.invoiceId) }),
+      db.query.extractionJob.findFirst({ where: (row, { eq }) => eq(row.id, fx.extractionJobId) }),
+      db.query.invoiceLine.findMany({ where: (row, { eq }) => eq(row.invoiceId, fx.invoiceId) }),
+    ]);
+    expect(savedInvoice?.status).toBe("needs_review");
+    expect(savedJob).toMatchObject({
+      status: "failed",
+      phase: "ocr",
+      pdfType: "scanned",
+      pagesNeedingOcr: [0],
+      errorMessage: missingKeyMessage,
+    });
+    expect(savedLines).toHaveLength(0);
+  });
+});
 
 describe("parseLinesFromVision", () => {
   test(

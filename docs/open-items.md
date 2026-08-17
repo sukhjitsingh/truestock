@@ -1443,3 +1443,125 @@ and asserts the resulting `invoice_line` rows carry the matched
 `matchedProductId`/`matchedVendorAliasId`/`matchConfidence` — closing the gap
 between "the matching function is correct" and "the pipeline actually calls
 it correctly with the right `vendorId`."
+
+**Progress note, 2026-08-15/16 — half the trigger fired, the fix is still not done.** Verifying
+the `ANTHROPIC_API_KEY` mis-routing fix (see the memory `pdf_inspector_no_darwin_x64_binary.md`)
+required getting `@firecrawl/pdf-inspector`'s native binding to actually load in this dev
+environment, which this item's first trigger clause names directly. It now has a documented,
+working answer: a throwaway `node:22-bookworm-slim` container, source bind-mounted, `node_modules`
+as an anonymous volume, `DATABASE_URL` pointed at the host's published MariaDB port. That
+technique produced three new DB-backed tests in `tests/extraction-pipeline.test.ts`
+("text-PDF queue routing") that drive real `processExtractionQueue`/`runClaimedJob` calls end to
+end against a real database — the first tests in this repo to do that. But those three are about
+the `text`/`scanned` **routing** split (does the job avoid Claude when it should, does it fail in
+the right branch when the key is missing) — none of them assert `matchedProductId` /
+`matchedVendorAliasId` / `matchConfidence` on the resulting rows, which is the actual gap this item
+names. Still open; the blocker just moved from "untestable in this environment" to "not yet
+written," and the container technique above is the way to write it.
+
+---
+
+## 34. `mixed` PDF classification has no DB-backed regression test — only `text` and `scanned` do
+
+**Trigger: the next real invoice classified `mixed`, or before `runClaimedJob`'s
+classification-routing logic is next touched.**
+
+Opened 2026-08-16, from this session's verification of the `ANTHROPIC_API_KEY` mis-routing
+fix (`lib/domain/extraction-pipeline.ts`, `tests/extraction-pipeline.test.ts`). The new
+"text-PDF queue routing" tests prove the fix for `text` (reaches review without calling Claude)
+and `scanned` (fails specifically in the Vision branch when the key is missing) — see item #33's
+progress note for how they were run. `mixed` is the one classification that exercises **both**
+halves of the split inside a single job: `processPdfFn` for markdown (kept as cross-check ground
+truth) and `extractFn`/Claude Vision for the actual line extraction. It has no equivalent test. A
+regression that swapped which result feeds `parseLinesFromVision` versus `pdfInspectorCrossCheck`,
+specifically on the `mixed` branch, would pass the current suite unnoticed.
+
+Fix, when the trigger fires: add a fourth DB-backed test alongside the other three, seeding a
+`mixed`-classified job and asserting both the markdown fetch and the Vision call happen, and that
+`pdfInspectorCrossCheck` runs against the markdown as ground truth.
+
+---
+
+## 35. `parseDateValue`'s US-date regex has no month/day bounds check
+
+**Trigger: the first real invoice date that fails to parse into a sane `retentionUntil` —
+i.e. the first garbled or non-US-format date on a real vendor invoice, since every fixture
+used so far carries a valid date.**
+
+Found 2026-08-16 while reviewing `lib/domain/extraction-pipeline.ts` during verification of the
+`ANTHROPIC_API_KEY` mis-routing fix. `parseDateValue`'s US-date regex,
+`/\b(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})\b/`, captures month/day/year positionally with no range
+check — `13/45/26` matches, and the out-of-range values go straight into `Date.UTC`, which
+JavaScript normalizes by rolling over into a different month/day instead of throwing. That value
+feeds `computeRetentionUntil` (`lib/domain/invoices.ts`), so a garbled or OCR-misread date
+silently produces a **wrong** statutory retention date instead of failing extraction or flagging
+it for review — the retention window is 2 years (spec §10), so a wrong date here surfaces only
+much later, in an audit.
+
+Fix, when the trigger fires: bound month to 1–12 and day to 1–31 (or switch to a real date
+library's strict-parse mode) and treat an out-of-range match as unparseable, falling through to
+the existing NULL-and-flag-for-review path instead of a silently rolled-over date.
+
+---
+
+## 36. The real Southern Glazer's invoice used to reproduce the routing bug is untracked, not gitignored
+
+**Trigger: before the next commit that touches `tests/` — confirm it is still excluded, and
+either replace it with a synthetic fixture or add it to `.gitignore` explicitly instead of
+relying on it simply not being staged.**
+
+`tests/Southern Glazer's Invoice-5402426.pdf` — a real vendor invoice with real pricing — was
+placed in `tests/` on 2026-08-15 to reproduce and verify the `ANTHROPIC_API_KEY` mis-routing bug
+end to end. It is untracked, and excluded from this fix's commit by hand rather than by
+`.gitignore`, so nothing stops a future `git add -A` from putting real supplier pricing into git
+history.
+
+Fix: add a `.gitignore` rule for it (or a broader `tests/*.pdf` rule if more real invoices
+accumulate this way), or — better — extract the specific table structure it exposed (see item
+#37) into a small synthetic markdown fixture that carries no real vendor data.
+
+---
+
+## 37. `parseLinesFromMarkdown` doesn't recognize "Item Name" as a description-column header — a real vendor's table is silently skipped
+
+**Trigger: the next real invoice that reaches `needs_review` with fewer line items than it
+actually has — i.e. the next vendor whose description-column header isn't `description` /
+`item description` / `product description` / `product`.**
+
+Found 2026-08-15 while reproducing the `ANTHROPIC_API_KEY` mis-routing bug against a real
+Southern Glazer's invoice. `columnIndex`'s description-column regex allowlist
+(`lib/domain/extraction-pipeline.ts`) is `[/^description$/, /^(?:item|product)\s+description$/,
+/^product$/]`. Southern Glazer's actual header is **"Item Name"**, which matches none of these,
+so `descriptionIndex` comes back `-1` and that table is skipped entirely — even though
+pdf-inspector correctly extracted it as markdown. This fails safe rather than silently *only
+when it's the sole table on the invoice*: the "zero recognizable lines" throw fires and the job
+lands in `needs_review` for a human to catch. On a multi-table invoice where another table's
+header does match, this table's real line items are dropped with no error anywhere — quieter and
+worse than the all-tables-fail case, and the same shape of defect `AGENTS.md` opens with (a
+plausible-looking result that is actually wrong).
+
+Fix, when the trigger fires: widen the regex allowlist to include `item name`/`item` (checking
+it doesn't collide with a real "item #"/"item code" column elsewhere), or — better — log/flag
+when a table is skipped specifically for header-recognition reasons, distinct from "no table
+matched at all," so review-queue triage can tell the two failure modes apart.
+
+---
+
+## 38. A stray non-directory file at `var/invoices/{orgId}` throws a raw `EEXIST` — environment-only, not reachable from application code
+
+**Trigger: the next time local dev environment setup (not application logic) leaves a stray
+file where `var/invoices/{orgId}` should be a directory.**
+
+Found 2026-08-15 during this session's E2E verification of the `ANTHROPIC_API_KEY` mis-routing
+fix. `writeInvoiceFile`'s (`lib/storage/invoice-files.ts`) `mkdir` call throws a raw Node
+`EEXIST` when a non-directory file already occupies `var/invoices/{orgId}` — hit once in this dev
+environment from stale local state, not from any application code path (nothing in the codebase
+writes a file at that path segment; it is always `mkdir`'d as a directory). Not a defect in
+normal operation — no invariant is violated and no user-triggerable path produces it — but the
+resulting error is Node's raw `EEXIST` rather than a message naming the actual problem, which
+would be confusing if it ever recurred (a bad manual `touch`, a broken backup restore, a future
+change that writes at the wrong path segment).
+
+Fix, when the trigger fires: catch `EEXIST` specifically around the `mkdir` call and re-throw
+with a message naming the offending path and stating it must be a directory, rather than letting
+Node's raw error surface.
