@@ -1,6 +1,6 @@
 # Truestock — current state
 
-Where the project actually is. Updated 2026-08-15.
+Where the project actually is. Updated 2026-08-16.
 
 This file answers one question: **what is proven, what is merely built, and what
 is next.** The distinction matters more here than the feature list, because this
@@ -318,6 +318,54 @@ Written, reviewed, typechecked — never observed working.
 - **The deploy pipeline.** Built, never run against a real host.
 
 ## Recent history
+
+- **2026-08-16** — **A Phase 2.5 extraction-pipeline regression fixed: text PDFs had
+  stopped using the free `pdf-inspector` path and were unconditionally requiring
+  `ANTHROPIC_API_KEY`/Claude Vision instead.** Repro: upload a text-based PDF invoice,
+  job moves `uploaded → processing`, then fails with `ANTHROPIC_API_KEY is not set` —
+  wrong on its face, since AGENTS.md §3.2 specifies pdf-inspector's markdown path for
+  `text`-classified PDFs specifically so most invoices cost nothing in AI calls.
+  `runClaimedJob` (`lib/domain/extraction-pipeline.ts`) had lost its classification
+  branch: every `pdfType` fell through to `extractFn`/Claude Vision. Fix (Codex,
+  verified and merged this session): restores the split — `text` calls
+  `parseLinesFromMarkdown(markdown)` with **no Claude call at all**; `mixed`/`scanned`/
+  `image` still route through Vision, with `mixed` additionally fetching markdown as
+  cross-check ground truth alongside the Vision call.
+
+  **This session's verification is stronger than what produced the fix.** Codex's own
+  debug journal states its DB-backed test and real pdf-inspector run were "unverified
+  because this Intel Mac has no pdf-inspector native binding and Docker startup is
+  sandbox-blocked." This session has full Docker access, so both gaps closed for real:
+  `@firecrawl/pdf-inspector` ships no `darwin-x64` binary (confirmed against its
+  `optionalDependencies`), so tests importing `extraction-pipeline.ts` were run inside a
+  throwaway `node:22-bookworm-slim` container (source bind-mounted, `node_modules` as an
+  anonymous volume, `DATABASE_URL` pointed at the shared `truestock-mariadb` container's
+  published port) rather than on the host — the documented workaround in
+  `.claude/agent-memory/backend/pdf_inspector_no_darwin_x64_binary.md`. Result: **22/22
+  pass in `tests/extraction-pipeline.test.ts`** (51 `expect()` calls), including three
+  new DB-backed regression tests proving the fix end to end against a real MariaDB — a
+  text job reaches `needs_review`/`done` without ever invoking the Claude dependency, a
+  text-parser failure fails the job cleanly into the review queue, and a scanned job
+  with no Anthropic key fails specifically in the Vision branch. **Full suite: 358/358
+  pass, 985 `expect()` calls, 28 files.** Typecheck and lint both clean (lint: 0 errors,
+  1 pre-existing unrelated warning). Code review, security review and a live-browser E2E
+  upload also ran clean in an earlier pass this session (no critical/high findings).
+
+  **Five findings deferred rather than fixed now**, added to `docs/open-items.md` as
+  items #34–#38: `mixed` classification has no DB-backed regression test of its own
+  (#34); `parseDateValue`'s US-date regex has no month/day bounds check, so a garbled
+  date can silently roll over into a wrong statutory retention date (#35); the real
+  Southern Glazer's invoice PDF used to reproduce this bug is untracked and not
+  `.gitignore`d (#36); that same invoice exposed a real parser gap — `parseLinesFromMarkdown`'s
+  description-column allowlist doesn't recognize "Item Name," so a real vendor's line-item
+  table is silently skipped when another table on the invoice does match (#37), the
+  quieter and worse sibling of the "zero recognizable lines" case the pipeline already
+  fails safe on; and an environment-only `EEXIST` from `writeInvoiceFile`'s `mkdir` when a
+  stray non-directory file occupies `var/invoices/{orgId}`, not reachable from any
+  application code path (#38). Item #33 (matching never proven through the real pipeline)
+  got a progress note rather than a close: the container technique above now makes it
+  writable, but the three new tests prove routing, not `matchedProductId` end to end — the
+  gap the item actually names is still open.
 
 - **2026-08-15** — **Phase 2.5 Slice 2's review screen shipped, closing the
   gap the prior entry flagged.** `app/(office)/office/invoices/[invoiceId]/page.tsx`
