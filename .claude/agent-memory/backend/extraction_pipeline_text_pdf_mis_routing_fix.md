@@ -111,3 +111,24 @@ end — still open.
 **Items #34-#38 closed 2026-08-19** — see [[southern_glazers_template_and_open_items_34_38]]
 (this dir) for the fix, the two real bugs review caught in it, and a new vendor template
 doc built from the real Southern Glazer's invoice that originally surfaced these findings.
+
+**Item #33 closed 2026-08-20 — test-only, no production code touched.** A fourth DB-backed
+test joined the "text-PDF queue routing" describe block: seeds a `vendor_alias` row
+(`fx.vendorId`, `vendorItemCode: "FD252"` -> `fx.pricedProductId`) ahead of the run, then
+calls `processExtractionQueue` against the SAME `PERFORMANCE_TEXT_INVOICE_MARKDOWN` fixture
+the first routing test already uses, and reads the saved `invoice_line` rows back. This is
+the assertion the three routing tests and item #34's `mixed` test never made: the matched
+line carries `matchedProductId`/`matchedVendorAliasId`/`matchMethod: "vendor_alias_code"`/
+`matchConfidence: "0.500"` (the schema default, since it's the alias's first confirmation),
+while the two lines with no seeded alias stay `matchMethod: "unmatched"` with the
+`"unmatched item"` flag — proving the lookup is scoped to the code it actually matches, not
+a blanket "everything on this invoice matched." `fx.invoiceId` already carries
+`vendorId: fx.vendorId` from `createFixtures`, which is what `runClaimedJob` reads as
+`invoiceRow.vendorId` and threads through to `matchLinesToProducts` — no fixture change
+needed for that part, only a `vendorAlias` insert and the read-back assertions. Confirms
+`matchLinesToProducts`'s own trust-boundary comment (`lib/domain/matching.ts`'s file header):
+the ONE production call site really does pass an already tenant-scoped `vendorId`, not just
+in the isolated `tests/matching.test.ts` unit tests. Verified with the exact same container
+technique as items #34-#38 (no new gotchas): `tests/extraction-pipeline.test.ts` 30/30, full
+suite 411 pass / 0 fail / 1151 `expect()` calls / 30 files, `tsc --noEmit` and `eslint` both
+clean.

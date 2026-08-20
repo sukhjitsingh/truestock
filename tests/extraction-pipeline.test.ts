@@ -14,7 +14,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test";
 import { eq } from "drizzle-orm";
 import { db, closePool } from "@/db";
-import { extractionJob, invoice } from "@/db/schema";
+import { extractionJob, invoice, vendorAlias } from "@/db/schema";
 import {
   parseLinesFromMarkdown,
   parseLinesFromVision,
@@ -567,6 +567,107 @@ describe("text-PDF queue routing", () => {
     // derived from MIXED_GROUND_TRUTH_MARKDOWN's "Markdown Ground Truth Item".
     expect(savedLines[0].description).toBe("Vision Extracted Item (from Vision)");
     expect(savedLines[0].vendorItemCode).toBe("VISION-SKU-1");
+  });
+
+  test("open item #33: matchLinesToProducts is exercised through the real pipeline (runClaimedJob -> processExtractionQueue), not only in isolation — a seeded vendor_alias produces matchedProductId/matchedVendorAliasId/matchConfidence on the saved invoice_line, and lines with no matching alias stay unmatched", async () => {
+    await db
+      .update(invoice)
+      .set({
+        status: "uploaded",
+        pageCount: null,
+        invoiceDate: null,
+        invoiceNumber: null,
+        totalGross: null,
+        totalDiscount: null,
+        totalNet: null,
+        currency: null,
+        retentionUntil: null,
+      })
+      .where(eq(invoice.id, fx.invoiceId));
+    await db
+      .update(extractionJob)
+      .set({
+        status: "queued",
+        phase: null,
+        pdfType: null,
+        completedAt: null,
+      })
+      .where(eq(extractionJob.id, fx.extractionJobId));
+
+    // Seeded ahead of the run so matchLinesToProducts (lib/domain/matching.ts,
+    // called mid-pipeline between parse and persist) has a real alias to find
+    // — keyed on (organizationId, vendorId, vendorItemCode), matching
+    // PERFORMANCE_TEXT_INVOICE_MARKDOWN's first product line, "FD252".
+    // fx.invoiceId already carries vendorId: fx.vendorId from createFixtures,
+    // which is what runClaimedJob reads as invoiceRow.vendorId and passes
+    // through — nothing about the invoice fixture itself needs to change.
+    const [alias] = await db
+      .insert(vendorAlias)
+      .values({
+        organizationId: fx.organizationId,
+        vendorId: fx.vendorId,
+        vendorItemCode: "FD252",
+        productId: fx.pricedProductId,
+      })
+      .$returningId();
+
+    const result = await processExtractionQueue("matching-pipeline-test", {
+      classifyPdf: async () => ({
+        pdfType: "text",
+        pageCount: 1,
+        confidence: 1,
+        pagesNeedingOcr: [],
+      }),
+      processPdf: async () => ({ markdown: PERFORMANCE_TEXT_INVOICE_MARKDOWN, pagesWithTables: [1] }),
+      extractInvoice: async () => {
+        throw new Error("Claude must not be called for a text PDF");
+      },
+    });
+
+    expect(result).toMatchObject({
+      claimed: true,
+      jobId: fx.extractionJobId,
+      invoiceId: fx.invoiceId,
+      outcome: "done",
+    });
+
+    const savedLines = await db.query.invoiceLine.findMany({
+      where: (row, { eq }) => eq(row.invoiceId, fx.invoiceId),
+      orderBy: (row, { asc }) => asc(row.lineNumber),
+    });
+    expect(savedLines.map((line) => line.vendorItemCode)).toEqual(["FD252", "NH700", "F4794"]);
+
+    // FD252 is the only line with an alias — matched through the real
+    // pipeline end to end (runClaimedJob -> matchLinesToProducts ->
+    // writeExtractedLines), the exact gap open item #33 named: matching was
+    // previously proven correct only against matchLinesToProducts called
+    // directly (tests/matching.test.ts), never through the production entry
+    // point that actually invokes it mid-job.
+    expect(savedLines[0]).toMatchObject({
+      matchedProductId: fx.pricedProductId,
+      matchedVendorAliasId: alias.id,
+      matchMethod: "vendor_alias_code",
+      matchConfidence: "0.500",
+      exceptionFlags: null,
+    });
+
+    // NH700 and F4794 have no alias seeded — still unmatched and still
+    // flagged, proving the alias lookup is scoped to the code it actually
+    // matches rather than matching every line on the invoice.
+    expect(savedLines[1]).toMatchObject({
+      matchedProductId: null,
+      matchedVendorAliasId: null,
+      matchMethod: "unmatched",
+      matchConfidence: null,
+      exceptionFlags: ["unmatched item"],
+    });
+    expect(savedLines[2]).toMatchObject({
+      matchedProductId: null,
+      matchedVendorAliasId: null,
+      matchMethod: "unmatched",
+      matchConfidence: null,
+      exceptionFlags: ["unmatched item"],
+    });
   });
 });
 

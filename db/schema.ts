@@ -97,6 +97,7 @@ import {
   invoiceLineTypeEnum,
   invoiceLineUomEnum,
   invoiceMatchMethodEnum,
+  countLineWriteTypeEnum,
 } from "./enums";
 
 export {
@@ -114,6 +115,7 @@ export {
   invoiceLineTypeEnum,
   invoiceLineUomEnum,
   invoiceMatchMethodEnum,
+  countLineWriteTypeEnum,
 };
 
 // Reusable audit-timestamp pair. Only added to tables where spec §8 doesn't
@@ -851,6 +853,14 @@ export const countLineWrite = mysqlTable(
       .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
     appliedAt: timestamp("applied_at").notNull().defaultNow(),
+    // open-items.md #2. Discriminates the two shapes a row in this table can
+    // take — see countLineWriteTypeEnum in db/enums.ts for the full
+    // reasoning. NOT NULL, default 'scan': every row that existed before
+    // this column was added genuinely was a scan/increment/quantity
+    // correction (editCountLineFills wrote no ledger row until this
+    // change), so the default backfills existing rows correctly with no
+    // separate data migration.
+    writeType: mysqlEnum("write_type", countLineWriteTypeEnum).notNull().default("scan"),
     // The delta THIS write contributed — never the line's running total.
     // Same "store what was observed, don't pre-aggregate" reasoning as
     // count_line's own sealed_case_qty/sealed_each_qty/partial_fills.
@@ -858,11 +868,37 @@ export const countLineWrite = mysqlTable(
     sealedEachDelta: int("sealed_each_delta").notNull().default(0),
     // The partial_fills entries this specific write contributed (a write
     // may add zero, one, or several open-bottle readings at once) — not
-    // the line's full partial_fills array.
+    // the line's full partial_fills array. Meaningless on `fill_correction`
+    // rows (stays its default `[]` there — see writeType and
+    // partialFillsBefore/After below); only `scan` rows compose by summing
+    // this column.
     partialFillsDelta: json("partial_fills_delta")
       .$type<number[]>()
       .notNull()
       .default([]),
+    // open-items.md #2. `editCountLineFills` REPLACES the whole
+    // partial_fills array rather than appending to it, so it has no delta
+    // representation in partialFillsDelta's additive shape (see writeType
+    // above). These two columns carry the full state transition instead,
+    // captured under the SAME row lock used for the update in
+    // lib/domain/counts.ts's editCountLineFills. Both NULL on `scan` rows —
+    // irrelevant there, since partialFillsDelta already answers "what did
+    // this write contribute" for that write type.
+    //
+    // Rationale (audit-trail self-containment): "who changed this bottle's
+    // fill level, and when" — the open item's own framing — should be
+    // answerable by reading ONE row of this ledger directly, not by
+    // replaying every prior write to reconstruct state at that point in
+    // time. Storing both before and after on the correction row itself is
+    // what makes that true.
+    //
+    // MariaDB has no native JSON type — `json` here is a `longtext` alias
+    // with a validity check (see db/README.md). mysql2 still parses it back
+    // into an array on read, same guarantee count_line.partial_fills and
+    // extraction_job.pages_needing_ocr rely on; that's a driver behaviour,
+    // not a schema one, so it's covered by a test rather than assumed.
+    partialFillsBefore: json("partial_fills_before").$type<number[]>(),
+    partialFillsAfter: json("partial_fills_after").$type<number[]>(),
     // The idempotency key. This UNIQUE index is the entire mechanism
     // described above — everything else in this table exists to make the
     // ledger useful for audit/debugging, not just a dedupe set.

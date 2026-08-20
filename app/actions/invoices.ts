@@ -157,6 +157,11 @@ export async function getInvoiceLinesAction(
  * (mapped to a plain "conflict" message by `runAction`), and nothing is
  * written; it never silently overwrites (04-slices.md's
  * `review_conflicts_when_status_moved`).
+ *
+ * `headerCorrections` (open item #32) is optional and, when omitted,
+ * `submitInvoiceReview`'s own default (`{}`) leaves every
+ * `REQUIRED_FOR_REVIEW` column untouched — the common case where extraction
+ * read every header field correctly and nothing needs correcting.
  */
 export async function reviewInvoiceAction(
   input: unknown,
@@ -164,7 +169,12 @@ export async function reviewInvoiceAction(
   return runAction(async () => {
     const actor = await requireRole("owner");
     const parsed = reviewInvoiceSchema.parse(input);
-    return invoiceLines.submitInvoiceReview(actor, parsed.invoiceId, parsed.corrections);
+    return invoiceLines.submitInvoiceReview(
+      actor,
+      parsed.invoiceId,
+      parsed.corrections,
+      parsed.headerCorrections,
+    );
   });
 }
 

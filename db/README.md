@@ -230,6 +230,45 @@ open a fresh pool (and fresh database connections) on every file save.
   database on MariaDB 11.8.8) — the same proof `schema_matches_live_columns`
   (Slice 4's own adversarial test, backend stage) makes independently
   against `truestock_test` via `migrateTestDatabase()`.
+- `0008_lyrical_romulus.sql` (open-items.md #2, schema half) adds three
+  columns to `count_line_write`: `write_type` (new `countLineWriteTypeEnum`
+  in `db/enums.ts` — `'scan' | 'fill_correction'`, NOT NULL DEFAULT `'scan'`)
+  and `partial_fills_before` / `partial_fills_after` (nullable JSON —
+  `longtext` on MariaDB, same as every other JSON column in this file).
+  `editCountLineFills` (`lib/domain/counts.ts`) replaces the whole
+  `partial_fills` array rather than appending to it, so it has no
+  representation in `partial_fills_delta`'s additive shape (that column is
+  modelled so summing every row's delta reconstructs a line's current state
+  — see the comment above `countLineWrite` in `db/schema.ts`); the two new
+  columns instead carry the full before/after state transition on the
+  correction row itself, so "who changed this fill level, and when" is
+  answerable from one ledger row without replaying prior writes. The
+  domain-function change that actually writes these rows — inserting into
+  `count_line_write` inside `editCountLineFills`'s existing transaction — is
+  backend work and is NOT part of this migration; this slice is schema only.
+  The `DEFAULT 'scan'` needs no separate data migration: every row that
+  existed before this column was added genuinely was a scan/increment/
+  quantity-correction write, since `editCountLineFills` wrote no ledger row
+  at all until this change. Purely additive; reversal is:
+
+  ```sql
+  ALTER TABLE count_line_write DROP COLUMN write_type;
+  ALTER TABLE count_line_write DROP COLUMN partial_fills_before;
+  ALTER TABLE count_line_write DROP COLUMN partial_fills_after;
+  ```
+
+  No `DROP INDEX` needed — unlike `0006`'s `matched_vendor_alias_id`, none
+  of these three columns participate in any index on this table, so the
+  `mariadb-composite-index-survives-column-drop` gotcha does not apply here.
+  Verified against MariaDB 11.8.8 in an isolated throwaway database
+  (`docker-compose.worktree-test.yml`, project `truestock-openitem2-test`,
+  db published on host port 3309): the full chain `0000` → `0008` applies
+  clean from empty, `DESCRIBE count_line_write` shows all three new columns
+  with the expected type/null/default, and applying the reversal above then
+  re-adding the same three `ALTER TABLE ... ADD` statements leaves
+  `count_line_write` byte-identical (via `SHOW CREATE TABLE`) both to its
+  state right after `0007` (reversal) and to its freshly-migrated `0008`
+  state (re-add).
 
 ## Seeding
 

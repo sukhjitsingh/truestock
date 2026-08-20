@@ -21,6 +21,7 @@ import {
   openCount,
   incrementCountLine,
   setCountLineQuantities,
+  editCountLineFills,
   submitCount,
   reviewCount,
   reopenCount,
@@ -600,5 +601,119 @@ describe("absolute SET corrections", () => {
     // ledger still reconstructs the line.
     expect(ledger[1].sealedEachDelta).toBe(-9);
     expect(ledger.reduce((sum, r) => sum + r.sealedEachDelta, 0)).toBe(3);
+  });
+});
+
+describe("fill corrections write a ledger entry (open-items.md #2)", () => {
+  test("a normal correction writes one fill_correction row with before/after and zero deltas", async () => {
+    const c = await openCount(fx.owner, { type: "full" });
+    const line = await incrementCountLine(fx.owner, {
+      clientLineId: newClientLineId(),
+      countId: c.id,
+      productId: fx.pricedProductId,
+      locationId: fx.locationId,
+      sealedCaseQtyDelta: 0,
+      sealedEachQtyDelta: 0,
+      newPartialFills: [0.3, 0.8],
+    });
+
+    const corrected = await editCountLineFills(fx.owner, {
+      clientLineId: newClientLineId(),
+      countLineId: line.id,
+      partialFills: [0.3, 0.4, 0.9],
+    });
+    expect(corrected.partialFills).toEqual([0.3, 0.4, 0.9]);
+
+    const ledger = await db
+      .select()
+      .from(countLineWrite)
+      .where(eq(countLineWrite.countLineId, line.id))
+      .orderBy(countLineWrite.id);
+
+    // One row for the original scan (writeType 'scan', default), one for
+    // the correction.
+    expect(ledger).toHaveLength(2);
+    const correctionRow = ledger[1];
+    expect(correctionRow.writeType).toBe("fill_correction");
+    expect(correctionRow.partialFillsBefore).toEqual([0.3, 0.8]);
+    expect(correctionRow.partialFillsAfter).toEqual([0.3, 0.4, 0.9]);
+    // A replace is not a delta — both stay zero, unlike a scan/SET row.
+    expect(correctionRow.sealedCaseDelta).toBe(0);
+    expect(correctionRow.sealedEachDelta).toBe(0);
+    // partialFillsDelta is meaningless for a fill_correction row (see
+    // db/schema.ts) and must stay its default empty array, not be
+    // repurposed to carry the new array.
+    expect(correctionRow.partialFillsDelta).toEqual([]);
+  });
+
+  test("replaying the same clientLineId returns the same row and inserts nothing new", async () => {
+    const c = await openCount(fx.owner, { type: "full" });
+    const line = await incrementCountLine(fx.owner, {
+      clientLineId: newClientLineId(),
+      countId: c.id,
+      productId: fx.pricedProductId,
+      locationId: fx.locationId,
+      sealedCaseQtyDelta: 0,
+      sealedEachQtyDelta: 0,
+      newPartialFills: [0.3],
+    });
+
+    const clientLineId = newClientLineId();
+    const first = await editCountLineFills(fx.owner, {
+      clientLineId,
+      countLineId: line.id,
+      partialFills: [0.6],
+    });
+
+    // The retry — same id, same payload, exactly what the offline queue does
+    // on a dropped ack.
+    const replay = await editCountLineFills(fx.owner, {
+      clientLineId,
+      countLineId: line.id,
+      partialFills: [0.6],
+    });
+
+    expect(replay.id).toBe(first.id);
+    expect(replay.partialFills).toEqual([0.6]);
+
+    const ledger = await db
+      .select()
+      .from(countLineWrite)
+      .where(eq(countLineWrite.countLineId, line.id))
+      .orderBy(countLineWrite.id);
+    // One scan row + exactly one fill_correction row — the replay must not
+    // add a second.
+    expect(ledger).toHaveLength(2);
+    expect(ledger.filter((r) => r.writeType === "fill_correction")).toHaveLength(1);
+
+    const [row] = await db.select().from(countLine).where(eq(countLine.id, line.id));
+    expect(row.partialFills).toEqual([0.6]);
+  });
+
+  test("the scan and SET paths still default to writeType 'scan'", async () => {
+    const c = await openCount(fx.owner, { type: "full" });
+    const line = await incrementCountLine(fx.owner, {
+      clientLineId: newClientLineId(),
+      countId: c.id,
+      productId: fx.pricedProductId,
+      locationId: fx.locationId,
+      sealedCaseQtyDelta: 0,
+      sealedEachQtyDelta: 5,
+      newPartialFills: [],
+    });
+    await setCountLineQuantities(fx.owner, {
+      clientLineId: newClientLineId(),
+      countLineId: line.id,
+      sealedCaseQty: 0,
+      sealedEachQty: 2,
+    });
+
+    const ledger = await db
+      .select()
+      .from(countLineWrite)
+      .where(eq(countLineWrite.countLineId, line.id))
+      .orderBy(countLineWrite.id);
+    expect(ledger).toHaveLength(2);
+    expect(ledger.every((r) => r.writeType === "scan")).toBe(true);
   });
 });

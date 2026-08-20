@@ -91,14 +91,70 @@ export const lineCorrectionSchema = z.object({
 });
 
 /**
+ * A `DATE` column as the plain "YYYY-MM-DD" string form `mode: "string"` +
+ * db/index.ts's `dateStrings: ["DATE"]` round-trips — same convention
+ * `lib/validation/counts.ts`'s `openedAt` uses. Shared by `invoiceDate` and
+ * `retentionUntil` below; both are calendar days, not moments in time (see
+ * `db/schema.ts`'s comment on `invoice.invoiceDate`).
+ */
+const dateStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD.");
+
+/**
+ * `invoice.total_gross`/`total_net` are `DECIMAL(10,4)` — a different
+ * precision from `invoice_line`'s `DECIMAL(12,2)` columns `moneyStringSchema`
+ * above validates, so this is a deliberately separate schema, not a reuse.
+ * Up to 6 integer digits, an optional leading `-`, up to 4 decimal places.
+ */
+const invoiceTotalMoneyStringSchema = z
+  .string()
+  .regex(/^-?\d{1,6}(\.\d{1,4})?$/, "Must be a number with up to 4 decimal places.");
+
+/**
+ * `invoice.currency` is `varchar(3)`, documented on that column as "ISO 4217
+ * code (e.g. \"USD\")." Accepts any letter case and normalizes to uppercase,
+ * mirroring `lib/domain/extraction-pipeline.ts`'s own
+ * `/^[A-Za-z]{3}$/` + `.toUpperCase()` normalization of an extracted currency
+ * code, so a reviewer typing "usd" isn't rejected for a case difference the
+ * document itself wouldn't have made legible either way.
+ */
+const currencyCodeSchema = z
+  .string()
+  .regex(/^[A-Za-z]{3}$/, "Must be a 3-letter ISO 4217 currency code.")
+  .transform((value) => value.toUpperCase());
+
+/**
+ * A reviewer's correction to one of `lib/domain/invoices.ts`'s
+ * `REQUIRED_FOR_REVIEW` header columns — open item #32's fix. Every field is
+ * optional (a reviewer typically corrects zero or one of these); omitted
+ * means "leave this column alone," the same discipline `lineCorrectionSchema`
+ * uses. Unlike line corrections, there is no `null`/clear case here: a submit
+ * that both clears a required field back to NULL and tries to reach
+ * `reviewed` in the same request could only ever fail `REQUIRED_FOR_REVIEW`'s
+ * own null-check, so every field stays a bare optional string.
+ */
+export const headerCorrectionSchema = z.object({
+  invoiceDate: dateStringSchema.optional(),
+  invoiceNumber: z.string().trim().min(1).max(100).optional(),
+  totalGross: invoiceTotalMoneyStringSchema.optional(),
+  totalNet: invoiceTotalMoneyStringSchema.optional(),
+  currency: currencyCodeSchema.optional(),
+  retentionUntil: dateStringSchema.optional(),
+});
+export type HeaderCorrectionInput = z.infer<typeof headerCorrectionSchema>;
+
+/**
  * The review screen's submit. `corrections` may be an empty array — a
  * reviewer who touched nothing still needs to be able to move the invoice
  * `needs_review -> reviewed` (e.g. the pipeline already matched every line
- * correctly and nothing needs changing).
+ * correctly and nothing needs changing). `headerCorrections` is likewise
+ * optional and most often omitted entirely — most reviews correct zero
+ * header fields; see `headerCorrectionSchema`'s own comment for what it
+ * covers and why it exists.
  */
 export const reviewInvoiceSchema = z.object({
   invoiceId: z.number().int().positive(),
   corrections: z.array(lineCorrectionSchema).max(500),
+  headerCorrections: headerCorrectionSchema.optional(),
 });
 export type ReviewInvoiceInput = z.infer<typeof reviewInvoiceSchema>;
 

@@ -57,6 +57,13 @@
       "when": 1786927732448,
       "tag": "0007_yielding_gideon",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1787252347082,
+      "tag": "0008_lyrical_romulus",
+      "breakpoints": true
     }
   ]
 }
