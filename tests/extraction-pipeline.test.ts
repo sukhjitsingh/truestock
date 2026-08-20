@@ -87,6 +87,44 @@ Fed ID: 84-0629503  Delv Date: 07/30/26
 ALL PAYMENTS IN U.S. CURRENCY
 `;
 
+/**
+ * Open items #34/#35/#36/#37. Reproduces the STRUCTURE of a real Southern
+ * Glazer's Wine & Spirits "Order History" portal-export invoice (hand-traced
+ * against a real invoice by a prior session, see open item #36) with entirely
+ * FABRICATED product names, account info, and prices — never the real
+ * invoice's numbers. Arithmetic is self-consistent: line gross/discount/net
+ * amounts sum exactly to the header's Gross/Discount/Net Total.
+ *
+ * Shape under test: "Item Name" as the description header (#37), a compound
+ * "N Cases"/"N Units" quantity cell (never a bare number), "Gross/Discount/Net
+ * Amount" per-line columns (not the bare "Gross/Discount/Net" this pipeline
+ * also has to recognize), a "Document Date" header (not "Invoice Date"), and
+ * a header/totals table whose first cell is polluted by a legal footnote
+ * concatenated onto the "Total Cases" figure while its other cells
+ * ("Gross Total"/"Discount Total"/"Net Total") stay clean and sit as an
+ * embedded label row with no separator of its own, immediately followed by
+ * the row holding the actual totals.
+ */
+const SOUTHERN_GLAZERS_SYNTHETIC_MARKDOWN = `
+## INVOICE FOR:
+
+**Invoice Number: 9000001**
+
+|Document Date|Account ID|Address|||
+|---|---|---|---|---|
+|03/15/2026|99999|100 SAMPLE ST ANYTOWN, Arizona 85000|||
+|Total Cases|Total Units|Gross Total|Discount Total|Net Total|
+|2 *Taxes and Fees are included in Gross Total and Net Total above. Please refer to post-delivery invoice for additional details and final pricing information.|3|$300.00|$60.00|$240.00|
+
+# Associated Items
+
+|Item Name|Quantity|Gross Amount|Discount Amount|Net Amount|
+|---|---|---|---|---|
+|SAMPLE VODKA 80 111111 • 1.0L • 12 Case • SCREW CAP|1 Cases|$180.00|$36.00|$144.00|
+|SAMPLE GIN 80 222222 • 1.0L • 6 Case • ALTERNATIVE • GLASS|1 Units|$60.00|$12.00|$48.00|
+|SAMPLE BOURBON 90 333333 • 1.0L • 12 Case • SCREW CAP • GLASS|1 Units|$60.00|$12.00|$48.00|
+`;
+
 describe("parseLinesFromMarkdown", () => {
   test("maps a text invoice's multi-row table without Claude and leaves unprinted values null", () => {
     const parsed = parseLinesFromMarkdown(PERFORMANCE_TEXT_INVOICE_MARKDOWN);
@@ -148,6 +186,112 @@ describe("parseLinesFromMarkdown", () => {
 `);
 
     expect(parsed.lines.map((line) => line.extendedCost)).toEqual([null, null, null, null]);
+  });
+
+  test(
+    "parses a real vendor portal-export shape (Southern Glazer's, open item #37) end to end: 'Item Name' as the " +
+      "description header, compound 'N Cases'/'N Units' quantity cells split into quantity+uom, 'Gross/Discount/Net " +
+      "Amount' per-line columns, a 'Document Date' header resolving invoiceDate, and the footnote-polluted " +
+      "Gross/Discount/Net Total row embedded (with no separator of its own) inside the SAME table as the address " +
+      "block. Also proves open item #5's >=2-row unrecognized-table guard does NOT false-positive on that " +
+      "address/totals table, which would otherwise satisfy its row/numeric-cell thresholds — if it did, this whole " +
+      "parse would throw and every assertion below would never run.",
+    () => {
+      const parsed = parseLinesFromMarkdown(SOUTHERN_GLAZERS_SYNTHETIC_MARKDOWN);
+
+      expect(parsed.header.invoiceDate).toBe("2026-03-15");
+      expect(parsed.header.invoiceNumber).toBe("9000001");
+      // Header totals are formatted at scale 4 (toDecimalString(value, 4)),
+      // same as PERFORMANCE_TEXT_INVOICE_MARKDOWN's totalNet: "559.8600" above.
+      expect(parsed.header.totalGross).toBe("300.0000");
+      expect(parsed.header.totalDiscount).toBe("60.0000");
+      expect(parsed.header.totalNet).toBe("240.0000");
+
+      expect(parsed.lines).toHaveLength(3);
+      // The compound "Item Name" cell is kept intact, unsplit — AGENTS.md:
+      // "leave a field null rather than guessing" applies just as much to
+      // guessing where to CUT a field as to guessing its value.
+      expect(parsed.lines[0].description).toBe("SAMPLE VODKA 80 111111 • 1.0L • 12 Case • SCREW CAP");
+      expect(parsed.lines[0].quantity).toBe("1.000");
+      expect(parsed.lines[0].uom).toBe("case"); // from the compound cell "1 Cases"
+      expect(parsed.lines[1].uom).toBe("each"); // from "1 Units"
+      expect(parsed.lines[2].uom).toBe("each"); // from "1 Units"
+
+      expect(parsed.lines.map((line) => line.rawGross)).toEqual(["180.00", "60.00", "60.00"]);
+      expect(parsed.lines.map((line) => line.rawDiscount)).toEqual(["36.00", "12.00", "12.00"]);
+      expect(parsed.lines.map((line) => line.rawNet)).toEqual(["144.00", "48.00", "48.00"]);
+
+      // This vendor's format never prints unit cost, extension, a separate
+      // item code, or a pack size — asserting null (not a guess) is itself
+      // part of proving "no silent fabrication."
+      for (const line of parsed.lines) {
+        expect(line.unitCost).toBeNull();
+        expect(line.extendedCost).toBeNull();
+        expect(line.vendorItemCode).toBeNull();
+        expect(line.packSize).toBeNull();
+      }
+    },
+  );
+
+  test("the Southern Glazer's-shaped fixture's line gross amounts sum exactly to the invoice's printed totalGross, proving the arithmetic cross-check would pass for this vendor shape", () => {
+    const parsed = parseLinesFromMarkdown(SOUTHERN_GLAZERS_SYNTHETIC_MARKDOWN);
+    const sumRawGross = parsed.lines.reduce((total, line) => total + Number(line.rawGross), 0);
+    expect(sumRawGross.toFixed(2)).toBe("300.00");
+    expect(Number(parsed.header.totalGross)).toBeCloseTo(300, 2);
+  });
+
+  test("open item #35: an out-of-range US-style date (month 13, day 45) resolves invoiceDate to null instead of a silently rolled-over Date.UTC value", () => {
+    const parsed = parseLinesFromMarkdown(`
+| Invoice Date | Description | Quantity | Amount |
+|---|---|---|---|
+| 13/45/2026 | Sample Widget | 1 | 10.00 |
+`);
+    expect(parsed.header.invoiceDate).toBeNull();
+  });
+
+  test("open item #35: an out-of-range ISO-style date (month 13, day 45) resolves invoiceDate to null instead of a silently rolled-over Date.UTC value", () => {
+    const parsed = parseLinesFromMarkdown(`
+| Invoice Date | Description | Quantity | Amount |
+|---|---|---|---|
+| 2026-13-45 | Sample Widget | 1 | 10.00 |
+`);
+    expect(parsed.header.invoiceDate).toBeNull();
+  });
+
+  test(
+    "an ordinary bare Subtotal/Tax/Total summary block does NOT trip the >=2-row unrecognized-table guard, even " +
+      "though it satisfies the row/numeric-cell thresholds and its labels don't match TOTAL_LABEL_HEADER_PATTERNS " +
+      "(which requires 'gross'/'discount'/'net' combined with 'total', not bare 'Subtotal'/'Tax'/'Total') — a " +
+      "regression guard for a real false-positive: this 2-column summary shape is common on ordinary printed " +
+      "invoices and previously made the guard throw away the WHOLE extraction, including a real, correctly-parsed " +
+      "line-item table sitting right next to it",
+    () => {
+      const parsed = parseLinesFromMarkdown(`
+| DESCRIPTION | ITEM NUMBER | QUANTITY | AMOUNT |
+|---|---|---|---|
+| DELIVERY VODKA 750ML | SKU-1 | 1 | 20.00 |
+
+| Label | Amount |
+|---|---|
+| Subtotal | $100.00 |
+| Tax | $8.00 |
+| Total | $108.00 |
+`);
+
+      expect(parsed.lines).toHaveLength(1);
+      expect(parsed.lines[0].description).toBe("DELIVERY VODKA 750ML");
+    },
+  );
+
+  test("a genuinely unrecognized 3+ column real line-item table (unrecognized description header, but a real repeating product/quantity/price shape) still throws — the 3-column floor above narrows the false-positive, it does not gut the detection", () => {
+    expect(() =>
+      parseLinesFromMarkdown(`
+| Merchandise | Qty | Price |
+|---|---|---|
+| Product A | 3 | 9.99 |
+| Product B | 2 | 5.00 |
+`),
+    ).toThrow("refusing to write a partial result");
   });
 });
 
@@ -324,6 +468,105 @@ describe("text-PDF queue routing", () => {
       errorMessage: missingKeyMessage,
     });
     expect(savedLines).toHaveLength(0);
+  });
+
+  test("open item #34: a mixed-classified job fetches pdf-inspector's markdown as pdfInspectorCrossCheck ground truth AND calls Claude Vision for the actual line extraction, saving the Vision-derived lines rather than anything derived from the markdown", async () => {
+    await db
+      .update(invoice)
+      .set({ status: "uploaded" })
+      .where(eq(invoice.id, fx.invoiceId));
+    await db
+      .update(extractionJob)
+      .set({ status: "queued", phase: null, pdfType: null, completedAt: null })
+      .where(eq(extractionJob.id, fx.extractionJobId));
+
+    let processPdfCalled = false;
+    let extractInvoiceCalled = false;
+    // Small markdown table returned as "ground truth" by processPdf — has a
+    // DIFFERENT description than the Vision result below, so the assertions
+    // can prove which one the saved line actually came from.
+    const MIXED_GROUND_TRUTH_MARKDOWN = [
+      "| Description | Quantity | Amount |",
+      "|---|---|---|",
+      "| Markdown Ground Truth Item | 1 | 999.00 |",
+    ].join("\n");
+
+    const result = await processExtractionQueue("mixed-routing-test", {
+      classifyPdf: async () => ({
+        pdfType: "mixed",
+        pageCount: 1,
+        confidence: 0.6,
+        pagesNeedingOcr: [0],
+      }),
+      processPdf: async () => {
+        processPdfCalled = true;
+        return { markdown: MIXED_GROUND_TRUTH_MARKDOWN, pagesWithTables: [1] };
+      },
+      readPdfFile: async () => Buffer.from("%PDF-1.4 test fixture"),
+      extractInvoice: async () => {
+        extractInvoiceCalled = true;
+        return {
+          raw: {
+            invoiceDate: "2026-08-01",
+            invoiceNumber: "MIXED-1",
+            totalGross: 50,
+            totalDiscount: null,
+            totalNet: 50,
+            currency: "USD",
+            lines: [
+              {
+                rawText: "1 case Vision Extracted Item (from Vision)",
+                lineType: "product",
+                vendorItemCode: "VISION-SKU-1",
+                description: "Vision Extracted Item (from Vision)",
+                packDescription: null,
+                quantity: 1,
+                uom: "case",
+                packSize: 12,
+                unitCost: 50,
+                extendedCost: 50,
+                rawGross: 50,
+                rawDiscount: null,
+                rawNet: 50,
+                confidence: 0.95,
+              },
+            ],
+          },
+          provider: "anthropic",
+          modelId: "claude-sonnet-5",
+          promptVersion: "invoice-extraction-v1",
+          rawResponse: {},
+          inputTokens: 100,
+          outputTokens: 50,
+          costUsd: "0.001000",
+        };
+      },
+    });
+
+    expect(result).toMatchObject({
+      claimed: true,
+      jobId: fx.extractionJobId,
+      invoiceId: fx.invoiceId,
+      outcome: "done",
+    });
+    // Both halves of the mixed branch must run: markdown fetched as
+    // cross-check ground truth, AND Vision called for the actual extraction.
+    expect(processPdfCalled).toBe(true);
+    expect(extractInvoiceCalled).toBe(true);
+
+    const [savedJob, savedLines] = await Promise.all([
+      db.query.extractionJob.findFirst({ where: (row, { eq }) => eq(row.id, fx.extractionJobId) }),
+      db.query.invoiceLine.findMany({
+        where: (row, { eq }) => eq(row.invoiceId, fx.invoiceId),
+        orderBy: (row, { asc }) => asc(row.lineNumber),
+      }),
+    ]);
+    expect(savedJob?.pdfType).toBe("mixed");
+    expect(savedLines).toHaveLength(1);
+    // The saved line carries the Vision-derived fields, never anything
+    // derived from MIXED_GROUND_TRUTH_MARKDOWN's "Markdown Ground Truth Item".
+    expect(savedLines[0].description).toBe("Vision Extracted Item (from Vision)");
+    expect(savedLines[0].vendorItemCode).toBe("VISION-SKU-1");
   });
 });
 

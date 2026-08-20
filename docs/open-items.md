@@ -1461,9 +1461,21 @@ written," and the container technique above is the way to write it.
 
 ---
 
-## 34. `mixed` PDF classification has no DB-backed regression test — only `text` and `scanned` do
+## ~~34. `mixed` PDF classification has no DB-backed regression test — only `text` and `scanned` do~~ — **CLOSED 2026-08-19**
 
-**Trigger: the next real invoice classified `mixed`, or before `runClaimedJob`'s
+Fixed alongside items #35-#38 and the Southern Glazer's vendor template
+(`docs/vendor-templates/southern-glazers.md`). A fourth DB-backed test was
+added to the `"text-PDF queue routing"` describe block in
+`tests/extraction-pipeline.test.ts`, seeding a `mixed`-classified job and
+asserting both `processPdf` (markdown, cross-check ground truth) and
+`extractInvoice`/Claude Vision are invoked, and that the saved `invoice_line`
+rows are Vision-derived, not markdown-derived. Verified against a real
+MariaDB via the project's Docker-container technique (not `docker:up` — see
+[[extraction_pipeline_text_pdf_mis_routing_fix]] agent memory for why):
+**407 pass, 0 fail** across the full suite, `tests/extraction-pipeline.test.ts`
+29/29.
+
+**Trigger (historical): the next real invoice classified `mixed`, or before `runClaimedJob`'s
 classification-routing logic is next touched.**
 
 Opened 2026-08-16, from this session's verification of the `ANTHROPIC_API_KEY` mis-routing
@@ -1482,9 +1494,17 @@ Fix, when the trigger fires: add a fourth DB-backed test alongside the other thr
 
 ---
 
-## 35. `parseDateValue`'s US-date regex has no month/day bounds check
+## ~~35. `parseDateValue`'s US-date regex has no month/day bounds check~~ — **CLOSED 2026-08-19**
 
-**Trigger: the first real invoice date that fails to parse into a sane `retentionUntil` —
+Fixed alongside items #34, #36-#38. `parseDateValue` now bounds month to
+1-12 and day to 1-31 on **both** the ISO and US regex branches, returning
+`null` on an out-of-range match instead of silently rolling over via
+`Date.UTC` — falling through to the existing NULL-and-flag-for-review path.
+Two new tests in `tests/extraction-pipeline.test.ts` assert an out-of-range
+US date (`13/45/2026`) and an out-of-range ISO date (`2026-13-45`) both
+resolve `invoiceDate` to `null` rather than a rolled-over date.
+
+**Trigger (historical): the first real invoice date that fails to parse into a sane `retentionUntil` —
 i.e. the first garbled or non-US-format date on a real vendor invoice, since every fixture
 used so far carries a valid date.**
 
@@ -1504,9 +1524,19 @@ the existing NULL-and-flag-for-review path instead of a silently rolled-over dat
 
 ---
 
-## 36. The real Southern Glazer's invoice used to reproduce the routing bug is untracked, not gitignored
+## ~~36. The real Southern Glazer's invoice used to reproduce the routing bug is untracked, not gitignored~~ — **CLOSED 2026-08-19**
 
-**Trigger: before the next commit that touches `tests/` — confirm it is still excluded, and
+Fixed both ways item #36 itself suggested: `.gitignore` gained a `tests/*.pdf`
+rule (with a comment explaining why), and the table structure the real PDF
+exposed was extracted into `SOUTHERN_GLAZERS_SYNTHETIC_MARKDOWN` — an
+entirely fabricated, arithmetic-self-consistent fixture in
+`tests/extraction-pipeline.test.ts` — so no real vendor PDF needs to sit in
+`tests/` at all going forward. A security-review pass on this same change
+also caught that the new vendor template doc (`docs/vendor-templates/
+southern-glazers.md`, see #37) had reproduced the real invoice's numbers in
+prose; those were redacted to the same synthetic values before commit.
+
+**Trigger (historical): before the next commit that touches `tests/` — confirm it is still excluded, and
 either replace it with a synthetic fixture or add it to `.gitignore` explicitly instead of
 relying on it simply not being staged.**
 
@@ -1522,9 +1552,34 @@ accumulate this way), or — better — extract the specific table structure it 
 
 ---
 
-## 37. `parseLinesFromMarkdown` doesn't recognize "Item Name" as a description-column header — a real vendor's table is silently skipped
+## ~~37. `parseLinesFromMarkdown` doesn't recognize "Item Name" as a description-column header — a real vendor's table is silently skipped~~ — **CLOSED 2026-08-19**
 
-**Trigger: the next real invoice that reaches `needs_review` with fewer line items than it
+Fixed with the wider option this item itself suggested — not just widening
+the regex, but making header recognition and skip-vs-fail behavior explicit.
+`DESCRIPTION_HEADER_PATTERNS` (now a shared constant used by both
+`parseLinesFromMarkdown` and `countMarkdownTableDataRows`, closing a drift
+risk between the two) includes `/^item\s+name$/` and bare `/^item$/`.
+Gross/Discount/Net amount patterns gained an optional `(?:\s+amount)?`
+suffix and a new `parseCompoundQuantityCell` helper splits compound
+quantity cells like `"1 Cases"`/`"2 Units"` — all needed for Southern
+Glazer's real column set. Critically, per the "if the data isn't ready
+properly, we don't have data at all" directive, a table that's *partially*
+recognized (some numeric/description signal, but not enough to trust) now
+throws and refuses to write a partial result, rather than silently dropping
+just that table's lines — see the new `looksLikeUnrecognizedLineItemTable`
+guard. A code-review pass on this same change caught and fixed a real false
+positive in that guard (it initially misclassified an ordinary 2-column
+Subtotal/Tax/Total summary table as an unrecognized line-item table); the
+fix narrows it to tables with 3+ columns, with a regression test proving a
+bare Subtotal/Tax/Total table no longer trips it.
+
+Southern Glazer's specific format — all headers, the compound-cell quirks,
+the footnote-polluted totals row, and what the vendor never provides
+(no Unit Price, Item Number/SKU, Brand, or UOM column) — is now documented
+as a template at `docs/vendor-templates/southern-glazers.md`, per the "build
+a template so it's mapped automatically in the future" requirement.
+
+**Trigger (historical): the next real invoice that reaches `needs_review` with fewer line items than it
 actually has — i.e. the next vendor whose description-column header isn't `description` /
 `item description` / `product description` / `product`.**
 
@@ -1547,9 +1602,21 @@ matched at all," so review-queue triage can tell the two failure modes apart.
 
 ---
 
-## 38. A stray non-directory file at `var/invoices/{orgId}` throws a raw `EEXIST` — environment-only, not reachable from application code
+## ~~38. A stray non-directory file at `var/invoices/{orgId}` throws a raw `EEXIST` — environment-only, not reachable from application code~~ — **CLOSED 2026-08-19**
 
-**Trigger: the next time local dev environment setup (not application logic) leaves a stray
+Fixed as specified, then extended by review: `writeInvoiceFile`'s `mkdir`
+call is wrapped in try/catch and, on `err.code === "EEXIST"`, throws a clear
+`Error` naming the specific directory path and stating a non-directory file
+occupies it. A code/security review pass on this same change caught that
+the fix's own reasoning ("a stray file somewhere in this path") didn't
+match its code ("only the exact leaf directory") — Node throws `ENOTDIR`,
+not `EEXIST`, when the stray file is an *ancestor* segment (e.g.
+`INVOICE_STORAGE_DIR` itself), which is arguably the more likely deployment
+mistake. The catch now matches both codes with one message. A new test in
+`tests/invoice-storage.test.ts` plants a real file at the target directory
+path and asserts the new message (not a raw `EEXIST`/`ENOTDIR`).
+
+**Trigger (historical): the next time local dev environment setup (not application logic) leaves a stray
 file where `var/invoices/{orgId}` should be a directory.**
 
 Found 2026-08-15 during this session's E2E verification of the `ANTHROPIC_API_KEY` mis-routing
