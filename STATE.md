@@ -1,6 +1,6 @@
 # Truestock — current state
 
-Where the project actually is. Updated 2026-08-16.
+Where the project actually is. Updated 2026-08-19.
 
 This file answers one question: **what is proven, what is merely built, and what
 is next.** The distinction matters more here than the feature list, because this
@@ -318,6 +318,59 @@ Written, reviewed, typechecked — never observed working.
 - **The deploy pipeline.** Built, never run against a real host.
 
 ## Recent history
+
+- **2026-08-19** — **Open-items #34–#38 closed: Southern Glazer's Wine & Spirits
+  invoices now parse correctly, and a vendor template documents the mapping for future
+  vendors.** Built on `origin/feat/phase-2.5-invoice-automation` (Slice 4 merged) via a
+  6-agent Workflow run (implement → review → fix findings → verify), on branch
+  `feat/phase-2.5-invoice-template-open-items`. Southern Glazer's real invoice structure
+  — a portal "Order History" export — differs from every previously-supported vendor:
+  its line-item table is headed `Item Name`/`Quantity`/`Gross Amount`/`Discount Amount`/
+  `Net Amount` (no Unit Price, SKU, Brand, or UOM columns at all), its `Quantity` cell is
+  a compound string (`"1 Cases"`, `"2 Units"`), and its totals row has a footnote
+  concatenated onto the first cell while the Gross/Discount/Net cells stay clean.
+  `lib/domain/extraction-pipeline.ts` changed to handle all of it: shared header-pattern
+  constants (fixing a drift risk between `parseLinesFromMarkdown` and
+  `countMarkdownTableDataRows`) now recognize `Item Name`/`Item` and `Document Date`; a
+  new `parseCompoundQuantityCell` splits quantity+UOM only when the plain numeric parse
+  fails and never overwrites a real UOM column; totals lookup tries a table-aware path
+  before falling back to the existing free-text search; and `parseDateValue` now bounds
+  month 1–12/day 1–31 on both date formats, returning `null` instead of silently rolling
+  over via `Date.UTC` (#35). The load-bearing change, matching this session's explicit
+  "if the data isn't ready properly, we don't have data at all" directive: a new
+  `looksLikeUnrecognizedLineItemTable` guard makes a **partially**-recognized line-item
+  table throw and refuse to write anything, rather than silently dropping just that
+  table's lines the way #37 originally did.
+
+  **Two real review findings surfaced and were fixed before merge, not just noted.** The
+  new guard, as first written, false-positived on an ordinary 2-column Subtotal/Tax/Total
+  summary table — a layout element common on real invoices — throwing away a document's
+  correctly-parsed line items along with it; narrowed to require 3+ columns, with a
+  regression test proving a bare Subtotal/Tax/Total table no longer trips it.
+  `writeInvoiceFile`'s new EEXIST handling (#38) only covered the case where the stray
+  file *is* the target directory; Node throws `ENOTDIR`, not `EEXIST`, when the stray
+  file is an ancestor path segment instead (e.g. the storage root itself) — arguably the
+  more likely deployment mistake — so that case fell through to a raw error unchanged.
+  Both codes now share one clear message. A security-review pass also caught real
+  Southern Glazer's invoice numbers (invoice #, account ID, dollar totals, a product SKU)
+  reproduced in prose in the new vendor template doc, about to be committed despite the
+  same change's own `.gitignore` rule existing specifically to keep that data out of git
+  history (#36) — redacted to the same synthetic values already used in the test fixture.
+
+  **Verified against a real MariaDB, not just hand-traced.** The project's Docker
+  technique (throwaway `node:22-bookworm-slim` container pointed at the shared
+  `truestock-mariadb` container, sidestepping `scripts/docker-up-guard.sh`, which
+  correctly refused `docker:up` mid-session because a live LAN dev session was already
+  using the stack) ran the full suite: **407 pass, 0 fail, 1131 `expect()` calls across
+  30 files** — `tests/extraction-pipeline.test.ts` 29/29 including the new item #34
+  DB-backed `mixed`-classification test, `tests/invoice-storage.test.ts` 18/18. Lint and
+  `tsc --noEmit` both clean.
+
+  New deliverable: `docs/vendor-templates/southern-glazers.md` — verbatim headers for all
+  three tables, the field-mapping table, an explicit "never provides" list, and the
+  totals-row data-quality quirk, so the next Southern Glazer's invoice maps automatically
+  and the next differently-shaped vendor has a template to follow. Memory:
+  `.claude/agent-memory/backend/southern_glazers_template_and_open_items_34_38.md`.
 
 - **2026-08-16** — **A Phase 2.5 extraction-pipeline regression fixed: text PDFs had
   stopped using the free `pdf-inspector` path and were unconditionally requiring

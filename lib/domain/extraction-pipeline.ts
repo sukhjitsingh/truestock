@@ -303,6 +303,58 @@ function boundedValue(value: string | null, maxLength: number): string | null {
   return value && value.length <= maxLength ? value : null;
 }
 
+// ---------------------------------------------------------------------------
+// Shared column-header patterns. Used by BOTH parseLinesFromMarkdown and
+// countMarkdownTableDataRows (the latter powers pdfInspectorCrossCheck's
+// row-count heuristic) — a single source here is itself part of the fix for
+// open item #37: two independently-drifting allowlists (countMarkdownTableDataRows
+// had a bare "item" pattern parseLinesFromMarkdown lacked) is exactly how a
+// real vendor's line-item table got silently skipped by both the parser AND
+// the safety net meant to catch that.
+// ---------------------------------------------------------------------------
+const DESCRIPTION_HEADER_PATTERNS = [
+  /^description$/,
+  /^(?:item|product)\s+description$/,
+  /^item\s+name$/,
+  /^item$/,
+  /^product$/,
+];
+const QUANTITY_HEADER_PATTERNS = [
+  /^(?:quantity\s+)?ship(?:ped)?$/,
+  /^ship\s+quantity$/,
+  /^qty\s+shipped$/,
+  /^quantity$/,
+  /^qty$/,
+  /^order\s+quantity$/,
+];
+const AMOUNT_HEADER_PATTERNS = [/^extension$/, /^extended(?:\s+(?:cost|price))?$/, /^amount$/, /^line\s+total$/];
+const CODE_HEADER_PATTERNS = [/^item\s+(?:number|no|#)$/, /^vendor\s+(?:item|sku)/, /^sku$/, /^product\s+code$/];
+// Gross/discount/net accept an optional trailing "amount" word — some vendor
+// portal exports (Southern Glazer's) header these columns "Gross Amount" /
+// "Discount Amount" / "Net Amount" rather than the bare word.
+const GROSS_HEADER_PATTERNS = [/^(?:line\s+)?gross(?:\s+amount)?$/];
+const DISCOUNT_HEADER_PATTERNS = [/^(?:line\s+)?discount(?:\s+amount)?$/];
+const NET_HEADER_PATTERNS = [/^(?:line\s+)?net(?:\s+amount)?$/];
+const INVOICE_DATE_HEADER_PATTERNS = [/^invoice\s*date$/, /^document\s*date$/, /^delivery\s*date$/, /^date$/];
+const INVOICE_NUMBER_HEADER_PATTERNS = [/^invoice(?:\s+(?:number|no|#))?$/];
+// Header-level (invoice) totals — distinct from the per-line GROSS/DISCOUNT/NET
+// patterns above: these match a "Gross Total"/"Total Gross"-style column, not
+// a per-line "Gross"/"Gross Amount" one.
+const TOTAL_GROSS_HEADER_PATTERNS = [/^gross\s*total$/, /^total\s*gross$/];
+const TOTAL_DISCOUNT_HEADER_PATTERNS = [/^discount\s*total$/, /^total\s*discount$/];
+const TOTAL_NET_HEADER_PATTERNS = [
+  /^net\s*total$/,
+  /^total\s*net$/,
+  /^invoice\s*total$/,
+  /^amount\s*due$/,
+  /^pay\s*this\s*amount$/,
+];
+const TOTAL_LABEL_HEADER_PATTERNS = [
+  ...TOTAL_GROSS_HEADER_PATTERNS,
+  ...TOTAL_DISCOUNT_HEADER_PATTERNS,
+  ...TOTAL_NET_HEADER_PATTERNS,
+];
+
 function inferUom(value: string | null): InvoiceLineUom | null {
   if (!value) {
     return null;
@@ -318,6 +370,26 @@ function inferUom(value: string | null): InvoiceLineUom | null {
     return "keg";
   }
   return "other";
+}
+
+/**
+ * Some vendor portal exports (Southern Glazer's) print quantity as a single
+ * COMPOUND cell mixing a number and a unit word — "1 Cases", "2 Units" —
+ * never a bare number. Only ever engaged by the caller when the plain
+ * numeric parse of the cell already failed, so a vendor with a clean,
+ * separate Quantity column (e.g. Performance Foodservice) never reaches
+ * this: parsePrintedNumber already succeeds directly on it and this
+ * function is never called.
+ */
+function parseCompoundQuantityCell(value: string | null): { quantity: number | null; uom: InvoiceLineUom | null } {
+  if (!value) {
+    return { quantity: null, uom: null };
+  }
+  const match = /^([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s+(\S+)$/.exec(value.trim());
+  if (!match) {
+    return { quantity: null, uom: null };
+  }
+  return { quantity: parsePrintedNumber(match[1]), uom: inferUom(match[2]) };
 }
 
 function inferLineType(description: string): InvoiceLineType {
@@ -346,13 +418,32 @@ function parsePackSize(packDescription: string | null): number | null {
   return Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
+/**
+ * Open item #35: bounds month to 1-12 and day to 1-31 on BOTH branches — a
+ * full, documented, deliberately simple bound, not full calendar-day
+ * validation (Feb 30 is not required to be rejected). An out-of-range match
+ * returns null rather than being formatted into a date-shaped string that
+ * would roll over silently downstream (e.g. through Date.UTC), so it falls
+ * through to the existing null-and-flag-for-review path instead of
+ * producing a wrong statutory retention date.
+ */
 function parseDateValue(value: string): string | null {
   const iso = /\b(\d{4})-(\d{2})-(\d{2})\b/.exec(value);
   if (iso) {
+    const month = Number(iso[2]);
+    const day = Number(iso[3]);
+    if (month < 1 || month > 12 || day < 1 || day > 31) {
+      return null;
+    }
     return `${iso[1]}-${iso[2]}-${iso[3]}`;
   }
   const us = /\b(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})\b/.exec(value);
   if (!us) {
+    return null;
+  }
+  const month = Number(us[1]);
+  const day = Number(us[2]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
     return null;
   }
   const year = us[3].length === 2 ? Number(us[3]) + (Number(us[3]) >= 70 ? 1900 : 2000) : Number(us[3]);
@@ -409,6 +500,71 @@ function findMarkdownTableValue(tables: MarkdownTable[], headerPatterns: RegExp[
 }
 
 /**
+ * Some vendor portal exports (Southern Glazer's) print a SECOND label row
+ * INSIDE the same markdown table, with no separator line of its own —
+ * "Total Cases | Total Units | Gross Total | Discount Total | Net Total"
+ * sits as an ordinary DATA row (parseMarkdownTables has no way to know it's
+ * really a header), immediately followed by the row holding the actual
+ * totals. findMarkdownTableValue only ever looks at a table's DECLARED
+ * header row, so it can't see this. This scans a table's own rows for one
+ * that itself looks like a label row matching `headerPatterns`, and reads
+ * the value from the row immediately after it, at the same column.
+ */
+function findMarkdownEmbeddedLabelValue(tables: MarkdownTable[], headerPatterns: RegExp[]): string | null {
+  for (const table of tables) {
+    for (let i = 0; i < table.rows.length - 1; i += 1) {
+      const labelIndex = columnIndex(table.rows[i].map(normalizeHeader), headerPatterns);
+      if (labelIndex < 0) {
+        continue;
+      }
+      const value = cellAt(table.rows[i + 1], labelIndex);
+      if (value) {
+        return value;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Item #37 / #5: a table whose description column we can't recognize might
+ * still be a genuine, silently-dropped line-item table rather than a
+ * metadata table this pipeline was never meant to parse. "Looks like a real
+ * line-item table" here means at least 2 data rows, at least 2 of which
+ * contain a cell that parses cleanly as a printed number — a repeating
+ * shape metadata tables (address blocks, single-row totals) don't have.
+ *
+ * A table containing an embedded totals LABEL row (see
+ * findMarkdownEmbeddedLabelValue above) is excluded even if it happens to
+ * satisfy the row/numeric thresholds: it has already been positively
+ * identified as recognized metadata, just shaped unusually — not silently
+ * dropped line items.
+ *
+ * Also excluded: any table with fewer than 3 columns. An ordinary
+ * Subtotal/Tax/Total summary block — a layout element on a large fraction of
+ * real printed invoices — is a plain 2-column (label, amount) table, and its
+ * bare "Subtotal"/"Tax"/"Total" labels don't match TOTAL_LABEL_HEADER_PATTERNS
+ * (which requires "gross"/"discount"/"net" combined with "total"), so without
+ * this it would satisfy the >=2-row/>=2-numeric-row thresholds above and get
+ * misidentified as an unrecognized LINE-ITEM table, throwing away an entire
+ * extraction that otherwise parsed correctly. A genuine line-item table this
+ * guard needs to catch always carries more than a bare label+amount pair —
+ * a description plus at least two more of quantity/price/extension/code — so
+ * requiring 3+ columns keeps the real detection while excluding the summary-
+ * block shape. See tests/extraction-pipeline.test.ts for the regression case.
+ */
+function looksLikeUnrecognizedLineItemTable(table: MarkdownTable): boolean {
+  if (table.rows.length < 2 || table.headers.length < 3) {
+    return false;
+  }
+  if (findMarkdownEmbeddedLabelValue([table], TOTAL_LABEL_HEADER_PATTERNS) != null) {
+    return false;
+  }
+  const numericRows = table.rows.filter((row) => row.some((cell) => parsePrintedNumber(cell) != null)).length;
+  return numericRows >= 2;
+}
+
+/**
  * Converts pdf-inspector's layout-aware Markdown into conservative review
  * drafts. It intentionally recognizes only common invoice column labels; a
  * table it cannot identify fails loudly instead of manufacturing lines.
@@ -417,36 +573,72 @@ export function parseLinesFromMarkdown(markdown: string): ParsedExtraction {
   const source = searchableMarkdown(markdown);
   const tables = parseMarkdownTables(markdown);
   const invoiceDate = parseDateValue(
-    findMarkdownTableValue(tables, [/^invoice\s*date$/, /^delivery\s*date$/, /^date$/]) ??
+    findMarkdownTableValue(tables, INVOICE_DATE_HEADER_PATTERNS) ??
       findLabeledText(source, [/invoice\s*date/, /delivery\s*date/, /delv\s*date/, /\bdate\b/], "\\d{1,4}[-/]\\d{1,2}[-/]\\d{1,4}") ??
       "",
   );
   const invoiceNumber = boundedValue(
-    findMarkdownTableValue(tables, [/^invoice(?:\s+(?:number|no|#))?$/]) ??
+    findMarkdownTableValue(tables, INVOICE_NUMBER_HEADER_PATTERNS) ??
       findLabeledText(source, [/invoice\s*(?:number|no\.?|#)/], "[A-Z0-9][A-Z0-9._/-]{0,99}"),
     100,
   );
-  const totalGross = findLabeledAmount(source, [/total\s*gross/, /gross\s*total/]);
-  const totalDiscount = findLabeledAmount(source, [/total\s*discount/, /discount\s*total/]);
-  const totalNet = findLabeledAmount(source, [/pay\s+this\s+amount/, /amount\s*due/, /invoice\s*total/, /total\s*net/]);
+  // Table lookup first (declared header, then a vendor's embedded label row —
+  // see findMarkdownEmbeddedLabelValue), text-label search second — mirrors
+  // invoiceDate/invoiceNumber above exactly, and only changes behavior for
+  // invoices that actually HAVE such a table: with no match on either table
+  // path, these fall through to the original findLabeledAmount call
+  // unchanged (e.g. Performance Foodservice's free-text "PAY THIS AMOUNT").
+  const totalGrossTableValue =
+    findMarkdownTableValue(tables, TOTAL_GROSS_HEADER_PATTERNS) ??
+    findMarkdownEmbeddedLabelValue(tables, TOTAL_GROSS_HEADER_PATTERNS);
+  const totalGross =
+    totalGrossTableValue != null
+      ? parsePrintedNumber(totalGrossTableValue)
+      : findLabeledAmount(source, [/total\s*gross/, /gross\s*total/]);
+  const totalDiscountTableValue =
+    findMarkdownTableValue(tables, TOTAL_DISCOUNT_HEADER_PATTERNS) ??
+    findMarkdownEmbeddedLabelValue(tables, TOTAL_DISCOUNT_HEADER_PATTERNS);
+  const totalDiscount =
+    totalDiscountTableValue != null
+      ? parsePrintedNumber(totalDiscountTableValue)
+      : findLabeledAmount(source, [/total\s*discount/, /discount\s*total/]);
+  const totalNetTableValue =
+    findMarkdownTableValue(tables, TOTAL_NET_HEADER_PATTERNS) ??
+    findMarkdownEmbeddedLabelValue(tables, TOTAL_NET_HEADER_PATTERNS);
+  const totalNet =
+    totalNetTableValue != null
+      ? parsePrintedNumber(totalNetTableValue)
+      : findLabeledAmount(source, [/pay\s+this\s+amount/, /amount\s*due/, /invoice\s*total/, /total\s*net/]);
 
   const draftLines: DraftInvoiceLine[] = [];
+  // Item #5: tables whose description column can't be identified but still
+  // LOOK like a real, repeating line-item table (see
+  // looksLikeUnrecognizedLineItemTable) are collected here rather than
+  // silently skipped — "if the data isn't ready properly, we don't have data
+  // at all" is a direct requirement, not a nice-to-have. Checked and thrown
+  // BEFORE the "zero draft lines" throw below, with a distinct message: that
+  // one means no table at all was found; this one means some tables parsed
+  // fine while another looked like line items and didn't.
+  const unrecognizedTables: string[] = [];
   for (const table of tables) {
-    const descriptionIndex = columnIndex(table.headers, [/^description$/, /^(?:item|product)\s+description$/, /^product$/]);
-    const amountIndex = columnIndex(table.headers, [/^extension$/, /^extended(?:\s+(?:cost|price))?$/, /^amount$/, /^line\s+total$/]);
-    const quantityIndex = columnIndex(table.headers, [/^(?:quantity\s+)?ship(?:ped)?$/, /^ship\s+quantity$/, /^qty\s+shipped$/, /^quantity$/, /^qty$/, /^order\s+quantity$/]);
+    const descriptionIndex = columnIndex(table.headers, DESCRIPTION_HEADER_PATTERNS);
+    const amountIndex = columnIndex(table.headers, AMOUNT_HEADER_PATTERNS);
+    const quantityIndex = columnIndex(table.headers, QUANTITY_HEADER_PATTERNS);
     if (descriptionIndex < 0 || (amountIndex < 0 && quantityIndex < 0)) {
+      if (descriptionIndex < 0 && looksLikeUnrecognizedLineItemTable(table)) {
+        unrecognizedTables.push(table.headers.filter(Boolean).join(", ") || "(blank headers)");
+      }
       continue;
     }
 
-    const codeIndex = columnIndex(table.headers, [/^item\s+(?:number|no|#)$/, /^vendor\s+(?:item|sku)/, /^sku$/, /^product\s+code$/]);
+    const codeIndex = columnIndex(table.headers, CODE_HEADER_PATTERNS);
     const brandIndex = columnIndex(table.headers, [/^brand$/]);
     const uomIndex = columnIndex(table.headers, [/^unit$/, /^uom$/, /^order\s+unit$/, /^ru\s+un$/]);
     const packIndex = columnIndex(table.headers, [/^unit\s+size$/, /^pack\s+size$/, /^size$/, /^pack$/]);
     const unitCostIndex = columnIndex(table.headers, [/^unit\s+price$/, /^unit\s+cost$/, /^price$/]);
-    const grossIndex = columnIndex(table.headers, [/^(?:line\s+)?gross$/]);
-    const discountIndex = columnIndex(table.headers, [/^(?:line\s+)?discount$/]);
-    const netIndex = columnIndex(table.headers, [/^(?:line\s+)?net$/]);
+    const grossIndex = columnIndex(table.headers, GROSS_HEADER_PATTERNS);
+    const discountIndex = columnIndex(table.headers, DISCOUNT_HEADER_PATTERNS);
+    const netIndex = columnIndex(table.headers, NET_HEADER_PATTERNS);
 
     for (const row of table.rows) {
       const rawDescription = cellAt(row, descriptionIndex);
@@ -455,7 +647,18 @@ export function parseLinesFromMarkdown(markdown: string): ParsedExtraction {
         [brand, rawDescription].filter((value, index, values) => value && values.indexOf(value) === index).join(" ") || null,
         512,
       );
-      const quantity = parsePrintedNumber(cellAt(row, quantityIndex));
+      const quantityCell = cellAt(row, quantityIndex);
+      let quantity = parsePrintedNumber(quantityCell);
+      // Compound cells ("1 Cases", "2 Units") never parse as a plain number
+      // — only fall back to the number/uom split when the plain parse
+      // already failed, so a vendor with a clean, separate Quantity column
+      // never engages this path.
+      let compoundUom: InvoiceLineUom | null = null;
+      if (quantity == null && quantityCell) {
+        const compound = parseCompoundQuantityCell(quantityCell);
+        quantity = compound.quantity;
+        compoundUom = compound.uom;
+      }
       const extension = parsePrintedNumber(cellAt(row, amountIndex));
       const unitCost = parsePrintedNumber(cellAt(row, unitCostIndex));
       const vendorItemCode = boundedValue(cellAt(row, codeIndex), 64);
@@ -472,7 +675,10 @@ export function parseLinesFromMarkdown(markdown: string): ParsedExtraction {
         description,
         packDescription,
         quantity: toDecimalString(quantity, 3),
-        uom: inferUom(cellAt(row, uomIndex)),
+        // Never overwrite a legitimately-found separate UOM column — the
+        // compound-cell fallback only fills in when that column found
+        // nothing for this row.
+        uom: inferUom(cellAt(row, uomIndex)) ?? compoundUom,
         packSize: parsePackSize(packDescription),
         unitCost: toDecimalString(unitCost, 4),
         extendedCost: toDecimalString(extension, 2),
@@ -487,6 +693,14 @@ export function parseLinesFromMarkdown(markdown: string): ParsedExtraction {
         matchConfidence: null,
       });
     }
+  }
+
+  if (unrecognizedTables.length > 0) {
+    throw new Error(
+      `pdf-inspector extracted ${unrecognizedTables.length} table(s) that look like line items but whose columns were not recognized (headers: ${unrecognizedTables
+        .map((headers) => `[${headers}]`)
+        .join(", ")}) — refusing to write a partial result.`,
+    );
   }
 
   if (draftLines.length === 0) {
@@ -843,37 +1057,25 @@ export function arithmeticCheck(lines: DraftInvoiceLine[], expectedTotal: number
 
 export type CrossCheckResult = { pass: true } | { pass: false; droppedLines: string[] };
 
+// Uses the SAME header-pattern constants as parseLinesFromMarkdown (see the
+// block above columnIndex()/cellAt()) — a single source of truth is itself
+// part of the fix for open item #37. This function used to maintain its own,
+// separately-drifting allowlist (missing "Item Name" among other gaps), which
+// meant a real vendor's line-item table could be silently skipped by the
+// parser AND go undetected by the safety net meant to catch exactly that.
 function countMarkdownTableDataRows(markdown: string): number {
   let count = 0;
+  const amountLikePatterns = [
+    ...AMOUNT_HEADER_PATTERNS,
+    ...GROSS_HEADER_PATTERNS,
+    ...DISCOUNT_HEADER_PATTERNS,
+    ...NET_HEADER_PATTERNS,
+  ];
   for (const table of parseMarkdownTables(markdown)) {
-    const descriptionIndex = columnIndex(table.headers, [
-      /^description$/,
-      /^(?:item|product)\s+description$/,
-      /^item$/,
-      /^product$/,
-    ]);
-    const quantityIndex = columnIndex(table.headers, [
-      /^(?:quantity\s+)?ship(?:ped)?$/,
-      /^ship\s+quantity$/,
-      /^qty\s+shipped$/,
-      /^quantity$/,
-      /^qty$/,
-      /^order\s+quantity$/,
-    ]);
-    const amountIndex = columnIndex(table.headers, [
-      /^extension$/,
-      /^extended(?:\s+(?:cost|price))?$/,
-      /^amount$/,
-      /^line\s+total$/,
-      /^(?:line\s+)?gross$/,
-      /^(?:line\s+)?net$/,
-    ]);
-    const codeIndex = columnIndex(table.headers, [
-      /^item\s+(?:number|no|#)$/,
-      /^vendor\s+(?:item|sku)/,
-      /^sku$/,
-      /^product\s+code$/,
-    ]);
+    const descriptionIndex = columnIndex(table.headers, DESCRIPTION_HEADER_PATTERNS);
+    const quantityIndex = columnIndex(table.headers, QUANTITY_HEADER_PATTERNS);
+    const amountIndex = columnIndex(table.headers, amountLikePatterns);
+    const codeIndex = columnIndex(table.headers, CODE_HEADER_PATTERNS);
     if (descriptionIndex < 0 || (quantityIndex < 0 && amountIndex < 0)) {
       continue;
     }

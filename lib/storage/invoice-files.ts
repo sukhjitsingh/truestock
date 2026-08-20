@@ -147,7 +147,31 @@ export async function writeInvoiceFile(
   bytes: Buffer,
 ): Promise<{ sha256: string; byteLength: number }> {
   const resolved = resolveStoredPath(storedPath);
-  await mkdir(path.dirname(resolved), { recursive: true });
+  const dir = path.dirname(resolved);
+  try {
+    await mkdir(dir, { recursive: true });
+  } catch (err) {
+    // Recursive mkdir already treats "directory already exists" as success —
+    // these are the OTHER case: some path segment already exists as a
+    // non-directory file, which recursive mkdir cannot paper over. Node
+    // reports this differently depending on WHICH segment is the stray file:
+    // EEXIST when it's the exact directory `dir` itself, ENOTDIR when it's an
+    // ANCESTOR of `dir` (e.g. INVOICE_STORAGE_DIR itself, arguably the more
+    // likely deployment mistake — both verified empirically against Node's
+    // real fs.mkdir behavior). Either way it is an environment/deployment
+    // problem (see open-items.md #38), not application data, so say so
+    // plainly rather than letting Node's raw filesystem error surface to
+    // whoever reads the log.
+    if (err instanceof Error && "code" in err && (err.code === "EEXIST" || err.code === "ENOTDIR")) {
+      throw new Error(
+        `Cannot create invoice storage directory "${dir}": a non-directory file already ` +
+          "occupies this path or one of its parent directories. This is an environment/" +
+          "deployment problem, not application data — check for a stray file at this path " +
+          "(or an ancestor of it) and remove or relocate it.",
+      );
+    }
+    throw err;
+  }
   await writeFile(resolved, bytes);
   return {
     sha256: createHash("sha256").update(bytes).digest("hex"),

@@ -43,6 +43,15 @@ next-env.d.ts
 # read path is GET /api/invoices/[id]/file.
 /var/
 
+# Real vendor invoice PDFs must never land in tests/ — a real Southern Glazer's
+# invoice PDF with real pricing was used locally to reproduce and verify the
+# Slice-4/5 extraction fixes (open-items.md #36) and was excluded from that
+# commit by hand rather than by any rule, so nothing stopped a future
+# `git add -A` from putting real supplier pricing into git history. Synthetic
+# markdown fixtures belong in the test files themselves, not real vendor PDFs
+# under tests/.
+tests/*.pdf
+
 # Jcode / Codex agent config — local tooling, not part of the project
 .agents/
 .codex/

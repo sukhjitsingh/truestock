@@ -17,10 +17,12 @@
  */
 import { describe, test, expect, afterEach } from "bun:test";
 import path from "node:path";
+import { mkdir, writeFile, rm } from "node:fs/promises";
 import {
   invoiceStorageRoot,
   resolveStoredPath,
   invoiceStorageKey,
+  writeInvoiceFile,
   sha256Hex,
   StoragePathError,
   ACCEPTED_INVOICE_CONTENT_TYPES,
@@ -139,6 +141,71 @@ describe("invoiceStorageKey", () => {
     process.env.INVOICE_STORAGE_DIR = "/tmp/truestock-invoices";
     const key = invoiceStorageKey(7, 42, "application/pdf");
     expect(resolveStoredPath(key)).toBe("/tmp/truestock-invoices/7/42.pdf");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// writeInvoiceFile — EEXIST from a non-directory occupying the target path
+// [open-items.md #38]
+// ---------------------------------------------------------------------------
+
+describe("writeInvoiceFile", () => {
+  test("throws a clear, named error — not a raw EEXIST — when a non-directory file already occupies the org directory path", async () => {
+    // Recursive mkdir already handles "the directory exists" fine; the case
+    // this guards is a path SEGMENT existing as an ordinary file where a
+    // directory needs to be created. Reproduce that directly: plant a real
+    // file at the exact path writeInvoiceFile needs to mkdir as a directory.
+    const dir = "/tmp/truestock-invoices-eexist-test";
+    process.env.INVOICE_STORAGE_DIR = dir;
+
+    await rm(dir, { recursive: true, force: true });
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, "7"), "not a directory");
+
+    await expect(writeInvoiceFile("7/42.pdf", Buffer.from("bytes"))).rejects.toThrow(
+      /non-directory file already occupies/,
+    );
+
+    // The thrown error must be OUR message, not Node's raw EEXIST.
+    try {
+      await writeInvoiceFile("7/42.pdf", Buffer.from("bytes"));
+      throw new Error("expected writeInvoiceFile to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).not.toMatch(/^EEXIST/);
+      expect((err as Error).message).toContain(path.join(dir, "7"));
+    }
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("throws the same clear, named error — not a raw ENOTDIR — when the stray non-directory file is an ANCESTOR of the org directory (e.g. INVOICE_STORAGE_DIR itself), not the org directory itself", async () => {
+    // The EEXIST case above plants the stray file at the exact directory
+    // writeInvoiceFile needs to mkdir. This plants it one level higher —
+    // at INVOICE_STORAGE_DIR itself, arguably the more likely real deployment
+    // mistake (a bad symlink/rsync leaving a placeholder file where the
+    // storage root should be a directory). Node reports THIS case as
+    // ENOTDIR, not EEXIST — verified directly against Node's real fs.mkdir
+    // behavior — and the guard must catch both, not just the leaf case.
+    const dir = "/tmp/truestock-invoices-enotdir-ancestor-test";
+    process.env.INVOICE_STORAGE_DIR = dir;
+
+    await rm(dir, { recursive: true, force: true });
+    await writeFile(dir, "not a directory — this stray file occupies the storage root itself");
+
+    await expect(writeInvoiceFile("7/42.pdf", Buffer.from("bytes"))).rejects.toThrow(
+      /non-directory file already occupies/,
+    );
+
+    try {
+      await writeInvoiceFile("7/42.pdf", Buffer.from("bytes"));
+      throw new Error("expected writeInvoiceFile to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).not.toMatch(/^ENOTDIR/);
+    }
+
+    await rm(dir, { recursive: true, force: true });
   });
 });
 

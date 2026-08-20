@@ -107,3 +107,7 @@ an untracked real invoice PDF fixture that needs gitignoring or replacing with a
 #33 (matching never proven through the real pipeline) got a progress note: the container
 technique above unblocks it, but the new tests prove routing, not `matchedProductId` end to
 end — still open.
+
+**Items #34-#38 closed 2026-08-19** — see [[southern_glazers_template_and_open_items_34_38]]
+(this dir) for the fix, the two real bugs review caught in it, and a new vendor template
+doc built from the real Southern Glazer's invoice that originally surfaced these findings.
