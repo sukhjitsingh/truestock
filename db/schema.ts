@@ -897,9 +897,10 @@ export const countLineWrite = mysqlTable(
 // Invoice — Phase 2.5, Slice 1 (OCR invoice automation)
 // ---------------------------------------------------------------------------
 // docs/plans/phase-2.5-invoice-automation/02-architecture.md §2 is the spec.
-// Only `invoice` and `extraction_job` are built in this slice, deliberately —
-// `invoice_line`, `vendor_alias`, `audit_packet`, `audit_packet_file` and
-// `product_cost_history` are later slices and are NOT defined here.
+// Only `invoice` and `extraction_job` were built in Slice 1. `invoice_line`
+// (Slice 2), `vendor_alias` (Slice 3) and `product_cost_history` (Slice 4,
+// below) have since been added. `audit_packet` and `audit_packet_file`
+// remain later-slice tables and are NOT defined here yet.
 //
 // [AR-4] The status machine (uploaded → processing → needs_review →
 // reviewed → approved | rejected) is declared as data in
@@ -1310,6 +1311,12 @@ export const invoiceLine = mysqlTable(
       table.organizationId,
       table.vendorItemCode,
     ),
+    // Slice 4: target of `product_cost_history`'s composite tenant FK on
+    // `source_invoice_line_id`. Same role as every other
+    // `*_organization_id_id_unique` in this file (vendor, location, product,
+    // count, count_line, invoice, extraction_job) — added here now that a
+    // child table finally needs to reference an invoice_line row by id.
+    uniqueIndex("invoice_line_organization_id_id_unique").on(table.organizationId, table.id),
     // Tenant integrity [AR-2] — mirrors extraction_job's own composite FK
     // exactly. A cross-tenant invoice_id here would let one tenant's
     // extraction drafts (and later, the review screen's writes) attach to
@@ -1428,6 +1435,126 @@ export const vendorAlias = mysqlTable(
       columns: [table.organizationId, table.vendorId],
       foreignColumns: [vendor.organizationId, vendor.id],
       name: "vendor_alias_organization_vendor_fk",
+    }).onDelete("restrict"),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// ProductCostHistory — Phase 2.5, Slice 4 (cost flow)
+// ---------------------------------------------------------------------------
+// docs/plans/phase-2.5-invoice-automation/04-slices.md, Slice 4: when the
+// owner approves an invoice, `lib/domain/cost-derivation.ts:deriveUnitCost`
+// computes a per-unit cost for each matched product/deposit-free line, and
+// that write is recorded here BEFORE `product.current_unit_cost` is updated
+// — same INSERT-then-UPDATE order as every other snapshot-before-mutate
+// pattern in this file (count_line's unit_cost_at_count is the closest
+// analogue: never re-derive a historical value from current product data).
+//
+// Append-only, like `count_line_write` — no `updated_at`, no soft-delete
+// flag, and application code must never UPDATE or DELETE a row here. Unlike
+// count_line_write, there is no separate `created_at`: `effective_at` IS the
+// row's timestamp (the instant the approving transaction ran), so a second
+// column recording the same instant a second time would just be a driftable
+// copy of it.
+//
+// [AR-4] `UNIQUE(source_invoice_line_id)` is the idempotency BACKSTOP, not
+// the primary mechanism — the primary mechanism is the CAS on
+// `invoice.status` (reviewed -> approved) in `approveInvoiceAction`, which
+// returns success without re-entering the cost-writing loop at all on a
+// replay. This constraint exists so a bug in that CAS still fails loudly
+// (1062, transaction rollback) instead of silently doubling a product's cost
+// history. Deliberately a PLAIN unique, not scoped to organization_id — a
+// `source_invoice_line_id` already identifies exactly one row in a
+// tenant-scoped table (`invoice_line`), so there is nothing left for a
+// per-tenant scope to add, same reasoning as `count_line_write`'s global
+// `client_line_id` unique.
+export const productCostHistory = mysqlTable(
+  "product_cost_history",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    organizationId: int("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "restrict" }),
+    // None of the three ids below carry a single-column FK — each is covered
+    // by its own composite tenant FK at the bottom of this table, same
+    // pattern as count_line.countId / invoice_line.invoiceId /
+    // vendor_alias.vendorId. All three are resolved server-side inside
+    // `approveInvoiceAction`'s own transaction (never taken raw from a
+    // client payload the way invoice_line.matchedProductId is), but the
+    // composite FK is still the correct shape here: it's what lets this
+    // table reference product/invoice/invoice_line "for THIS organization"
+    // without a join, matching every other cross-table reference in this
+    // file rather than being a special case.
+    productId: int("product_id").notNull(),
+    sourceInvoiceId: int("source_invoice_id").notNull(),
+    sourceInvoiceLineId: int("source_invoice_line_id").notNull(),
+    // Same precision as product.current_unit_cost — this IS the value
+    // written there, snapshotted at the moment it took effect.
+    unitCost: decimal("unit_cost", { precision: 10, scale: 4 }).notNull(),
+    // NULL only for a product's first-ever recorded cost (nothing to chain
+    // from). Read with `SELECT current_unit_cost ... FOR UPDATE` inside the
+    // same transaction that writes this row [AR-5] — reading it outside the
+    // transaction would let two invoices approved close together for the
+    // same product both record the same stale "previous" cost, breaking the
+    // A->B, B->C chain `previous_unit_cost_chains` asserts rather than two
+    // jumps from the same baseline.
+    previousUnitCost: decimal("previous_unit_cost", { precision: 10, scale: 4 }),
+    // The moment this cost took effect — i.e. when the approving transaction
+    // ran. Doubles as this row's own creation timestamp; see the table
+    // comment above for why there is no separate created_at.
+    effectiveAt: timestamp("effective_at").notNull().defaultNow(),
+    // The user who approved the invoice this cost was derived from.
+    // Deliberately NOT NULL, unlike invoice.approvedBy's nullable shape —
+    // approvedBy is nullable because it lives on a row (`invoice`) that
+    // exists BEFORE approval happens; this column lives on a row that only
+    // ever gets created DURING an approval, by the owner performing it, so
+    // "who did this" is always known at insert time. Same reasoning as
+    // count_line_write.writtenBy (also NOT NULL) over count.closedBy (nullable,
+    // same "row predates the action" shape as approvedBy). The FK
+    // itself — int referencing user.id, ON DELETE RESTRICT — is the exact
+    // pattern approvedBy uses; only the nullability differs, deliberately.
+    createdBy: int("created_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+  },
+  (table) => [
+    uniqueIndex("product_cost_history_source_invoice_line_id_unique").on(
+      table.sourceInvoiceLineId,
+    ),
+    // "This product's price history" — the read a future cost-history screen
+    // makes, same role as vendor_alias_organization_product_idx /
+    // invoice_line_organization_matched_product_idx above.
+    index("product_cost_history_organization_product_idx").on(
+      table.organizationId,
+      table.productId,
+    ),
+    // Tenant integrity [AR-2] — same reasoning as every other composite
+    // tenant FK in this file. ON DELETE RESTRICT: nothing hard-deletes a
+    // product (invariant 6), so this is a backstop, not a path anything
+    // exercises.
+    foreignKey({
+      columns: [table.organizationId, table.productId],
+      foreignColumns: [product.organizationId, product.id],
+      name: "product_cost_history_organization_product_fk",
+    }).onDelete("restrict"),
+    // ON DELETE RESTRICT: nothing hard-deletes an invoice (approved is
+    // terminal, never removed) — same reasoning as
+    // extraction_job_organization_invoice_fk / invoice_line_organization_invoice_fk.
+    foreignKey({
+      columns: [table.organizationId, table.sourceInvoiceId],
+      foreignColumns: [invoice.organizationId, invoice.id],
+      name: "product_cost_history_organization_invoice_fk",
+    }).onDelete("restrict"),
+    // ON DELETE RESTRICT: an invoice_line only ever disappears via its
+    // parent invoice's CASCADE (see invoice_line's own table comment on why
+    // that coexists safely with a sibling RESTRICT), and nothing in this app
+    // deletes an approved invoice's lines out from under its own cost
+    // history — a RESTRICT here is a correctness backstop against exactly
+    // that.
+    foreignKey({
+      columns: [table.organizationId, table.sourceInvoiceLineId],
+      foreignColumns: [invoiceLine.organizationId, invoiceLine.id],
+      name: "product_cost_history_organization_invoice_line_fk",
     }).onDelete("restrict"),
   ],
 );

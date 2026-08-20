@@ -2,17 +2,18 @@
 
 /**
  * Invoice server actions — Phase 2.5, Slice 1 (upload + archive tracer
- * bullet) and Slice 2 (extraction review). Every export checks session +
- * role itself (CLAUDE.md invariant 7) via lib/authz.ts, never relying on
- * middleware. All writes run through lib/domain/invoices.ts and
- * lib/domain/invoice-lines.ts, which own the upload/confirm handshake
+ * bullet), Slice 2 (extraction review), and Slice 4 (approve / cost flow).
+ * Every export checks session + role itself (CLAUDE.md invariant 7) via
+ * lib/authz.ts, never relying on middleware. All writes run through
+ * lib/domain/invoices.ts, lib/domain/invoice-lines.ts, and (for approval)
+ * lib/domain/invoice-approval.ts, which own the upload/confirm handshake
  * [AR-6], the tenant-ownership checks [AR-2], and the two-query
  * owner/manager split [AR-7].
  *
  * Upload and confirm are owner + manager, never staff — invoices are not a
  * staff concern (spec §4: staff is count-only). Everything else here —
  * reading a single invoice's full (unredacted) detail, its lines, reviewing,
- * rejecting, and resending to extraction — is owner-only, matching
+ * approving, rejecting, and resending to extraction — is owner-only, matching
  * `lib/authz.ts:canSeeCost`; the manager archive list goes through
  * `listInvoicesRedactedAction`, backed by a query that never selects a
  * monetary column.
@@ -25,6 +26,7 @@ import { requireRole } from "@/lib/authz";
 import { runAction, type ActionResult } from "@/lib/action-result";
 import * as invoices from "@/lib/domain/invoices";
 import * as invoiceLines from "@/lib/domain/invoice-lines";
+import { approveInvoice, type ApproveInvoiceResult } from "@/lib/domain/invoice-approval";
 import {
   uploadInvoiceSchema,
   confirmUploadSchema,
@@ -34,6 +36,7 @@ import {
   reviewInvoiceSchema,
   rejectInvoiceSchema,
   resendToExtractionSchema,
+  approveInvoiceSchema,
 } from "@/lib/validation/invoices";
 
 export interface UploadInvoiceResult {
@@ -184,6 +187,25 @@ export async function rejectInvoiceAction(
       "rejected",
       { rejectionReason: parsed.reason },
     );
+  });
+}
+
+/**
+ * The owner's `reviewed -> approved` submit (Phase 2.5, Slice 4). Derives a
+ * unit cost for every matched product line, snapshots it onto
+ * `product_cost_history`, and writes it forward onto
+ * `product.current_unit_cost` — see `lib/domain/invoice-approval.ts` for the
+ * full CAS/transaction contract. A replay (the same invoice approved twice,
+ * sequentially or concurrently) returns the same success with
+ * `costLinesApplied: 0`, never an error — see that file's header for why.
+ */
+export async function approveInvoiceAction(
+  input: unknown,
+): Promise<ActionResult<ApproveInvoiceResult>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = approveInvoiceSchema.parse(input);
+    return approveInvoice(actor, parsed.invoiceId);
   });
 }
 

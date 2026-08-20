@@ -132,7 +132,13 @@ export interface InvoiceRowRedacted {
   createdAt: Date;
 }
 
-function toInvoiceRow(row: typeof invoice.$inferSelect): InvoiceRow {
+/**
+ * Exported for `lib/domain/invoice-approval.ts`, which needs to turn a raw
+ * `invoice` row it read (and locked) inside its OWN transaction into the same
+ * `InvoiceRow` shape every other read in this file returns — rather than
+ * duplicating this mapping or re-selecting through a second, unlocked query.
+ */
+export function toInvoiceRow(row: typeof invoice.$inferSelect): InvoiceRow {
   return {
     id: row.id,
     organizationId: row.organizationId,

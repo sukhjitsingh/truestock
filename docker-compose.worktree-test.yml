@@ -1,0 +1,99 @@
+# Standalone, ISOLATED test stack for this worktree only
+# (.claude/worktrees/phase-2.5-slice-3).
+#
+# Not a merge/override of the main docker-compose.yml — Compose concatenates
+# list-type keys (e.g. `ports`) across merged files instead of replacing them,
+# so a merge would fail to bind. This is a complete, independent file: its own
+# container_name, its own volumes, no published ports at all (only `docker
+# compose exec` is needed — nothing here needs a host port), and it is meant
+# to be run with `-p truestock-slice4-test` so it never collides with the main
+# checkout's own `truestock-mariadb`/`truestock-app` containers, which run
+# from a DIFFERENT working directory and are frequently already up while this
+# worktree is being tested.
+#
+# See .claude/agent-memory/backend/testing_parallel_worktree_docker_and_migration_race.md
+# for the incident this is fixing.
+#
+# Usage:
+#   docker compose -f docker-compose.worktree-test.yml -p truestock-slice4-test up -d --wait db
+#   docker compose -f docker-compose.worktree-test.yml -p truestock-slice4-test build app
+#   docker compose -f docker-compose.worktree-test.yml -p truestock-slice4-test run --rm app bunx drizzle-kit migrate
+#   docker compose -f docker-compose.worktree-test.yml -p truestock-slice4-test run --rm -e DATABASE_URL=mysql://truestock:truestock@db:3306/truestock_test app bun test
+#   docker compose -f docker-compose.worktree-test.yml -p truestock-slice4-test down -v
+
+services:
+  db:
+    image: mariadb:11.8
+    container_name: truestock-slice4-test-mariadb
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+00:00
+      - --max-connections=100
+      - --innodb-buffer-pool-size=256M
+      - --local-infile=0
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: truestock
+      MARIADB_USER: truestock
+      MARIADB_PASSWORD: truestock
+    ports:
+      # Slice 4 browser verification only, mirroring the app service's own
+      # temporary port above — the verification script's host-side mysql2
+      # connection (the "ground truth" queries it runs against the DB
+      # directly, same pattern as scripts/verify-browser.mjs) needs a host
+      # port to reach this container from outside the compose network.
+      # 3309: 3307 and 3308 are already the main checkout's and a prior
+      # Slice 3 verify stack's own bindings. 127.0.0.1 only.
+      - "127.0.0.1:3309:3306"
+    volumes:
+      - truestock-slice4-test-mariadb-data:/var/lib/mysql
+      - ./docker/mariadb/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'mariadb-admin ping -h 127.0.0.1 -u root -p"$$MARIADB_ROOT_PASSWORD" --silent'
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/app/Dockerfile
+    container_name: truestock-slice4-test-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: mysql://truestock:truestock@db:3306/truestock
+      NEXT_TELEMETRY_DISABLED: "1"
+      # Slice 4 browser verification only (temporary — this file otherwise
+      # publishes no ports; see the header comment). Published on 3010
+      # rather than 3000 because 3000 is already bound by the main
+      # checkout's own truestock-app container (0.0.0.0:3000, a different
+      # working directory, frequently up at the same time — the exact
+      # collision this file's header exists to avoid). Bound to 127.0.0.1
+      # only, matching the main docker-compose.yml's own posture.
+      #
+      # BETTER_AUTH_URL and DEV_LAN_ORIGIN both point at the published
+      # origin: lib/auth.ts's trustedOrigins list is hardcoded to
+      # http://localhost:3000 / http://127.0.0.1:3000 in dev, so signing in
+      # from :3010 would 403 on the Origin check without DEV_LAN_ORIGIN
+      # widening it (that file's own comment documents this exact failure
+      # mode for a mismatched port).
+      BETTER_AUTH_URL: http://localhost:3010
+      BETTER_AUTH_SECRET: dev-only-local-secret-not-used-anywhere-real
+      DEV_LAN_ORIGIN: "http://localhost:3010"
+    ports:
+      - "127.0.0.1:3010:3000"
+    volumes:
+      - .:/app
+      - truestock-slice4-test-node-modules:/app/node_modules
+      - truestock-slice4-test-next-cache:/app/.next
+
+volumes:
+  truestock-slice4-test-mariadb-data:
+  truestock-slice4-test-node-modules:
+  truestock-slice4-test-next-cache:
