@@ -89,19 +89,58 @@ the first pass, 3 from the AR-2 audit, 10 from the AR-4→AR-7 audit).
       product picker, manually matching through the real Approve button creates a
       real `vendor_alias` row, and a second invoice with the same vendor+item code
       arrives pre-matched with no badge.
-- [ ] Slice 4 — Cost Flow + Alerts (Phase D). **Deferred to a fresh session** —
-      stopped before starting per the project owner's explicit call (2026-08-15,
-      out of session budget). Spec: `04-slices.md` ~lines 125-159 —
-      `product_cost_history` table, `product.current_unit_cost`,
-      `approveInvoiceAction` (owner-only, single transaction, CAS
-      `reviewed → approved` as the concurrency gate, `deriveUnitCost`,
-      `SELECT ... FOR UPDATE` on the previous cost inside the transaction,
-      `UNIQUE(source_invoice_line_id)` on cost history so re-approval can't
-      double-apply), alert badges ("discount > 50%", "negative net"), nine
-      adversarial tests including idempotent-on-replay and correct cost chaining.
-      Branch plan: stack `feat/phase-2.5-slice-4` on `feat/phase-2.5-slice-3`'s
-      tip (not on the not-yet-merged integration branch), so it doesn't have to
-      wait on a human PR merge to start.
+- [x] Slice 4 — Cost Flow + Alerts (Phase D). Branch `feat/phase-2.5-slice-4`,
+      stacked on `feat/phase-2.5-slice-3`'s tip as planned. Built via the
+      `Workflow` tool (database → backend → frontend → code-reviewer +
+      security-reviewer in parallel → verify), 2026-08-19. New
+      `product_cost_history` table (`lib/domain/cost-derivation.ts`'s
+      `deriveUnitCost`, composite tenant FKs to `product`/`invoice`/
+      `invoice_line`, `UNIQUE(source_invoice_line_id)` — deliberately global,
+      not tenant-scoped, mirroring `count_line_write.client_line_id` — a
+      backstop, not the primary idempotency mechanism), migration
+      `drizzle/0007_yielding_gideon.sql`. `approveInvoiceAction`
+      (`lib/domain/invoice-approval.ts`, owner-only) runs the whole
+      `reviewed → approved` transition inside one `db.transaction` wrapped in
+      `withLockRetry`: CAS on `reviewed → approved` as the concurrency gate
+      (zero rows affected on replay returns success, not an error — the
+      primary idempotency mechanism), a per-line `SELECT ... FOR UPDATE` on
+      the previous cost, a `product_cost_history` insert, and a tenant-scoped
+      `product.current_unit_cost` update. `lib/invoice-line-alerts.ts`'s
+      `computeLineAlerts` adds two live-computed, non-persisted alert badges
+      ("discount > 50%", "negative net") — deliberately separate from the
+      DB-persisted `KNOWN_EXCEPTION_FLAGS` system, not an extension of it.
+      `components/office/invoice-review-form.tsx` gained a distinct
+      "Approve & post costs" button (`canApproveCosts = status ===
+      "reviewed"`), separate from Slice 2's own Approve button, since the two
+      trigger different transitions on different preconditions. All nine
+      named adversarial tests plus acceptance-criteria/happy-path/role-gate
+      coverage landed in `tests/invoice-approval-path.test.ts`
+      (`review_rejects_cross_tenant_product`,
+      `invoice_line_fk_refuses_cross_tenant`,
+      `approve_is_idempotent_on_replay`, `approve_concurrent_applies_once`,
+      `approve_rolls_back_on_midway_failure`, `schema_matches_live_columns`,
+      `approved_invoice_cannot_be_rejected`, `previous_unit_cost_chains`,
+      `no_reference_to_unit_cost_column`) plus 11 cases in
+      `tests/invoice-line-alerts.test.ts`. **391/391 backend tests pass
+      against real MariaDB** (independently re-run, not just the subagents'
+      self-report); `tsc --noEmit` and `eslint` both clean (the sole lint
+      warning is pre-existing, in `catalog-table.tsx`, unrelated to this
+      slice). `code-reviewer` and `security-reviewer` both returned zero
+      critical/high findings. Verified in a real, isolated-Docker browser run
+      (`scripts/verify-browser-slice4.mjs`, signed in as
+      `verify-owner@truestock.local`) — 13/13 checks: "Approve & post costs"
+      renders only on a `reviewed` invoice and not on `needs_review`; the
+      "discount > 50%" badge renders live from in-progress form state before
+      any submit, and from a persisted reviewed line; clicking Approve moves
+      the invoice to `approved` (terminal, no action buttons remain);
+      `product.current_unit_cost` and one `product_cost_history` row both
+      land correctly, checked via direct `mysql2` ground-truth queries against
+      the database, not the page's own claim; the catalog edit screen shows
+      the updated cost. New reusable pattern this slice:
+      `docker-compose.worktree-test.yml` — a complete, independent (not
+      merged/overridden) Compose file for isolated per-worktree verification,
+      preventing the collisions with other concurrently-running worktrees'
+      Docker stacks that hit Slices 1 and 3.
 - [ ] Slice 5 — Audit Packet (Phase E)
 - Slice 6 — not built by design (auto-approve deferred, see `04-slices.md`)
 

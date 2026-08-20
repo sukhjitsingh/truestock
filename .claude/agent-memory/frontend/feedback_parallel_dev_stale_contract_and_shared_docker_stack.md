@@ -1,6 +1,6 @@
 ---
 name: parallel-dev-stale-contract-and-shared-docker-stack
-description: Lessons on shared/parallel dev infrastructure across Phase 2.5 Slices 2-3 — stale provisional contracts, a shared docker stack that vanishes or silently serves the wrong branch, hand-seeded invoice fixtures needing retention_until, and the sandbox's heredoc refusal
+description: Lessons on shared/parallel dev infrastructure across Phase 2.5 Slices 2-4 — stale provisional contracts, a shared docker stack that vanishes or silently serves the wrong branch, hand-seeded invoice fixtures needing retention_until, the sandbox's heredoc refusal, and test:docker not being worktree-project-scoped
 metadata:
   type: feedback
 ---
@@ -84,3 +84,21 @@ overly-broad heuristic on command complexity, not a git-specific check.
 gets refused this way, don't fight the heuristic — use the `Write` tool
 instead (not subject to the same command-parsing check) for file creation,
 and reserve Bash for single, plain commands.
+
+**5. `package.json`'s `test:docker` script (`docker compose exec -T -e
+DATABASE_URL=... app bun test`) is NOT worktree-project-scoped** — it omits
+`-p`/`-f`, so it targets whatever `docker compose exec` resolves to by
+default (the directory-derived project), which is wrong the moment a
+worktree has its own named stack (e.g. `truestock-slice4-test`, built by a
+prior backend-agent turn per lesson 3 above). Symptom if you instead run
+plain `bun test` inside that container: 129 pass but 15 unrelated fail, all
+"Refusing to run tests against database 'truestock' — the name must end in
+'_test'" — the container's default `DATABASE_URL` env points at the
+non-test DB, and `bun test` alone doesn't override it the way `test:docker`
+does. **How to apply:** when a worktree already has its own isolated
+`-p <project> -f docker-compose.worktree-test.yml` stack running, don't run
+bare `bun run test:docker` — reconstruct the equivalent command by hand with
+the worktree's `-p`/`-f` flags: `docker compose -p <project> -f
+docker-compose.worktree-test.yml exec -T -e
+DATABASE_URL=mysql://truestock:truestock@db:3306/truestock_test app bun
+test`.

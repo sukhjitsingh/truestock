@@ -78,6 +78,11 @@ const TABLES_CHILD_FIRST = [
   "count_line_write",
   "count_line",
   "count",
+  // Phase 2.5, Slice 4. References product, invoice, AND invoice_line (all
+  // three composite tenant FKs) — must precede all three, so it goes here,
+  // before "product" below, which is early enough to also precede
+  // "invoice_line" and "invoice" further down.
+  "product_cost_history",
   "product_par",
   "product_barcode",
   "product",

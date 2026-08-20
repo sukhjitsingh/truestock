@@ -117,4 +117,16 @@ export const resendToExtractionSchema = z.object({
 });
 export type ResendToExtractionInput = z.infer<typeof resendToExtractionSchema>;
 
+/**
+ * Phase 2.5, Slice 4 — the owner's `reviewed -> approved` submit. No body
+ * beyond the invoice id: everything the approval writes (unit costs, the
+ * `product_cost_history` snapshot, `approved_at`/`approved_by`) is derived
+ * server-side inside `lib/domain/invoice-approval.ts:approveInvoice`, never
+ * accepted from the client.
+ */
+export const approveInvoiceSchema = z.object({
+  invoiceId: z.number().int().positive(),
+});
+export type ApproveInvoiceInput = z.infer<typeof approveInvoiceSchema>;
+
 export { MAX_INVOICE_BYTES };
