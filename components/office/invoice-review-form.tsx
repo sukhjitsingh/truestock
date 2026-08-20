@@ -59,6 +59,17 @@
  * `approved` — fully terminal, read-only, no actions at all.
  * `uploaded` / `processing` never reach this component — the page renders a
  * plain "not ready for review" state instead (no lines exist yet to show).
+ *
+ * ## Approve & post costs (Phase 2.5, Slice 4)
+ *
+ * A SEPARATE control from the `needs_review` "Approve" button above —
+ * `reviewInvoiceAction` (that button) and `approveInvoiceAction` (this one)
+ * are different actions on different legal edges of `INVOICE_TRANSITIONS`
+ * (`needs_review -> reviewed` vs. `reviewed -> approved`) and are never
+ * offered on the same status, so there is no ambiguity about which one a tap
+ * triggers. Only rendered when `invoice.status === "reviewed"`; this
+ * component's own role gate is belt, not buckle — `approveInvoiceAction`
+ * re-checks `requireRole("owner")` itself, same as every other action here.
  */
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -66,6 +77,7 @@ import {
   reviewInvoiceAction,
   rejectInvoiceAction,
   resendToExtractionAction,
+  approveInvoiceAction,
 } from "@/app/actions/invoices";
 import type { InvoiceRow } from "@/lib/domain/invoices";
 import type { InvoiceLineRow, InvoiceLineUom } from "@/lib/domain/invoice-lines";
@@ -78,6 +90,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/field";
 import { NullValue } from "@/components/ui/null-value";
+import { StatusPill } from "@/components/ui/status-pill";
 import {
   TableContainer,
   Table,
@@ -89,6 +102,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { InvoiceExceptionBadges } from "@/components/office/invoice-exception-badges";
+import { computeLineAlerts } from "@/lib/invoice-line-alerts";
 import { formatCostForInput } from "@/lib/utils";
 
 /** One `corrections[]` entry, exactly as `reviewInvoiceSchema` (the SAME
@@ -160,9 +174,12 @@ export function InvoiceReviewForm({
   const [reason, setReason] = useState("");
   const [reasonError, setReasonError] = useState<string | null>(null);
 
+  const [approvingCosts, setApprovingCosts] = useState(false);
+
   const editable = invoice.status === "needs_review";
   const canReturn = invoice.status === "needs_review" || invoice.status === "reviewed";
   const canRetry = invoice.status === "rejected";
+  const canApproveCosts = invoice.status === "reviewed";
 
   function updateField(lineId: number, key: keyof LineFieldState, value: string) {
     setFields((prev) => ({ ...prev, [lineId]: { ...prev[lineId], [key]: value } }));
@@ -221,6 +238,28 @@ export function InvoiceReviewForm({
       router.refresh();
     } catch {
       setPending(false);
+      setError("Could not reach the server. Check your connection and try again.");
+    }
+  }
+
+  // No-arg, not a form `onSubmit` — this button lives inside the outer
+  // `<form onSubmit={handleApprove}>` (the "reviewed" status never renders
+  // `editable`, so that outer submit is a no-op for this status regardless,
+  // but a NESTED `<form>` here would be invalid HTML). `type="button"` plus
+  // `onClick` avoids that, matching the "Return" button a few lines below.
+  async function handleApproveCosts() {
+    setApprovingCosts(true);
+    setError(null);
+    try {
+      const result = await approveInvoiceAction({ invoiceId: invoice.id });
+      setApprovingCosts(false);
+      if (!result.ok) {
+        setError(result.error.message);
+        return;
+      }
+      router.refresh();
+    } catch {
+      setApprovingCosts(false);
       setError("Could not reach the server. Check your connection and try again.");
     }
   }
@@ -328,6 +367,14 @@ export function InvoiceReviewForm({
                   const rowErrors = lineErrors[line.id];
                   const matchedProduct =
                     line.matchedProductId != null ? productById.get(line.matchedProductId) : undefined;
+                  // Live field state while this row is editable (mirrors the
+                  // Gross/Discount/Net cell's own editable branch below),
+                  // the persisted line otherwise — never a mix of the two.
+                  const lineAlerts = computeLineAlerts(
+                    editable ? state.rawGross : line.rawGross,
+                    editable ? state.rawDiscount : line.rawDiscount,
+                    editable ? state.rawNet : line.rawNet,
+                  );
                   return (
                     <TableRow key={line.id} interactive={false} className="align-top">
                       <TableCell>
@@ -336,6 +383,15 @@ export function InvoiceReviewForm({
                             {line.description ?? <NullValue reason="not-entered" />}
                           </span>
                           <InvoiceExceptionBadges flags={line.exceptionFlags} />
+                          {lineAlerts.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {lineAlerts.map((alert) => (
+                                <StatusPill key={alert.key} tone={alert.tone}>
+                                  {alert.label}
+                                </StatusPill>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
                       </TableCell>
                       <TableCell numeric className="text-muted-foreground">
@@ -449,11 +505,21 @@ export function InvoiceReviewForm({
           </p>
         ) : null}
 
-        {editable || canReturn ? (
+        {editable || canReturn || canApproveCosts ? (
           <div className="mt-6 flex flex-wrap items-center gap-3">
             {editable ? (
               <Button type="submit" size="primary" disabled={pending}>
                 {pending ? "Approving…" : "Approve"}
+              </Button>
+            ) : null}
+            {canApproveCosts ? (
+              <Button
+                type="button"
+                size="primary"
+                disabled={pending || approvingCosts}
+                onClick={handleApproveCosts}
+              >
+                {approvingCosts ? "Posting costs…" : "Approve & post costs"}
               </Button>
             ) : null}
             {canReturn ? (
@@ -461,7 +527,7 @@ export function InvoiceReviewForm({
                 type="button"
                 variant="outline"
                 size="primary"
-                disabled={pending}
+                disabled={pending || approvingCosts}
                 onClick={() => setReturning(true)}
               >
                 Return
