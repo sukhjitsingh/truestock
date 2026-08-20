@@ -186,6 +186,50 @@ open a fresh pool (and fresh database connections) on every file save.
   Also verified: the full chain `0000` → `0006` applies clean from empty
   (`tests/helpers/test-db.ts:migrateTestDatabase()` against a fresh
   `truestock_test` database on MariaDB 11.8.8).
+- `0007_yielding_gideon.sql` (Phase 2.5, Slice 4) creates `product_cost_history`
+  and adds `invoice_line_organization_id_id_unique` — `invoice_line` had no
+  `(organization_id, id)` composite unique index until now because nothing
+  needed to reference an `invoice_line` row by id from another table; this
+  slice's `source_invoice_line_id` composite tenant FK is the first thing
+  that does. `product_cost_history` carries THREE composite tenant foreign
+  keys — `(organization_id, product_id)` → `product`,
+  `(organization_id, source_invoice_id)` → `invoice`, and
+  `(organization_id, source_invoice_line_id)` → `invoice_line` — plus a
+  plain (not tenant-scoped) `UNIQUE(source_invoice_line_id)`, the idempotency
+  backstop named in `docs/plans/phase-2.5-invoice-automation/04-slices.md`
+  Slice 4 [AR-4]: the primary idempotency mechanism is the CAS on
+  `invoice.status` in `approveInvoiceAction`, which skips the cost-writing
+  loop entirely on a replay, so this constraint only ever fires if that CAS
+  logic has a bug. Verified against MariaDB 11.8.8 in a throwaway database:
+  a cross-tenant `product_id` insert is rejected (1452,
+  `product_cost_history_organization_product_fk`), a same-tenant insert
+  succeeds, and a duplicate `source_invoice_line_id` is rejected (1062,
+  `product_cost_history_source_invoice_line_id_unique`). Purely additive;
+  reversal is:
+
+  ```sql
+  DROP TABLE product_cost_history;
+  ALTER TABLE invoice_line DROP INDEX invoice_line_organization_id_id_unique;
+  ```
+
+  Order matters: `product_cost_history`'s FK on `source_invoice_line_id`
+  references that index, so it must be dropped first — MariaDB refuses to
+  drop an index a live foreign key still depends on (1553). No `DROP COLUMN`
+  is involved this time (the addition to `invoice_line` is an index only,
+  not a column), so the `mariadb-composite-index-survives-column-drop`
+  gotcha from `0006`'s entry above does not apply here, but the same
+  "verify with `SHOW CREATE TABLE`, don't assume" discipline does: verified
+  end-to-end against MariaDB 11.8.8 in a throwaway database — applying
+  `0007` then the reversal above leaves `invoice_line` byte-identical (via
+  `SHOW CREATE TABLE`, modulo `AUTO_INCREMENT`/collation, which differ only
+  because the comparison database was created separately) to its state
+  right after `0006`, and `product_cost_history` gone.
+
+  Also verified: the full chain `0000` → `0007` applies clean from empty in
+  a throwaway database (`bun run db:migrate` against a fresh scratch
+  database on MariaDB 11.8.8) — the same proof `schema_matches_live_columns`
+  (Slice 4's own adversarial test, backend stage) makes independently
+  against `truestock_test` via `migrateTestDatabase()`.
 
 ## Seeding
 
