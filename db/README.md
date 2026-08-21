@@ -114,15 +114,13 @@ open a fresh pool (and fresh database connections) on every file save.
   matters. `scripts/check-migrations-immutable.sh` enforces this in CI.
   (Before that date, `0000` was regenerated in place several times as review
   feedback landed — that era is over.)
-- Nothing has yet been applied to a *production* database. The full chain
-  `0000 → 0001 → 0002` was verified end-to-end in Docker — first against
-  MySQL 8.0 on 2026-07-27, then re-verified against **MariaDB 11.8.8** on
-  2026-07-28 once the production engine was established. Both runs included
-  probe queries proving the composite tenant FKs reject cross-tenant ids
-  (1452), the `product_par` generated column rejects a second overall par
-  (1062), `DECIMAL(10,4)` round-trips exactly, and accented product names
-  survive. The schema is portable across both engines; no migration needed
-  changing.
+- Nothing has yet been applied to a *production* database. The original
+  `0000 → 0001 → 0002` chain was verified against MySQL 8.0 and then MariaDB
+  11.8.8 in July 2026, including the tenant-FK, generated-uniqueness, decimal
+  and accented-text probes. The current full chain is **`0000 → … → 0009`**;
+  all ten migrations apply clean from empty against MariaDB 11.8 in isolated
+  Phase 2.5 verification, including the count-correction ledger and audit-packet
+  tables. Production remains the only engine instance that has not run it.
 - `0004_numerous_diamondback.sql` (Phase 2.5, Slice 1) creates `invoice` and
   `extraction_job`. `0005_bitter_captain_marvel.sql` (Phase 2.5, Slice 2)
   creates `invoice_line`, adds `invoice.rejection_reason`, and adds eight
@@ -269,6 +267,14 @@ open a fresh pool (and fresh database connections) on every file save.
   `count_line_write` byte-identical (via `SHOW CREATE TABLE`) both to its
   state right after `0007` (reversal) and to its freshly-migrated `0008`
   state (re-add).
+- `0009_pink_luke_cage.sql` (Phase 2.5, Slice 5) creates `audit_packet` and
+  `audit_packet_file`, including tenant-scoped manifest rows, the
+  `building → ready | expired | failed` lifecycle, stored ZIP path/hash,
+  expiration and JSON manifest. It was regenerated on top of `0008` rather
+  than carrying forward Slice 5's earlier colliding migration number. The
+  isolated Slice 5 database proved `0000 → … → 0009` applies clean from empty
+  and that both the `0008` ledger columns and `0009` packet tables coexist with
+  the expected MariaDB types.
 
 ## Seeding
 

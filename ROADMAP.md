@@ -10,11 +10,11 @@ the **UI redesign and OCR invoice automation now come before go-live**, and
 **Toast PMIX moves to Phase 5**. What follows reflects that order, not the old
 one.
 
-**Re-sequenced again 2026-08-13 by owner decision.** Two changes: **1.3 (the
-owner's data entry) is folded into the field-validation phase**, and that phase
-**moves from 1.9 to 2.9** — after the UI redesign and OCR invoice automation
-rather than before them. So **Phase 1 is now complete**, and Phase 2 is what is
-next.
+**Re-sequenced again 2026-08-13 by owner decision.** The owner's data
+entry moved into field validation, and that phase moved from 1.9 to 2.9 — after
+the UI redesign and invoice automation. Phases 1, 1.5 and 2 then closed; Phase
+2.5 completed all planned A–E slices on its integration branch on 2026-08-21.
+**Phase 2.9 is next after the final Phase 2.5 merge to `main`.**
 
 Phases are ordered by decision, not by dependency alone. Where the new order
 creates a consequence worth knowing about, it is stated under the phase rather
@@ -25,8 +25,8 @@ than left to be discovered.
 | **1** | ~~MVP completion — locations screen, bulk cost entry~~ **DONE 2026-08-12** |
 | **1.5** | ~~Survive daily use — #14, #1b, #23, #24, reorder output~~ **DONE 2026-08-12** |
 | **2** | ~~UI redesign — mobile layout and design flow~~ **DONE 2026-08-14** (PR #13) |
-| **2.5** | OCR invoice automation ← **next** |
-| **2.9** | Field validation + the owner's data entry — the deferred measurements |
+| **2.5** | ~~OCR invoice automation — archive, extraction/review, matching, cost flow, limited audit export~~ **IMPLEMENTATION COMPLETE 2026-08-21** |
+| **2.9** | Field validation + the owner's data entry — **next after Phase 2.5 merges to `main`** |
 | **3** | **Go-live — deploy to production** |
 | **4** | Reports, heatmap, back-office enhancements |
 | **5** | Toast PMIX import + variance |
@@ -286,13 +286,31 @@ for 7 of 9 is the cautionary tale.
 
 ---
 
-## Phase 2.5 — OCR invoice automation
+## Phase 2.5 — OCR invoice automation — **IMPLEMENTATION COMPLETE 2026-08-21**
 
-**Moved up from a conditional Phase 4.** Costs come from supplier invoices, and
-Phase 1's bulk-entry screen is the manual version of this. Build it in the order
-researched in `docs/invoice-automation-research.md`.
+All Gate 1 A–E slices are built and merged into
+`feat/phase-2.5-invoice-automation`: secure upload/archive, text and Vision
+extraction, owner review, vendor-alias matching, atomic cost history, and a
+limited date-range ZIP of invoice files plus count snapshots. PR #26 delivered
+Slice 5; PR #25 merged its prerequisite fixes and the complete stack into the
+integration branch. Current Linux CI is 449/449 tests with a successful
+production build; browser verification covered the review, cost-posting and
+audit-packet flows against isolated MariaDB stacks.
 
-> **Settle the xtraCHEF question first (spec §13).** That subscription is already
+**What completion does not claim:** the Gate 1 field metric is still unmeasured.
+Phase 2.9 must put 20–25 real invoices — including actual photographed/scanned
+documents through the live Claude Vision API — through review in under 30
+minutes. Phase 3's production gate owns real SendGrid delivery and durable
+Hostinger storage. Auto-approval remains deferred
+until about 100 invoices provide correction data. Open item #39 records two
+accepted production debts in the audit export: whole-file memory buffering and
+no stale-build reaper.
+
+The planning input below is retained as history. The xtraCHEF decision resolved
+to build, and the A–E sequence in `docs/invoice-automation-research.md` is now an
+implementation record rather than an open work list.
+
+> **Original first decision — xtraCHEF (spec §13).** That subscription is already
 > paid for and already does invoice line-item capture and archival. **One hour of
 > testing decides how much of this phase needs building.** Photograph a month of
 > liquor invoices into it and judge the extraction. The research doc leans build
@@ -432,8 +450,9 @@ the runbook — how a deploy happens. go-live is the decision of whether it shou
 
 Blocking items, none of which are construction:
 
-- A production database exists and the chain `0000 → 0001 → 0002` has applied to
-  it. It has only ever run against Docker.
+- A production database exists and the full chain `0000 → … → 0009` has applied
+  to it. All ten migrations apply clean from empty on MariaDB 11.8 in isolated
+  Docker verification; production remains unproven.
 - An owner account created via `scripts/create-user.ts` with the **hidden
   prompt**, never `--password`. There is no signup path, deliberately.
 - Secrets set in GitHub Actions, `DATABASE_URL` pointing at production.
@@ -514,28 +533,31 @@ Phase 3, so by Phase 5 there is history.
 
 ---
 
-## Phase 6 — Compliance packet · *the differentiator, unscheduled*
+## Phase 6 — Full compliance module · *the differentiator, unscheduled*
 
-**Not in the owner's 2026-08-12 sequence and kept deliberately** — it was
-previously Phase 3, and it is the thing no off-the-shelf product produces, which
-is a large part of why building rather than buying was the right call. Slot it
-when the retention obligation becomes real, which is the moment invoices start
-being stored (Phase 2.5) rather than the moment this phase is scheduled.
+Phase 2.5 deliberately pulled forward the legal foundation and a limited export:
+`retention_until`, immutable fill-correction ledger entries, retained invoice
+files, and a date-range ZIP containing invoice originals plus count snapshots
+and a SHA-256 manifest. That is enough to preserve and retrieve the source
+records; it is **not** the full compliance module described here.
 
-Arizona A.A.C. R19-1-501: two years of invoices, monthly beginning/ending
-inventory, produced on request.
+The planned Arizona DLLC workflow still has a broader product layer whose exact
+legal requirements must be confirmed with current rule text and counsel before
+relying on it:
 
-- Month-End Close report, food and liquor separated, locked once closed
-- `retention_until` on every invoice image, never auto-deleted before it —
-  **build this in Phase 2.5**, per that phase's note
-- One-button audit packet export: date range → PDF/ZIP
-- Immutable who-counted-what-and-when
+- Month-End Close with beginning/ending inventory, food and liquor separated,
+  and the close locked once issued
+- A regulator-oriented packet that composes those month-end figures with the
+  retained Phase 2.5 invoice/count artifacts
+- An explicit presentation of immutable who-counted-and-corrected-what-and-when,
+  using the ledger convention now implemented by closed open item #2
+- Legal review of the produced format and current rule text before relying on it
 
-Closes open-item #2 as a prerequisite: fill corrections currently write no ledger
-row, which is exactly the audit-trail gap this phase cannot ship with. Decide the
-ledger convention for replaces deliberately — a full-array replace has no delta
-representation in `count_line_write`'s current shape, and the convention chosen
-changes what the export means.
+This distinction keeps `AGENTS.md`'s deferred compliance scope true without
+pretending the Phase 2.5 retention/export work does not exist. Schedule Phase 6
+when the owner is ready to build and legally validate the reporting layer, not
+to retrofit retention semantics that Phase 2.5 already implements on invoice
+records and their stored originals.
 
 ---
 

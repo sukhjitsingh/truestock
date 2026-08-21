@@ -13,14 +13,20 @@ rediscover the hard way. The instruction now matches the practice.)
 
 ---
 
-## 1. Most of the stack has still never run against a real database
+## 1. Remaining real-environment verification: scale, standalone and production
 
-**Trigger: the first time a real database exists. Do this before anything else.**
+**Original trigger fired 2026-07-28 and the database/domain portion is closed.**
+MariaDB-backed CI now covers the core count path and every Phase 2.5 slice; the
+current integration run is 449/449 tests and the full `0000 → … → 0009` chain
+applies clean from empty. What remains is no longer “most of the stack”: the redesigned phone UI at scale (tracked in #20), count-write lock
+contention under forced parallel load, the real standalone artifact, and the
+production host. Keep this item as the umbrella for those environment claims,
+not as a statement that the application has never touched a database.
 
 **Engine correction, 2026-07-28.** Production is **MariaDB 11.8.8**, not MySQL —
 hPanel's "MySQL Databases" label had been taken at face value everywhere.
-The whole chain plus the seed was re-verified against `mariadb:11.8`, and the
-schema proved portable: same 14 tables, same 1452 on a cross-tenant id, same
+The then-current chain plus seed was re-verified against `mariadb:11.8`, and
+that 14-table schema proved portable: same 1452 on a cross-tenant id, same
 1062 on a second overall par, `DECIMAL(10,4)` exact, `partial_fills` still a
 parsed array. No migration needed changing. Local development now runs MariaDB
 via `docker-compose.yml`, so everything below is exercised against the engine
@@ -275,9 +281,11 @@ Two corrections found while verifying, both now fixed:
 
 **Trigger: when the owner enters real costs from supplier invoices.**
 
-97 products are seeded; only the 9 draft kegs carry a real cost (from the
-workbook's Draft Economics tab). Every other product has `current_unit_cost`
-NULL, and no product has a `case_size`.
+The shared dev volume, re-queried 2026-08-21, has 99 active products; only the 9 draft
+kegs carry a real cost (from the workbook's Draft Economics tab). The other 90
+have `current_unit_cost` NULL, and no product has a `case_size`. Phase 2.5 now
+posts approved invoice costs atomically, but its isolated verification stacks
+did not populate this business data in the shared volume.
 
 **Corrected 2026-07-26:** the missing `case_size` is a far smaller job than the
 missing costs, and mostly is not a gap at all. `case_size` applies to **bottled
@@ -285,7 +293,8 @@ beer only** — 16 products. Liquor is counted as bottles, kegs are counted in
 tenths, and for both a NULL case size is correct, not missing. `computeLineUnits`
 only treats NULL as indeterminate when `sealed_case_qty > 0`, so it never
 excludes a line counted purely as eaches or partials. So: 16 case sizes to enter,
-88 unit costs to enter, and the costs are the real work.
+up to 90 unit costs to source (fewer after real invoices are approved), and the
+costs are the real work.
 
 The code handles this correctly — `unit_cost_at_count` and `case_size_at_count`
 are nullable, NULL means "unpriced at count time", unpriced lines are excluded
@@ -349,24 +358,22 @@ Not blocking, but they shape work that is coming:
   be load-bearing (opened vermouth, cream liqueurs), the columns are already
   there.
 
-## 8. New reads are written but still unexercised against a real database
+## 8. Previous-count comparison still lacks a direct regression test
 
-**Trigger: folded into item 1 — verify when a real database first exists.**
+**Trigger: Phase 2.9's second real closed count, or the next change to dashboard
+comparison logic.**
 
-The read-side gaps this section used to list are closed (see the commit that
-removed them). What replaces the item is narrower: the four reads added to
-close them have been typechecked but, like everything else, never run.
+The broad read-side claim this item used to make is obsolete. `listCounts` has
+rendered real MariaDB rows in the browser, and `getCountTotals` is covered in
+`tests/count-write-path.test.ts`, including owner/manager cost shaping. The one
+narrow query still supported mainly by reasoning is `previousCountComparison`:
+it compares against nullable `closed_at`, where SQL NULL behavior correctly
+excludes never-closed counts, but no focused test proves selection and deltas
+across two closed counts plus an open negative control.
 
-- `listCounts` aliases `user` twice in one query (`opened_by`, `closed_by`)
-  and LEFT-joins both. Worth eyeballing the generated SQL once.
-- `previousCountComparison` filters on `lt(count.closedAt, ...)` against a
-  **nullable** column. NULL comparisons are never true in SQL, which is the
-  behaviour wanted here — a count that was never closed must not be a
-  comparison candidate — but it is worth confirming rather than assuming, as
-  a silently empty "vs. previous" reads exactly like a first count.
-- `getCountTotals` runs `computeCountTotals` against the pool while
-  `closeCount` runs the same function inside its `FOR UPDATE` transaction.
-  Confirm the two agree on a count with unpriced lines.
+Close this with a MariaDB-backed test that creates two closed counts and one
+newer open count, then asserts the chosen predecessor and both unit/value deltas.
+Do not keep the old “new reads have never run” wording after that test lands.
 
 ## ~~9. The offline write queue has never been exercised in a browser~~ — **closed 2026-08-12**
 
@@ -466,7 +473,7 @@ actual detector, or glossy labels in a dim bar. The numbers that matter —
 whether the sweep cadence and the 250ms flicker floor hold up in the hand —
 need the timed count this item originally asked for.
 
-## 11. One location count mode was assigned without the owner — CONFIRMED 2026-07-31
+## ~~11. One location count mode was assigned without the owner~~ — **CLOSED 2026-07-31**
 
 **Confirmed 2026-07-31.** The owner answered the one question this item asked:
 Walk-In holds sealed packaged beer only, no open kegs. `count_mode` stays
@@ -608,16 +615,20 @@ and the last-closed-count tile searched inside `listCountsAction({ limit: 50 })`
 been closed yet" against a database full of them. Both were correct against the
 97-product seed and would have stayed *plausible* while becoming wrong.
 
-## 15. The dashboard's owner-only value branch has never rendered
+## 15. The dashboard value branch lacks a positive browser assertion
 
-**Trigger: the first time a count is actually closed.**
+**Trigger: the next browser-harness pass that touches `/office`.**
 
-The "last closed count" tile's `Money` value and its vs-previous `valueDelta`
-have never executed — no closed count exists yet, so that branch has only ever
-taken its empty path. The "count in progress" branch *has* now rendered with
-real data (a draft count, with its Resume action).
+The old premise — “no count has ever closed” — is false. Several counts are
+closed, `getLastClosedCount` has MariaDB-backed owner/manager tests, and the
+redesigned dashboard was opened against the shared volume. What is still absent
+is a named browser assertion proving the owner's DOM renders the closed-count
+money value and comparison while a manager's DOM omits them.
 
-Cheap to close: close one count and look at the tile.
+Close this by seeding two closed counts, asserting the owner's value/delta, and
+keeping the existing manager negative control. A visual visit without a named
+positive assertion is not enough; the branch could fail to render and the
+cost-leak check would still pass.
 
 ## 16. ~~A scanned barcode cannot be attached to an existing product~~ — CLOSED 2026-07-30
 

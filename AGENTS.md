@@ -89,12 +89,15 @@ so it must be covered by a test rather than assumed after a driver bump.
 
 ## MVP scope — do not exceed without asking
 
-**Out (deferred, do not build):** AI fill estimation, bottle photos,
-Toast PMIX import, variance reporting, compliance packet.
+**Out of the MVP (deferred, do not build without the named phase):** AI fill
+estimation, bottle photos, Toast PMIX import, variance reporting, and the full
+compliance module (month-end food/liquor figures and regulator-ready reporting).
 
-*The MVP contains no AI and no file storage. This restriction does not apply
-to Phase 2.5 and later, where invoice OCR automation and local file storage
-are deliberately built features \(see Phase 2.5 PRD\).*
+*The MVP contains no AI and no file storage. Phase 2.5 is the deliberate
+exception: invoice OCR, retained local invoice files, and a limited date-range
+export of invoice files plus count snapshots are built there. The broader
+compliance module remains Phase 6; the Phase 2.5 export does not silently pull
+that whole phase forward.*
 
 ### Two decisions that changed the shape of this, 2026-07-27
 
@@ -105,14 +108,18 @@ built: a user belonging to more than one organization, an org switcher, billing,
 signup, or per-tenant subdomains. One org per user, seeded by hand. All of that
 is additive.
 
-**Invoice automation is built in Phase 2.5** — it requires AI \(OCR\) and filestorage \(2-year retention, spec \§10\). The xtraCHEF subscription is not used;
-costs are captured from supplier invoices via the OCR pipeline built in Phase 2.5.
-Before building any of it, the xtraCHEF question was settled: that subscription
-already does invoice line-item capture and archival, and one hour of testing
-decided whether this half needs building at all. Since then, the OCR pipeline
-\(§3.2 of the research doc\) extracts invoices via pdf-inspector \(text-based\) or
-Claude Vision \(scanned/mixed\), with arithmetic checks, a review queue as
-throughput governor, and deposits never folded into product cost.## Non-negotiable invariants
+**Invoice automation is built in Phase 2.5** — it requires AI \(OCR\) and
+file storage \(two-year retention, spec §10\). The xtraCHEF subscription is not
+used; costs are captured from supplier invoices through the pipeline built in
+Phase 2.5. It covers secure upload and archive, pdf-inspector for text PDFs,
+Claude Vision for scanned/mixed documents, arithmetic checks, human review,
+vendor-alias matching, atomic cost posting, and the limited audit export named
+above. Deposits are never folded into product cost. Auto-approval stays off
+until about 100 real invoices provide correction data. The full Phase 2.5
+product metric — 20–25 real invoices reviewed in under 30 minutes — is still a
+field measurement, not a claim made by the implementation alone.
+
+## Non-negotiable invariants
 
 These are correctness rules, not preferences. Violating them produces numbers that look
 plausible and are wrong, which is the worst failure mode this app has.

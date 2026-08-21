@@ -2,9 +2,9 @@
 
 Read `03-program-design.md` before reading this. This gate decomposes the research phases A–E (covered in Gate 1) into vertical tracer bullets, each ending in a working, testable state. **Slice 1 is the tracer bullet** — it does almost nothing the user would notice, but it runs end to end and the user can see it.
 
-> **Corrected 2026-08-14 after adversarial review.** See
-> `docs/reviews/2026-08-14-phase-2.5-adversarial-review.md`. Corrections marked **[AR-n]**.
-> Gate 2–4 approval is withdrawn until the corrected contract is re-approved.
+> **Corrected 2026-08-14 after adversarial review; re-approved 2026-08-15.** See
+> `docs/reviews/2026-08-14-phase-2.5-adversarial-review.md`. Corrections are marked
+> **[AR-n]**. All A–E slices completed against the corrected contract on 2026-08-21.
 >
 > **Rule added as a result of this review:** each slice's acceptance criteria now include
 > its adversarial test. A slice is not done when the happy path works — it is done when

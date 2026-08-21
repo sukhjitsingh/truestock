@@ -1,9 +1,11 @@
 # Status: Phase 2.5 — OCR invoice automation
 
-- Gate 1 — Product: APPROVED 2026-08-14
-- Gate 2 — Architecture: **CORRECTED 2026-08-14 — approval withdrawn, awaiting re-approval**
-- Gate 3 — Program Design: **CORRECTED 2026-08-14 — approval withdrawn, awaiting re-approval**
-- Gate 4 — Slice plan: **CORRECTED 2026-08-14 — approval withdrawn, awaiting re-approval**
+- Gate 1 — Product: **APPROVED 2026-08-14**
+- Gate 2 — Architecture: **CORRECTED 2026-08-14 · RE-APPROVED 2026-08-15**
+- Gate 3 — Program Design: **CORRECTED 2026-08-14 · RE-APPROVED 2026-08-15**
+- Gate 4 — Slice plan: **CORRECTED 2026-08-14 · RE-APPROVED 2026-08-15**
+- Implementation: **COMPLETE 2026-08-21 · Slices A–E merged into `feat/phase-2.5-invoice-automation`**
+- Deferred by design: **Phase F auto-approval, until about 100 real invoices provide correction data**
 
 ## Adversarial review, 2026-08-14 — why Gates 2–4 were re-opened
 
@@ -66,8 +68,8 @@ the first pass, 3 from the AR-2 audit, 10 from the AR-4→AR-7 audit).
       isolated Docker stack: sign-in, review-queue render with exception
       badges (unmatched item), edit + Approve → `needs_review → reviewed`
       with lines locked read-only, and the Return-for-re-extraction form.
-- [x] Slice 3 — Matching (Phase C). PR open (`feat/phase-2.5-slice-3` →
-      `feat/phase-2.5-invoice-automation`), not yet merged. `lib/domain/matching.ts`
+- [x] Slice 3 — Matching (Phase C). PR #20 merged into
+      `feat/phase-2.5-invoice-automation` on 2026-08-16. `lib/domain/matching.ts`
       (`findAlias`, `upsertAlias`/`upsertAliasTx`, `matchLinesToProducts`) plus
       `vendor_alias` (composite tenant FK, `UNIQUE(organization_id, vendor_id,
       vendor_item_code)`) and `invoiceLine.matchedVendorAliasId`. Wired into both
@@ -141,9 +143,9 @@ the first pass, 3 from the AR-2 audit, 10 from the AR-4→AR-7 audit).
       merged/overridden) Compose file for isolated per-worktree verification,
       preventing the collisions with other concurrently-running worktrees'
       Docker stacks that hit Slices 1 and 3.
-- [x] Slice 5 — Audit Packet (Phase E). Branch `feat/phase-2.5-slice-5-v2`,
-      stacked on `feat/phase-2.5-open-items-2-32-33`'s tip (PR #26, not yet
-      merged — that branch's own PR #25 is also still open). Schema landed
+- [x] Slice 5 — Audit Packet (Phase E). PR #26 merged into the prerequisite
+      branch on 2026-08-21; PR #25 then merged the complete stack into
+      `feat/phase-2.5-invoice-automation`. Schema landed
       first as `7ccb58b` (`audit_packet` table, migration renumbered 0009).
       `lib/domain/audit-packets.ts`: `createAuditPacket` (insert, status
       `building`), `buildAuditPacketJob` (background build — collects
@@ -196,12 +198,22 @@ the first pass, 3 from the AR-2 audit, 10 from the AR-4→AR-7 audit).
       file on disk byte-for-byte.
 - Slice 6 — not built by design (auto-approve deferred, see `04-slices.md`)
 
-**Gate 2–4 reconciled 2026-08-15, by the project owner's explicit call, before
-Slice 3 started.** The header at the top of this file and the banner at the
-top of `04-slices.md` still read "withdrawn until the corrected contract is
-re-approved" and are left as-is — they're the historical record of the
-2026-08-14 adversarial review, not stale process debt. The re-approval basis:
-Slices 1 and 2 were built and merged **against the corrected contract**
+**Integration result, 2026-08-21.** Both final stacked PRs are merged and the
+integration branch is clean. Its Linux CI ran **449 tests across 31 files: 449
+pass, 0 fail, 1,278 `expect()` calls**, followed by a successful production
+build. Slice 5 also ran through a real browser against an isolated MariaDB
+stack, and the downloaded ZIP's members, manifest and SHA-256 were checked
+independently against the database and file on disk. Phase 2.5 is therefore
+implementation-complete. The Gate 1 operating metric — 20–25 real invoices
+reviewed in under 30 minutes — remains a Phase 2.9 field measurement, not an
+implementation claim.
+
+**Gate 2–4 were reconciled and re-approved 2026-08-15, by the project
+owner's explicit call, before Slice 3 started.** The 2026-08-14 withdrawal and
+its reasons remain below as history; the current status header and slice-plan
+banner state the resolved result so a fresh reader does not mistake history for
+an active process block. The re-approval basis: Slices 1 and 2 were built and
+merged **against the corrected contract**
 (every AR-1 through AR-7 fix plus the twelve second-pass findings — storage
 outside the web root, ownership-checked cross-tenant ids, the CAS-guarded
 state machines, owner-only cost visibility, atomic job claiming), and shipped
@@ -209,14 +221,17 @@ clean — `code-reviewer` and `security-reviewer` both returned zero
 critical/high findings on Slice 2, and the 32 backend adversarial tests all
 pass against real MariaDB. That is direct evidence the corrected contract
 holds under implementation and review, not just on paper, and is a stronger
-basis for re-approval than a signature would have been. Slices 3 and 4
-proceed on it.
+basis for re-approval than a signature would have been. Slices 3–5 then
+completed on that contract.
 
 ## Notes for a fresh session
-Read `docs/invoice-automation-research.md` in full (Parts 1–5) before anything else —
-it is the build spec this plan turns into slices. The decision note at the top is
-binding: **xtraCHEF is out; build replaces it.** The §2.8 checks are acceptance
-criteria for our build, not vendor evaluation.
+
+For current work, start with `STATE.md`, `ROADMAP.md`, and the integration result
+above; implementation is complete and this section preserves its design context.
+Before changing the extraction pipeline, read `docs/invoice-automation-research.md`
+in full (Parts 1–5). The binding decision remains: **xtraCHEF is out; build
+replaces it.** The §2.8 checks are acceptance criteria for the product and the
+unmeasured operating checks move to Phase 2.9; they are not vendor evaluation.
 
 **Research findings that changed the build shape (Part 5, 2026-08-13):**
 
