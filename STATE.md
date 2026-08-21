@@ -1,6 +1,6 @@
 # Truestock — current state
 
-Where the project actually is. Updated 2026-08-19.
+Where the project actually is. Updated 2026-08-21.
 
 This file answers one question: **what is proven, what is merely built, and what
 is next.** The distinction matters more here than the feature list, because this
@@ -15,6 +15,16 @@ project has twice shipped something that looked finished and was not.
 ---
 
 ## One-line status
+
+**Phase 2.5 is implementation-complete on `feat/phase-2.5-invoice-automation`.**
+All five planned A–E slices are merged into that integration branch: secure
+invoice archive, extraction and review, vendor matching, atomic cost posting,
+and the limited audit-packet export. PR #26 merged Slice 5 into its prerequisite
+branch, then PR #25 merged the complete stack into the Phase 2.5 branch on
+2026-08-21. Current Linux CI: **449 tests across 31 files, 449 pass, 0 fail,
+1,278 assertions**, followed by a successful production build. The final merge
+to `main` is the remaining repository-integration step; auto-approval is deferred
+by design until about 100 real invoices provide correction data.
 
 **MVP is built and not deployed, and as of 2026-08-12 every part of the
 counting loop has now run on a real phone** — scan, enrol, tenths, sealed
@@ -107,7 +117,7 @@ Verified means *observed running*, not reviewed or typechecked.
 
 | Area | Evidence |
 |---|---|
-| **Schema + migrations** | Chain `0000 → 0001 → 0002` applied to MariaDB 11.8 in Docker. Composite tenant FKs reject cross-tenant ids (1452), `product_par` blocks a second overall par (1062), `DECIMAL(10,4)` exact, accented names round-trip |
+| **Schema + migrations** | Full chain `0000 → … → 0009` applies clean from empty to MariaDB 11.8 in Docker. Phase 2.5 verified all ten migrations together in an isolated database; composite tenant FKs reject cross-tenant ids (1452), generated uniqueness constraints hold, MariaDB JSON aliases round-trip through mysql2, and decimal costs remain exact |
 | **Auth path** | Better Auth under `generateId: "serial"` returns integer ids; sign-in returns a session; the inactive-user re-read gate refuses a *still-valid* session — **with a negative control** |
 | **Count write path** | `tests/count-write-path.test.ts` against real MariaDB, wired into CI as a service container |
 | **Invariants 1, 2, 3, 8, 9** | Covered by that suite: closed counts refuse writes, cost snapshots survive a price change, three scans make one row, a manager never receives cost fields, cross-tenant ids are refused |
@@ -292,6 +302,14 @@ Written, reviewed, typechecked — never observed working.
   **mount-time flush** has never run (only the `online` listener was observed),
   and the queue has never held **more than one write at a time**, so ordered
   replay of several writes to the same line is still only reasoned about.
+- **Phase 2.5 at operating scale.** Every A–E capability has database-backed
+  coverage, the review/cost/audit-packet surfaces have run in isolated browsers,
+  and a real Southern Glazer's text-PDF shape is covered. What has not happened
+  is the Gate 1 product measurement: 20–25 real invoices, including actual
+  photographed/scanned documents through the live Claude Vision API, reviewed
+  by the owner in under 30 minutes. The real SendGrid path and Hostinger storage
+  also remain unproven. Open item #39 records the two accepted audit-packet
+  reliability debts: whole-file memory buffering and no stale-build reaper.
 - **The standalone server entrypoint.** The production-mode run used
   `next start`, which printed `"next start" does not work with "output:
   standalone" configuration`. It gave us what was needed — no HMR, the real CSP
@@ -345,9 +363,11 @@ Written, reviewed, typechecked — never observed working.
   live PROCESSING → READY poll → download link, with the produced ZIP
   independently confirmed against the DB row — correct file list, correct
   manifest, and the DB-recorded `file_sha256` matching `sha256sum` of the
-  actual file on disk byte-for-byte. Neither PR has merged yet. Phase 2.5's
-  remaining scope is F (auto-approve), deferred by design until ~100 invoices
-  of correction data exist (`04-slices.md`).
+  actual file on disk byte-for-byte. PR #26 merged into the prerequisite
+  branch, then PR #25 merged the complete stack into
+  `feat/phase-2.5-invoice-automation` on 2026-08-21; both CI checks are green.
+  Phase 2.5's remaining scope is F (auto-approve), deferred by design until
+  about 100 invoices of correction data exist (`04-slices.md`).
 
 - **2026-08-19** — **Open-items #34–#38 closed: Southern Glazer's Wine & Spirits
   invoices now parse correctly, and a vendor template documents the mapping for future
@@ -1182,133 +1202,59 @@ references them).
 
 ## Next three things
 
-**Re-sequenced 2026-08-12 by owner decision — see `ROADMAP.md`.** The three
-items that stood here (a timed count, rapid mode against a camera, and the
-standalone entrypoint) are all **measurement**, and all three were deliberately
-deferred to the field-validation phase — **which moved again on 2026-08-13, from
-1.9 to 2.9**, so it now sits after the UI redesign and OCR invoice automation
-rather than before them. They are not abandoned and nothing about their risk has
-changed; they are simply not next. The new order also moves
-go-live to **Phase 3**, behind a UI redesign (Phase 2) and OCR invoice
-automation (Phase 2.5).
+Phase 2.5's A–E implementation is complete on its integration branch. The order
+below separates repository closeout from field evidence and deployment; a green
+suite proves the software contract, not the operating claims.
 
-**Both of Phase 1's remaining construction items shipped on 2026-08-12** — the
-locations screen and inline cost entry — so what is next is no longer code.
-Their original entries are kept at the bottom of this section for the record.
+1. **Close Phase 2.5 into `main`.** Reconcile the authority/status documents,
+   run the final branch-level review and ship gate, then merge
+   `feat/phase-2.5-invoice-automation`. PRs #25 and #26 are already merged into
+   that branch and current Linux CI is green: 449/449 tests, 1,278 assertions,
+   production build successful. Phase F auto-approval stays deferred until
+   about 100 real invoices provide correction data.
+2. **Phase 2.9 — owner data and field validation.** Use real supplier invoices
+   to populate the remaining costs, case sizes, pars, vendors and wine producer
+   names; measure Phase 2.5's Gate 1 target with 20–25 real invoices in one
+   under-30-minute sitting; and drive an actual photographed/scanned document
+   through the live Claude Vision path. Then run the redesigned counting UI on
+   the phone: enrollment pass, timed full count, all locations, rapid scan
+   checked against a hand count, multi-write offline replay, and the four Phase
+   2 UI bets in `docs/phone-count-test.md`. A 2026-08-21 query of the shared
+   dev volume still had 9 of 99 active products costed, 0 case sizes,
+   0 pars and 0 vendors; isolated Phase 2.5 verification stacks do not change
+   that business data.
+3. **Phase 3 — go-live.** Only after Phase 2.9. Start the real standalone
+   artifact with `node .next/standalone/server.js`, exercise `pdf-inspector`
+   from that artifact, run migrations `0000 → … → 0009` against production,
+   verify the real SendGrid path, choose whether local pilot invoices migrate or
+   are discarded, establish offsite backup, schedule the session sweep, rehearse
+   rollback, and run `docs/go-live.md` against the real origin. Open item #39's
+   audit-packet memory and stale-build limitations must be consciously accepted
+   or fixed before production use.
 
-`owner@truestock.local` is the **only** account in the database — have its
-password or run `bun run create-user` before walking anywhere. Two browser
-checks are blocked on that: a manager's DOM must not contain the cost column,
-and staff must be redirected off `/office/locations`. Both are covered at the
-action layer by the test suite; only the browser half is missing, and
-`bun run verify:browser` prints them as NOT VERIFIED on every run so they
-cannot pass silently.
-
-The stack is currently in **dev mode** (`next dev` in the app container, HMR
-connected). `bun run docker:up:prod` is the production-mode path, which has no
-hot reload and accepts sign-in **only on the https origin** — and it is the only
-way to test the CSP behaviour that broke this project once, because that failure
-was a production config problem. A clean CSP result under `next dev` is not a
-production result.
-
-**Phase 2 closed 2026-08-14 (PR #13), so Phase 2.5 is next.** Phase 1 closed
-2026-08-12; the owner's data entry moved out of it into **Phase 2.9**, together
-with the measurements it was always coupled to. See `ROADMAP.md`.
-
-1. **Phase 2.5 — OCR invoice automation.** Costs come from supplier invoices,
-   and this is the automated version of typing 90 of them, so it is also what
-   shrinks Phase 2.9's data-entry burden. Build it in the order set out in
-   `docs/invoice-automation-research.md`; a Gate 1 PRD is drafted on the
-   `feat/phase-2.5-invoice-automation` branch and is **not on `main` yet** —
-   check that branch before re-deriving one. **This is the first phase that is
-   allowed AI and file storage** — `AGENTS.md` says invoice automation "reverses
-   two exclusions above", and it is the only thing that does. Settle the
-   xtraCHEF question before building (one hour of testing decides how much needs
-   building at all); the 2.5 branch's PRD records it as already settled in favour
-   of building the OCR pipeline, so reconcile the two rather than assume either.
-2. **Phase 2.9 — the data and the measurements, together.** 90 unit costs, 16 case
-   sizes, par levels, vendors, 5 wine producers; then the timed count, the
-   five-location walk, and rapid mode against a real camera. They were merged
-   because a timed count against an uncosted catalog measures the wrong thing:
-   the reorder list cannot produce a row and valuation stays near-empty, so "are
-   the numbers worth acting on" is unanswerable until the data exists. Re-checked
-   2026-08-14: 9 of 99 active products costed, 0 with a `case_size`, 0 par rows,
-   0 vendors — unmoved since 2026-08-12.
-   **Phase 2 added to this phase's job rather than subtracting from it.** The
-   whole redesigned counting surface is new since anyone last held a phone, and
-   Phase 2 wrote down four explicit bets about where count time goes — they are
-   now §6 of `docs/phone-count-test.md`, and settling them is part of Run A and
-   Run B, not a separate exercise.
-3. **Phase 3 — go-live.** Behind both of the above. The two items on it that are
-   pure code and still open are the **standalone entrypoint**
-   (`node .next/standalone/server.js` has never been started, whatever
-   `585d2b6`'s commit message says) and the deploy pipeline, which is built and
-   has never run against a real host. `docs/go-live.md` is the gate.
-
-**No open items remain from Phases 1 and 1.5.** Items 25 and 26, both found while
-verifying, were fixed 2026-08-12 and are closed in `docs/open-items.md`. Phase 2
-opened three new ones, none of them urgent and none of them a correctness risk:
-**#28**, the owed `--chart-2..5` palette, not due until the first chart is drawn
-in Phase 4; **#29**, the accessibility floor asserted on `/office/catalog` only
-when Gate 1 asked for every screen; and **#30**, three table surfaces that never
-moved onto the shared primitives (`users-list.tsx` is the one that matters — no
-`scope="col"` on any header). #29 and #30 are the two Gate 1 criteria that came
-out **partial** when the phase was audited against its own contract; see
-`docs/plans/phase-2-ui-redesign/00-status.md` for that audit.
-
-The entry that used to stand first here, now done:
-
-1. ~~**Phase 2 — the UI redesign.**~~ Shipped 2026-08-14. It was designed from
-   judgement rather than from measurements, exactly as this section warned, and
-   the mitigation held: no schema, no write path, no leg-model change, and the
-   judgement calls written down as bets for 2.9 to settle.
-
-The two entries that used to stand here, both now done:
-
-1. ~~**A locations management screen** (`/office/locations`).~~ Shipped
-   2026-08-12. `lib/domain/catalog.ts`
-   has `listLocations` and nothing else — no create, no update, no route. This
-   already cost real time on 2026-08-12: adding `Tap 1` so kegs could be counted
-   at all took a CSV edit plus SQL against the live database. `location.count_mode`
-   is what decides whether a product gets the fill pad or a quantity stepper, and
-   it is unreachable from the app.
-2. ~~**Bulk cost and case-size entry.**~~ Shipped 2026-08-12 as per-cell inline
-   editing. The fields already exist on
-   `product-edit-form.tsx` and are correctly role-gated; what is missing is
-   throughput. 90 unit costs today means 90 separate page loads. Inline-editable
-   columns in `catalog-table.tsx`, reusing the bulk-bar machinery the vendor work
-   already built.
-
-   One decision from building it is worth carrying forward: the cells
-   deliberately do **not** refresh the page after each save. A
-   `router.refresh()` per commit is ~180 round trips against a 45-minute,
-   90-cost budget, so only the edited row is patched — from the value the action
-   *returned*, not the value typed, so a manager's role-stripped cost visibly
-   snaps back. The accepted cost is that the "needs attention" pills and the
-   catalog-health counts lag until the next navigation. That is a tradeoff, not
-   a bug; do not "fix" it with cross-row recomputation.
-
-**#19 (vendors have no write path) is done** as of 2026-07-31, so the reorder
-list can group by vendor rather than dumping everything under "No vendor set" —
-what it still lacks is par levels and costs to make the rows worth ordering from,
-and any way to *send* the list, which is now a Phase 1.5 item.
+**Local test-state caution.** The last recorded shared volume had three active
+accounts (owner, manager and staff), count #5 open, four barcodes, and two test
+products already deactivated rather than deleted. Check the database
+rather than relying on that dated snapshot before the next phone run; isolated
+worktree stacks used by Phase 2.5 do not establish the state of the shared dev
+volume.
 
 ## Scope reminders
 
 **In the MVP:** catalog, locations, barcode scan, tenths, quantities, count
-sessions, valuation, reorder, three roles, multi-tenancy.
+sessions, valuation, reorder, three roles and tenant isolation.
 
-**Deliberately out:** AI fill estimation, bottle photos, Toast PMIX import,
-variance reporting, compliance packet. (Invoice OCR was deferred but is now
-built in Phase 2.5 — see the Phase 2.5 PRD and history log.)
-import, variance reporting, compliance packet. **The MVP contains no AI and no
-file storage** — if a task seems to need either, it is probably scope creep.
+**Built after the MVP in Phase 2.5:** secure invoice upload and retained local
+files, text/vision extraction, human review, vendor matching, atomic cost
+history, and a limited date-range ZIP of invoice files plus count snapshots.
+This is the deliberate AI/file-storage exception in `AGENTS.md`.
 
-**One exception, and only one: Phase 2.5.** Invoice OCR is out of the *MVP* and
-is the *next phase*, which reads as a contradiction and is not one — 2.5 is the
-phase that deliberately reverses the no-AI and no-file-storage exclusions, per
-`AGENTS.md`. Nothing else may reach for either on the strength of that.
+**Still deliberately deferred:** AI fill estimation, bottle photos, Toast PMIX,
+variance reporting, auto-approval until about 100 invoices provide correction
+data, and the full Phase 6 compliance module. Phase 2.5's limited export does
+not include the full month-end food/liquor reporting described for Phase 6.
 
-**Multi-tenant, but not multi-tenant yet:** `organization` is the tenant boundary
-and every query is scoped to it. Not built: users in more than one org, an org
-switcher, billing, signup, per-tenant subdomains. All additive.
+**Multi-tenant, but not a complete commercial tenancy product:** `organization`
+is the enforced data boundary and every query is scoped to it. Not built: users
+in more than one organization, an organization switcher, billing, public signup
+or per-tenant subdomains. Those remain additive work for the selling track.

@@ -1,12 +1,20 @@
-# Truestock — Product Spec (Planning Draft v0.1)
+# Truestock — Product Spec
 
-*Beverage inventory for a single bar. Counted, costed, and correct.*
+*Beverage inventory for bars and restaurants, starting with one bar. Counted,
+costed, and correct.*
 
-**Status:** Planning. Name and MVP scope locked (§12). No code yet.
+**Status:** MVP and Phase 2.5 implementation built; field validation and first
+production deploy remain. This document is authoritative for product scope,
+data model and rationale. `STATE.md` is authoritative for proof/status,
+`ROADMAP.md` for current phase order, and `docs/open-items.md` for deferred debt.
+Where dated planning language below conflicts with those status documents, this
+2026-08-21 correction and the current roadmap win.
 **Repo:** `truestock` · **Host:** `truestock.<yourdomain>` · **Database:** `truestock`
 **Owner:** Sukhjit
-**Context:** Single bar/restaurant, Arizona. 50–200 bottles per full count. Web app, Chrome on Android. Toast POS. Hostinger Cloud Startup.
-**Date:** July 2026
+**Context:** One Arizona bar is the pilot, but the implemented data model is
+multi-tenant from its first migration. 50–200 bottles per full count. Web app,
+Chrome on Android. Toast POS. Hostinger Cloud Startup.
+**Original draft:** July 2026 · **Status correction:** 2026-08-21
 
 ---
 
@@ -21,14 +29,16 @@ Truestock is a web app where a manager walks the bar with a phone, scans each bo
 | | |
 |---|---|
 | Users | Owner/manager, bar manager, staff — three roles |
-| Scale | 50–200 bottles, one location, weekly counts |
+| Scale | 50–200 bottles for the pilot bar; one organization per user today, with tenant-isolated data throughout |
 | Target | Count time from ~2 hours to under 20 minutes |
 | Payoff | Measured variance, par-level reordering, an audit-ready archive |
 | Cost | $0/month infrastructure vs $150+ for commercial tools |
 
 **Why build rather than buy:** no subscription, exact fit to the workflow, and the Arizona DLLC compliance packet (§10) — two-year invoice retention plus monthly beginning/ending figures — which no off-the-shelf product produces.
 
-**Open business decisions:** whether to keep xtraCHEF Essentials (one hour of invoice testing decides it, §13), and whether variance is worth the recipe-mapping work in Phase 2.
+**Business decisions:** xtraCHEF is not used; Truestock's invoice pipeline is
+built in Phase 2.5 (§13). Whether variance is worth the recipe-mapping work
+remains deferred until real count history exists.
 
 **The real risk isn't technical.** It's catalog decay and adoption. If the app isn't faster than a clipboard on day one, it dies.
 
@@ -71,7 +81,7 @@ Two count buckets, because they need different handling: sealed backstock is 60�
 
 ## 2. The core design principle (read this before anything else)
 
-> **Scope note:** AI fill estimation is deferred to Phase 5 (§12). This section and §6–§7 record the reasoning for when that thread is picked back up — and the principle below still governs any AI feature added later.
+> **Scope note:** AI fill estimation is deferred to Phase 7 (§12). This section and §6–§7 record the reasoning for when that thread is picked back up — and the principle below still governs any AI feature added later.
 
 > **AI proposes. Human confirms. The app never blocks on the AI being right.**
 
@@ -164,7 +174,7 @@ So you keep the fast three-tap path for obvious bottles, without throwing away p
 
 ## 7. AI pipeline — what each stage should and shouldn't do
 
-> **Deferred to Phase 5.** Not in the MVP. Kept here because the analysis is what justified deferring it.
+> **Deferred to Phase 7.** Not in the MVP. Kept here because the analysis is what justified deferring it.
 
 | Stage | Task | Reliability today | Design stance |
 |---|---|---|---|
@@ -312,7 +322,7 @@ Depletion       id, product_id, period_start, period_end,
 RecipeComponent id, pos_item_guid, product_id, pour_ml
 ```
 
-`RecipeComponent` is what makes Phase 2's variance report possible — the map from a Toast menu item to the products and volumes it consumes.
+`RecipeComponent` is what makes Phase 5's variance report possible — the map from a Toast menu item to the products and volumes it consumes.
 
 ---
 
@@ -337,6 +347,11 @@ Anything over ~5% variance is worth investigating. Industry commentary puts typi
 ---
 
 ## 10. Arizona compliance module (your differentiator)
+
+**Status split:** Phase 2.5 implements two-year retention semantics, immutable
+fill-correction history, and a limited date-range ZIP of retained invoice files
+plus count snapshots. The Month-End Close and regulator-oriented composition
+below remain the full Phase 6 module and require legal validation before use.
 
 This is where a purpose-built app beats an off-the-shelf one for you specifically, since compliance already sits on your plate.
 
@@ -602,7 +617,7 @@ This is a bigger simplification than it looks. Dropping fill estimation and phot
 
 **The MVP has no AI in it at all.** That's a feature. Every part of it is deterministic and testable, and the whole thing is CRUD plus a barcode scanner. You can build and trust it without ever wondering whether the model was right.
 
-It also means **Phase 0.5 (the 20-bottle photo test) is deferred too** — its only purpose was deciding whether to build fill estimation. Do it when you pick that thread back up.
+The original 20-bottle photo test is deferred with AI fill estimation to Phase 7. Its only purpose is deciding whether that feature is worth building; run it only when that thread is picked back up.
 
 ### The design decision this forces: scan-to-enroll
 
@@ -616,25 +631,27 @@ Consequences worth being deliberate about:
 - **Make the new-product form fast.** Under 20 seconds, minimum viable fields, everything else editable later from the back office. If enrolling a product is painful, the catalog decays and the whole system dies with it — this is the single highest-risk interaction in the MVP (§14).
 - **Handle the no-barcode case.** Damaged labels, house infusions, some wine. Always offer a searchable product picker beside the scan button.
 
-### Phases
+### Current phase sequence
 
-**Phase 0 — Catalog baseline (1–2 weeks, no code)**
-Build the catalog in a spreadsheet: every SKU, size, cost, vendor, par. Do one full manual count. Time it. Record the total value. This is the benchmark the app has to beat, and the catalog is 80% of the work in any inventory system.
+`ROADMAP.md` owns detailed sequencing. The original draft order changed by owner
+decision after the MVP was built:
 
-**Phase 1 — The MVP**
-Everything in the scope list above. Ship it. Use it for a month of real counts.
+- **Phases 1, 1.5 and 2 — complete:** MVP, daily-use hardening and redesigned UI
+- **Phase 2.5 — implementation complete:** retained invoice archive, text/Vision
+  extraction, review, matching, cost history and limited audit export
+- **Phase 2.9 — next:** owner data entry plus real invoice and phone-count field
+  measurements
+- **Phase 3 — go-live:** production database, standalone Hostinger artifact,
+  durable retained storage, outbound email, backup and rollback verification
+- **Phase 4 — reports/back-office enhancements**
+- **Phase 5 — Toast PMIX and variance**, after trustworthy count history exists
+- **Phase 6 — full compliance module:** month-end food/liquor reporting and
+  legally reviewed regulator presentation; Phase 2.5 already supplies retained
+  originals and a limited source-record ZIP
+- **Phase 7 — AI fill estimation**, conditional and lowest priority
 
-**Phase 2 — Toast PMIX import + variance**
-CSV upload, map Item GUID → product + pour spec, produce the actual-vs-theoretical report (§9, §11). The recipe map is the work, not the import. **This is the feature that justifies the whole project** — but it's worth nothing until you have several months of trustworthy counts to compare against, which is exactly why it comes after the MVP has been running.
-
-**Phase 3 — Compliance packet**
-Month-end close, beginning/ending inventory figures, retention rules, audit export (§10).
-
-**Phase 4 — Invoice capture**
-Only if the xtraCHEF test (§13) comes back negative. If xtraCHEF handles invoices well, you never build this.
-
-**Phase 5 — AI fill estimation**
-Revisit with real data in hand. By then you'll know from a month of tapped tenths which bottles are ambiguous and slow, which tells you whether AI would actually help and where. Run the 20-bottle test then.
+The original “invoice capture only if xtraCHEF fails” condition is resolved in
+§13: build was chosen and Phase 2.5 A–E is complete.
 
 ## 13. Build vs. buy — be honest with yourself
 
@@ -644,29 +661,25 @@ Revisit with real data in hand. By then you'll know from a month of tapped tenth
 
 **Honest middle path:** run a free or cheap trial of one commercial tool during Phase 0. Two weeks of using someone else's product will teach you more about what you actually want than any amount of specifying. Then build, buy, or abandon with real information.
 
-### The xtraCHEF question — settle this before cancelling
+### The xtraCHEF question — resolved: build replaces it
 
-You currently pay for **xtraCHEF Essentials** and don't use it. Before cancelling, know what you're giving up:
+**Resolved before Phase 2.5 implementation.** xtraCHEF Essentials is not used as
+Truestock's invoice system. Essentials can digitize and archive supplier
+invoices, but it does not supply the counting workflow, Truestock's tenant-owned
+cost history, or the later variance/compliance composition. Depending on it
+would also leave every future tenant with an external subscription and put the
+source data for valuation inside another vendor.
 
-| Tier | What it includes |
-|---|---|
-| **Essentials** (formerly Lite) — what you have | Invoice processing (AI line-item capture), accounting sync, basic food-cost analytics |
-| **Pro** | All of the above **plus recipe costing and inventory management** |
+The decision was to build the invoice half behind Truestock's own boundary:
+retained originals, pdf-inspector for text documents, Claude Vision for
+scanned/mixed documents, arithmetic validation, mandatory human review,
+vendor-alias matching and atomic cost posting. Phase 2.5 A–E now implements
+that choice. Auto-approval remains deferred until about 100 real invoices
+provide correction evidence.
 
-**Key point: Essentials was never going to do what you're building.** Counting, fill levels, and actual-vs-theoretical variance all live in Pro. So it isn't a substitute for this project.
-
-**But it does the invoice half — which is the half you ranked highest.** xtraCHEF digitizes and archives supplier invoices with line-item extraction. That is simultaneously:
-- Phase 3's highest-ROI AI feature (§7), and
-- Your Arizona 2-year invoice retention requirement (§10), handled automatically
-
-**So: one hour before you cancel.** Photograph a month of liquor invoices into it. Then judge:
-
-- **Extraction is clean** → you already own your invoice pipeline and your compliance archive. Keep it, and build only the counting half. Your project just got a third smaller.
-- **Extraction is messy or the workflow annoys you** → cancel it. Independent review scores for xtraCHEF are poor (G2 sits around 2.4/5 with support and OCR complaints), so this is a real possibility. You can rebuild invoice OCR yourself with a vision API for roughly nothing.
-
-Either way you'll have decided on evidence rather than on a subscription line you've been ignoring.
-
-**Two cautions:** Toast contracts commonly run multi-year, so check your agreement for terms on removing a subscription before assuming you can cancel freely. And note that upgrading to xtraCHEF **Pro** would give you counting and AvT without building anything — but reviewers consistently flag its bar-specific inventory tooling as its weakest area, which is precisely your use case. Not an obvious win. (That criticism comes loudest from a direct competitor, so weigh it accordingly — but the G2 scores are independent.)
+One part of the original evaluation remains useful contract due diligence:
+check the existing Toast/xtraCHEF agreement before cancellation or renewal.
+That commercial check no longer changes the implemented product architecture.
 
 ---
 
@@ -674,12 +687,12 @@ Either way you'll have decided on evidence rather than on a subscription line yo
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| AI fill estimates are too unreliable to be useful | High | Phase 0.5 test decides this before you build it. Fall back to tap-the-tenths or a scale. |
-| Catalog maintenance decays; new SKUs never get added | **High — this is what actually kills inventory systems** | Make adding a product take under 20 seconds. Invoice OCR auto-creates draft products. |
+| AI fill estimates are too unreliable to be useful | High | Phase 7's 20-bottle test decides this before implementation. Fall back to tap-the-tenths or a scale. |
+| Catalog maintenance decays; new SKUs never get added | **High — this is what actually kills inventory systems** | Keep scan-to-enroll under 20 seconds. Invoice review must flag unmatched lines rather than invent a match; product creation remains an explicit owner action. |
 | Staff won't adopt it | High | Count must be *faster* than the clipboard on day one, or it's dead. |
 | Photos balloon storage costs | Low | Downscale on device; retain photos 90 days, keep invoice images the full 2+ years. |
 | Scope creep into a full bar-management platform | Medium | Non-goals list in §3. Re-read it monthly. |
-| Building this eats time the business needs | Medium | Phase 1 is small on purpose. If Phase 1 doesn't get used, stop. |
+| Building this eats time the business needs | Medium | Phase 2.9 measures adoption and count speed before more feature phases. If the field loop is not used, stop. |
 
 ---
 
@@ -697,12 +710,12 @@ Measure at 90 days:
 ## 16. Open questions to resolve
 
 1. ~~What POS? Do you have RMS Essentials?~~ **Resolved: Toast, no RMS. Use the PMIX CSV export — no subscription needed.**
-2. Does xtraCHEF Essentials extract your liquor invoices cleanly? One hour of testing decides whether you keep it and skip building Phase 3's invoice half. **Do this before cancelling.**
-2. How many of your 50–200 units are open bottles vs. sealed? Drives the whole speed calculation.
-3. Weekly or monthly counts? Weekly gives usable variance; monthly barely does.
-4. Do you need per-bartender attribution later? Affects schema now.
-5. Does wine need vintage tracking, or is it by-the-glass only?
-6. Who else counts besides you?
+2. ~~Does xtraCHEF Essentials replace the invoice build?~~ **Resolved: no. Phase 2.5's Truestock-owned invoice pipeline is built; check contract terms separately before cancellation or renewal.**
+3. How many of your 50–200 units are open bottles vs. sealed? Drives the whole speed calculation.
+4. Weekly or monthly counts? Weekly gives usable variance; monthly barely does.
+5. Do you need per-bartender attribution later? Affects schema now.
+6. Does wine need vintage tracking, or is it by-the-glass only?
+7. Who else counts besides you?
 
 ---
 

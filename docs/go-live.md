@@ -52,8 +52,23 @@ Blocking items. Each one is either done or the deploy waits.
       after the first real deploy anyway: this ran under `next start`, not the
       standalone server production actually uses.
 - [ ] **A production database exists and migrations have applied to it.**
-      The chain `0000 → 0001 → 0002` has only ever run against Docker.
-      `docs/deploy.md` §4 covers bootstrap order.
+      The full chain is now `0000 → … → 0009`. All ten migrations apply clean
+      from empty on MariaDB 11.8 in isolated Docker verification; none has run
+      against production. `docs/deploy.md` §4 covers bootstrap order.
+- [ ] **Phase 2.9's data and field gate is signed off.** This is a prerequisite
+      phase, not an optional launch follow-up: real catalog costs/case sizes/
+      pars/vendors are populated, 20–25 real invoices meet or revise the
+      under-30-minute target, an actual scanned invoice completes through the
+      live Claude Vision path, and the redesigned phone count has run across
+      all locations against a hand check.
+- [ ] **Production Phase 2.5 configuration is set and proven.** Use a production
+      `ANTHROPIC_API_KEY`; set `INVOICE_STORAGE_DIR` to an **absolute persistent
+      directory outside both the web root and replaceable release tree**; and
+      configure `EMAIL_PROVIDER=sendgrid`, `EMAIL_API_KEY`, and `EMAIL_FROM`.
+      Upload/download one retained original, restart and redeploy, then prove the
+      same file remains readable through its authenticated route. Send one real
+      notification and follow its absolute download link. `docs/deploy.md`'s
+      Hostinger setup step 4 contains the variable and storage contract.
 - [ ] **An owner account exists on production**, created via
       `scripts/create-user.ts` with the **hidden prompt**, never `--password`.
       There is no signup path, deliberately.
@@ -68,41 +83,31 @@ Blocking items. Each one is either done or the deploy waits.
       `"next start" does not work with "output: standalone" configuration`. It
       gave us what was needed — no HMR, the real CSP — but it is not the
       runtime Hostinger uses. The policy and hydration are settled; the
-      entrypoint is not. **Phase 2.9 should close this locally**, so that a
-      failure here is a hosting problem rather than an unknown.
+      entrypoint is not. **Phase 2.9 should close this locally**, including one
+      text-PDF extraction that proves the standalone trace contains
+      `@firecrawl/pdf-inspector`'s native binary, so that a later failure is a
+      hosting problem rather than an unknown.
 
 ### 1.2 Non-blocking but decide deliberately
 
-These do not stop a deploy. Each is a conscious "yes, launch without this."
+These do not stop a deploy. Each is a conscious “yes, launch with this state.”
 
-- [ ] **Costs are entered — or deliberately are not** (open-items #4).
-      **Queried 2026-08-12: 90 of 99 active products have no
-      `current_unit_cost`, and 0 of 99 carry a `case_size`.** The only priced
-      products are the 9 draft kegs, which came costed in the seed. Unpriced
-      lines are excluded from valuation and reported as excluded rather than
-      valued at zero, so this is *correct* — but a production count taken today
-      would be almost entirely unpriced, and the dashboard will say so in large
-      type. **Phase 1 is meant to close this** (bulk cost entry, then the data
-      itself); if it has not, launching anyway is reasonable and being surprised
-      by it is not.
-- [ ] **Nothing sweeps expired sessions** (open-items #1b). Years away from
-      mattering at this scale. **The query is Phase 1.5 work and the Hostinger
-      cron is created here** — this is the phase where it stops being a plan.
-- [x] ~~**No user-management screen exists**~~ — **done 2026-08-03,
-      browser-verified 2026-08-04.** `/office/users` with `listUsers`,
-      `setUserActive`, `setUserRole`; deactivation deletes the user's `session`
-      rows in the same transaction, so the account is refused on its very next
-      request. Role and active changes are no longer manual SQL.
-- [x] ~~**Walk-In's count mode is inferred, not confirmed**~~ — **confirmed
-      2026-07-31.** The owner answered: Walk-In holds sealed packaged beer only,
-      no open kegs, so `count_mode` stays `quantity` as seeded. No code change —
-      what the item waited on was the confirmation, not the value.
-- [ ] **Locations are manageable from the app** (Phase 1). If Phase 1's
-      `/office/locations` screen has not shipped, a production tenant cannot add
-      a tap line, rename a location, or set a `count_mode` without SQL — and
-      `count_mode` is what decides whether a keg gets a fill pad at all. This is
-      not a blocker for *your* bar, whose locations are seeded. It is a blocker
-      for the second tenant.
+- [ ] **The expired-session sweep is scheduled** (open item #1b).
+      `sweepExpiredSessions` exists and is tested; only the Hostinger cron is
+      missing. Create it here or explicitly accept manual invocation.
+- [ ] **Local Phase 2.5 invoice files are migrated or declared a throwaway
+      pilot.** The database rows and `INVOICE_STORAGE_DIR` tree must move
+      together; migrating one without the other creates archive rows whose
+      retained originals do not exist.
+- [ ] **Audit-packet open item #39 is accepted or fixed.** Today one build can
+      buffer all selected invoices in memory, and a process death can strand a
+      packet at `building`, permanently blocking that organization until manual
+      repair. Record the maximum supported range and recovery procedure if these
+      ship unchanged.
+- [ ] **The full compliance module is still deferred.** Phase 2.5 ships retained
+      originals and a limited invoice/count ZIP. It does not ship Phase 6's
+      locked month-end food/liquor reports or a legally reviewed regulator
+      presentation.
 
 ---
 
@@ -178,7 +183,28 @@ Not with `curl`. See the rule at the top.
          rather than assume it. Under `output: 'standalone'` the cwd should already
          be correct — verify, don't reason.
 
-### 2.3 Tenancy, against real production data
+### 2.3 Phase 2.5 production smoke — archive through audit packet
+
+- [ ] **Upload one text PDF and one real photographed/scanned invoice as the
+      owner.** Both originals survive a process restart and deploy; direct URL
+      guesses return 404; manager and staff sessions receive no file bytes.
+- [ ] **Run extraction through both providers.** The text PDF uses
+      pdf-inspector from the standalone artifact. The scan reaches the real
+      Claude Vision API, records provider/model/token/cost provenance, and lands
+      in the owner review queue rather than silently inventing unmatched data.
+- [ ] **Review and approve one matched line.** Confirm the invoice locks, one
+      `product_cost_history` row points to its source line, and a repeated
+      approval cannot post the cost twice.
+- [ ] **Generate a date-range audit packet.** Observe `PROCESSING → READY`,
+      receive the real SendGrid message, follow its absolute authenticated link,
+      inspect the ZIP manifest/hashes, confirm another tenant cannot fetch it,
+      and confirm the link stops working after its ten-minute expiry.
+- [ ] **Exercise the accepted #39 recovery contract.** Stay within the recorded
+      range limit and prove the operator can clear or fail a deliberately
+      stranded `building` row; if there is no safe rehearsal, fix the reaper
+      before launch rather than call the debt accepted.
+
+### 2.4 Tenancy, against real production data
 
 The invariant that cannot be tested by one tenant using the app normally.
 
@@ -192,7 +218,7 @@ The invariant that cannot be tested by one tenant using the app normally.
       confirm their very next request is refused. Better Auth's own session stays
       valid by design; `requireSession()`'s re-read is what stops them.
 
-### 2.4 The first real count — the part with the least evidence
+### 2.5 The first real count — the part with the least evidence
 
 **Updated 2026-08-12.** This section used to say everything below had been
 reasoned about and never observed. That is no longer true: four phone sessions
@@ -240,17 +266,19 @@ specific about production rather than about the code.
       failure modes are silent. Quantity locations only. *Deferred to Phase 2.9;
       do not let production be where this is first tried.*
 
-### 2.5 Numbers, once a count is closed
+### 2.6 Numbers, once a count is closed
 
-- [ ] **The dashboard's owner-only value and vs-previous delta render** — that
-      branch has never executed (open-items #15).
+- [ ] **The dashboard's owner-only value and vs-previous delta render.** Closed
+      counts exist and the dashboard has been opened, but no named positive
+      browser assertion proves this branch while preserving the manager's
+      negative control (open item #15).
 - [ ] **A manager sees no cost anywhere.** Check the *response*, not the screen:
       cost fields must be absent from the payload, not hidden in CSS (invariant 8).
 - [ ] **Unpriced lines are excluded and reported as excluded**, never valued at
       zero (open-items #4).
 - [ ] **Reorder list is sane** against real par levels.
 
-### 2.6 Watch for a week
+### 2.7 Watch for a week
 
 - [ ] **Memory and CPU on the shared plan.** 3 GB and 4 cores cover this app *and*
       the existing website; the app is not isolated from it.
@@ -258,32 +286,31 @@ specific about production rather than about the code.
       connection limit shared with the website.
 - [ ] **Daily backups are actually running**, and a restore has been tried once.
       An untested backup is a belief, not a backup.
-- [ ] **`session` row growth** — informational; the sweep is deferred (#1b).
+- [ ] **`session` row growth** — informational; the sweep exists, but Hostinger
+      cron scheduling is deferred to this deploy (#1b).
 
 ---
 
 ## Part 3 — Known-and-accepted at launch
 
-Recorded so nobody rediscovers them as bugs. Full detail in `docs/open-items.md`.
-
-Re-checked against the database and the code on 2026-08-12 — three rows here
-had gone stale and said the opposite of the truth.
+Recorded so nobody rediscovers a deliberate limit as a new bug. Full detail and
+triggers live in `docs/open-items.md`; anything Phase 2.9 or Part 1 closes should
+be removed from this table rather than left stale.
 
 | Item | What it means at launch |
 |---|---|
-| #14 | Dashboard stat tiles come from capped reads (`limit: 100` products, `limit: 50` counts). **The catalog now holds 101 products, 99 active** — two more active products and the tile silently understates. Phase 1.5 replaces it with a dedicated aggregate |
-| #4 | **90 of 99 active products unpriced, 0 carry a `case_size`**; valuation is proven but thin until invoices are entered |
-| #2 | Fill corrections write no ledger row — an audit-trail gap, not a wrong number. Its trigger is the compliance packet, deliberately not before |
-| #12 | Wine stays varietals, counted via the search picker — a scope decision |
-| #21 | Case entry for spirits is deliberately absent — only bottled beer gets the field. A scope decision, not a gap |
-| #24 | A plain `docker:up` silently reverts a live LAN session. Dev-only, but it is how the phone loses its allowlisted origin with everything still returning 200 |
+| #12 | Wine remains varietals and uses the search picker — a deliberate scope decision |
+| #21 | Case entry for spirits is deliberately absent; only bottled beer gets the field |
+| #28 | Chart colors 2–5 remain undefined because no chart ships before Phase 4 |
+| #29 | The full accessibility harness covers `/office/catalog`; other office routes were visually opened but not all receive the same named tab/heading/icon assertions unless closed before launch |
+| #30 | Three older tables still use ad hoc markup; this is accessibility/design-system debt, not data risk |
+| #31 | Invoice-path containment does not resolve symlinks; accepted only while every stored path is generated internally and filesystem write access is already privileged |
+| #39 | Audit-packet builds buffer selected files and have no stale-build reaper; launch requires an accepted range limit and manual recovery procedure if not fixed |
 
-**Three rows were removed as no longer true**, rather than left to be trusted:
-#3 (user management shipped 2026-08-03 and is browser-verified — role and
-active changes are no longer manual SQL), #10 (`scanCountLine` was wired
-2026-08-04 and rapid mode is reachable; what is unproven is the camera, which
-is now a Phase 2.9 item), and #11 (Walk-In's count mode was confirmed by the
-owner on 2026-07-31).
+Rows deliberately removed because they are closed: #2 (fill corrections now
+write before/after ledger rows), #3 (user management), #10 (rapid scan is
+reachable), #11 (Walk-In mode confirmed), #14 (dedicated dashboard aggregates),
+#24 (LAN-state prevention), and #25–#27 (verification fixes).
 
 ---
 
