@@ -99,6 +99,13 @@ const TABLES_CHILD_FIRST = [
   "extraction_job",
   "invoice",
   "vendor",
+  // Phase 2.5, Slice 5. audit_packet_file's composite tenant FK points at
+  // audit_packet (organization_id, id) — listed first for the same
+  // child-before-parent documentation reasoning as invoice_line before
+  // invoice above. audit_packet itself also FKs to "user" (created_by), so
+  // both go before "user" below.
+  "audit_packet_file",
+  "audit_packet",
   "session",
   "account",
   "verification",

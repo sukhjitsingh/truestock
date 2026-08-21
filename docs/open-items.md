@@ -1742,3 +1742,63 @@ change that writes at the wrong path segment).
 Fix, when the trigger fires: catch `EEXIST` specifically around the `mkdir` call and re-throw
 with a message naming the offending path and stating it must be a directory, rather than letting
 Node's raw error surface.
+
+---
+
+## 39. Two Slice 5 (Audit Packet) review findings were considered and deliberately not fixed
+
+**Trigger (a): the first date range wide enough to plausibly buffer more invoice
+bytes than the deploy target has free RAM for. Trigger (b): the first
+production incident (deploy, crash, OOM kill) that lands mid-build and is
+noticed by an owner still staring at a stuck "processing" screen.**
+
+Opened 2026-08-20, from the Slice 5 code/security review (`lib/domain/audit-packets.ts`,
+`buildAuditPacketJob`). Both rated low severity; a third finding from the same
+review (no per-organization concurrency guard, rated medium) *was* fixed same-day
+— see `createAuditPacket`'s header comment — and is not repeated here. Recorded so
+a later reader does not mistake either remaining gap for an oversight.
+
+**(a) `buildAuditPacketJob` buffers every matched invoice's full file bytes in
+memory before archiving, with no per-request size or count cap.** The date-range
+schema (`createAuditPacketSchema`) deliberately has no minimum *or maximum* span —
+04-slices.md's spec never asked for one, and owners are expected to request
+sensible ranges (a month, a quarter). On Truestock's small Hostinger Cloud
+Startup plan, an owner requesting a genuinely large range (a full year of a busy
+bar's invoices) could exhaust the Node process's memory before the ZIP is ever
+written. Not fixed now because the honest fix is streaming each file straight
+into the archive rather than staging it in memory first, which is a real
+`archiver`-usage change, not a guard clause — disproportionate to make as a
+same-day patch on top of a workflow-generated slice. The now-fixed concurrency
+guard (`createAuditPacket`'s pre-insert check) already caps this at one build
+per organization at a time, which bounds the *number of simultaneous* buffers
+even though it does nothing about the size of any one of them.
+
+**(b) No stale-job reclaim if the Node process dies mid-build.** Unlike
+`extraction_job` (`db/schema.ts`'s comment on `extractionJobStatusEnum`), which
+has a reaper (`reapStuckJobs`) that returns a stuck `running` job to `queued`,
+`audit_packet` has no equivalent.
+A process restart (deploy, crash, OOM from (a) above) while a build is in flight
+leaves that row at `status = 'building'` forever — the concurrency guard just
+added then permanently blocks that organization from ever requesting another
+packet, and `AuditPacket`'s poll loop (`components/office/audit-packet.tsx`) has
+no timeout of its own, so the owner is left watching "processing" indefinitely
+with no path back to a working state short of a manual database update. Not
+fixed now because a correct reclaim sweep needs the same in-process interval
+pattern `instrumentation-node.ts` already uses for `extraction_job` (a periodic
+"building for longer than N minutes → failed" sweep), and building that
+mechanism — plus deciding its threshold, plus the tests for it — is a new,
+separable unit of work, not a same-day patch.
+
+A third, lower finding from the same review is worth a one-line note rather than
+its own entry: `archiver@8`'s transitive dependency chain
+(`readdir-glob → minimatch → brace-expansion`) carries known high-severity DoS
+advisories in `minimatch`'s glob-matching. Currently dormant — nothing in this
+codebase calls `archive.glob()` or `archive.directory()`, only `archive.append()`
+against files this code has already resolved itself — so no action is needed
+unless the archiving strategy changes to accept glob patterns from anywhere.
+
+Covered by `tests/audit-packet.test.ts` for everything that *is* enforced today:
+the per-organization concurrency guard (`audit_packet_rejects_concurrent_build`,
+`audit_packet_allows_concurrent_build_once_prior_is_resolved`,
+`audit_packet_concurrent_build_guard_is_per_organization`). Neither (a) nor (b)
+above has a test, because neither has a fix yet to test.
