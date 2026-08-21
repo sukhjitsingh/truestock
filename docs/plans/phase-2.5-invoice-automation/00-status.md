@@ -141,7 +141,59 @@ the first pass, 3 from the AR-2 audit, 10 from the AR-4→AR-7 audit).
       merged/overridden) Compose file for isolated per-worktree verification,
       preventing the collisions with other concurrently-running worktrees'
       Docker stacks that hit Slices 1 and 3.
-- [ ] Slice 5 — Audit Packet (Phase E)
+- [x] Slice 5 — Audit Packet (Phase E). Branch `feat/phase-2.5-slice-5-v2`,
+      stacked on `feat/phase-2.5-open-items-2-32-33`'s tip (PR #26, not yet
+      merged — that branch's own PR #25 is also still open). Schema landed
+      first as `7ccb58b` (`audit_packet` table, migration renumbered 0009).
+      `lib/domain/audit-packets.ts`: `createAuditPacket` (insert, status
+      `building`), `buildAuditPacketJob` (background build — collects
+      matched invoices + closed counts for the date range, streams them plus
+      a `manifest.json` with per-file and whole-archive SHA-256 into a ZIP
+      via `archiver`, marks `ready`), `getAuditPacket`/`loadFreshAuditPacket`
+      (lazily CAS's a lapsed `ready` row to `expired` — `WHERE status =
+      'ready'`, so concurrent racers are harmless — enforced at *every* read
+      path, not just a client-side countdown). AR-3 (org-scoping the audit
+      packet's candidate rows) verified real: candidates carry the source
+      row's own `organizationId`, never a hardcoded expected value, so the
+      single-distinct-org assertion before marking `ready` is load-bearing.
+      A medium security-review finding — no per-organization concurrency
+      guard, so a second browser tab or a stale button click could run two
+      concurrent builds against this app's shared 5-10 connection pool
+      (AGENTS.md) — was fixed same-day: `createAuditPacket` now does a
+      SELECT-then-INSERT check and refuses a second `building`-status packet
+      per org with a new `ConflictError`, documented in its own header
+      comment as narrowing rather than eliminating the race. Two remaining
+      low findings from the same review (unbounded per-request memory
+      buffering; no stale-job reclaim if the process dies mid-build) recorded
+      as `docs/open-items.md` #39 rather than fixed, with triggers for when
+      each becomes due. `app/api/audit-packets/[id]/route.ts` (authenticated
+      download, reuses `lib/storage/invoice-files.ts`'s `resolveStoredPath`
+      — the same AR-1 traversal guard prior slices use — and collapses
+      cross-tenant vs. unknown-id to an identical 404, no oracle) plus
+      `app/actions/invoices.ts`'s `createAuditPacketAction`/
+      `getAuditPacketAction`, `lib/email.ts` (packet-ready notification,
+      no-ops when `EMAIL_PROVIDER` is unset), `components/office/audit-packet.tsx`
+      + `app/(office)/office/invoices/audit-packet/page.tsx` (date-range
+      form, live building/ready/expired poll, download link; owner-only link
+      added to the invoices list page). `tests/audit-packet.test.ts`: 32
+      tests, including 3 proving the concurrency guard (blocks a second
+      concurrent same-org build, allows a new build once the prior one
+      leaves `building`, never leaks across organizations). `tsc --noEmit`
+      and `eslint` both clean (sole warning pre-existing, unrelated); full
+      suite 419/420 (the 1 failure is the pre-existing environment-only
+      darwin-x64 `pdf-inspector` gap in an unrelated file); build succeeds
+      with both new routes present. `code-reviewer` and `security-reviewer`
+      both ran; the security-reviewer's medium finding is the concurrency
+      guard fixed above, the two lows are #39. Verified in a real,
+      isolated-Docker browser run (`docker-compose.worktree-test.yml -p
+      truestock-slice5-test`, never the shared dev containers): login →
+      invoices page → audit packet page → date-range submit → live
+      PROCESSING → READY poll transition → download link rendered.
+      Independently confirmed the produced ZIP against the DB row outside
+      the browser entirely: correct 3-member file list (`invoices/1.pdf`,
+      `counts/1.json`, `manifest.json`), correct `manifest.json` content,
+      and the DB-recorded `file_sha256` matches `sha256sum` of the actual
+      file on disk byte-for-byte.
 - Slice 6 — not built by design (auto-approve deferred, see `04-slices.md`)
 
 **Gate 2–4 reconciled 2026-08-15, by the project owner's explicit call, before

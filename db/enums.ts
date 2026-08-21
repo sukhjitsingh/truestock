@@ -207,3 +207,39 @@ export const invoiceMatchMethodEnum = [
  *    see those columns' comments in db/schema.ts.
  */
 export const countLineWriteTypeEnum = ["scan", "fill_correction"] as const;
+
+/**
+ * Phase 2.5, Slice 5 (`docs/plans/phase-2.5-invoice-automation/04-slices.md`,
+ * "Slice 5 — Audit Packet"). Lifecycle of one on-demand export ZIP:
+ *
+ *   - `building` — the row exists, `buildAuditPacketJob` has been enqueued
+ *     but hasn't finished. This is the CREATE-time default: the packet row
+ *     is written before the job runs, same "row exists before the work is
+ *     done" shape as `extraction_job`'s `awaiting_upload`.
+ *   - `ready` — the ZIP is uploaded, `file_path`/`file_sha256`/`manifest_json`
+ *     are set, and `expires_at` is `now() + 10min`. `getAuditPacketAction`
+ *     only ever returns a download URL from this state.
+ *   - `expired` — `expires_at` has passed. The row and manifest stay
+ *     (append-only, matches the two-year retention obligation this feature
+ *     exists for), but the download link is refused server-side at request
+ *     time, never trusted from the URL alone.
+ *   - `failed` — the background job errored before producing a ZIP.
+ *
+ * Declared as a closed set here (not just checked in application code) for
+ * the same reason as every other status enum in this file: MariaDB rejects
+ * an invalid value at the column, not three call sites downstream.
+ */
+export const auditPacketStatusEnum = ["building", "ready", "expired", "failed"] as const;
+
+/**
+ * Which table an `audit_packet_file` row's polymorphic `source_id` points
+ * into. Slice 5's scope is invoices and counts only — 04-slices.md's flow E
+ * queries `invoice` and `count`, nothing else, so `"product"` is
+ * deliberately NOT included even though
+ * `docs/plans/phase-2.5-invoice-automation/02-architecture.md`'s §7 schema
+ * sketch lists it as a generic possibility. Adding a source table later is
+ * itself a migration (same reasoning as `invoiceMatchMethodEnum` above) —
+ * do so only when a slice actually queries that table for the packet, not
+ * preemptively.
+ */
+export const auditPacketSourceTableEnum = ["invoice", "count"] as const;

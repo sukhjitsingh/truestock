@@ -185,4 +185,58 @@ export const approveInvoiceSchema = z.object({
 });
 export type ApproveInvoiceInput = z.infer<typeof approveInvoiceSchema>;
 
+/**
+ * Phase 2.5, Slice 5 — `createAuditPacketAction`'s date-range input. Same
+ * YYYY-MM-DD calendar-day convention as `dateStringSchema` above
+ * (`invoice.invoiceDate` / `retentionUntil`), but a dedicated schema rather
+ * than a reuse: this one additionally rejects a syntactically-shaped but
+ * impossible calendar date (e.g. "2026-02-30" — `dateStringSchema`'s bare
+ * regex would accept it and let it reach `buildAuditPacketJob`'s date
+ * comparisons as garbage), which invoice dates never need to guard against
+ * because they are read off a real document rather than typed by hand into
+ * two bare text inputs on a form.
+ */
+const auditPacketDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD.")
+  .refine((value) => {
+    const [year, month, day] = value.split("-").map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+  }, "Must be a real calendar date.");
+
+/**
+ * `dateFrom <= dateTo` and `dateTo` not in the future are checked here, at
+ * the same request boundary every other schema in this file polices its own
+ * input at — `buildAuditPacketJob` trusts `packet.dateFrom`/`dateTo`
+ * completely once the row exists (04-slices.md: `orgId` is the one value it
+ * re-derives from the row; the date range is the owner's own request, not
+ * attacker-controlled the way a cross-tenant id is), so a malformed or
+ * backwards range must be refused HERE, not discovered later as a packet
+ * that silently built with zero files and no explanation.
+ *
+ * Deliberately NO lower bound on span: `invoice`/`count` rows are never
+ * hard-deleted (invariants 1, 6), so a genuine "everything we have" export
+ * is a legitimate request, not a mistake worth guarding against.
+ */
+export const createAuditPacketSchema = z
+  .object({
+    dateFrom: auditPacketDateSchema,
+    dateTo: auditPacketDateSchema,
+  })
+  .refine((val) => val.dateFrom <= val.dateTo, {
+    message: "dateFrom must be on or before dateTo.",
+    path: ["dateTo"],
+  })
+  .refine((val) => val.dateTo <= new Date().toISOString().slice(0, 10), {
+    message: "dateTo cannot be in the future.",
+    path: ["dateTo"],
+  });
+export type CreateAuditPacketInput = z.infer<typeof createAuditPacketSchema>;
+
+export const getAuditPacketSchema = z.object({
+  packetId: z.number().int().positive(),
+});
+export type GetAuditPacketInput = z.infer<typeof getAuditPacketSchema>;
+
 export { MAX_INVOICE_BYTES };
