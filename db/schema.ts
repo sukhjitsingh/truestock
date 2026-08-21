@@ -97,6 +97,9 @@ import {
   invoiceLineTypeEnum,
   invoiceLineUomEnum,
   invoiceMatchMethodEnum,
+  countLineWriteTypeEnum,
+  auditPacketStatusEnum,
+  auditPacketSourceTableEnum,
 } from "./enums";
 
 export {
@@ -114,6 +117,9 @@ export {
   invoiceLineTypeEnum,
   invoiceLineUomEnum,
   invoiceMatchMethodEnum,
+  countLineWriteTypeEnum,
+  auditPacketStatusEnum,
+  auditPacketSourceTableEnum,
 };
 
 // Reusable audit-timestamp pair. Only added to tables where spec §8 doesn't
@@ -851,6 +857,14 @@ export const countLineWrite = mysqlTable(
       .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
     appliedAt: timestamp("applied_at").notNull().defaultNow(),
+    // open-items.md #2. Discriminates the two shapes a row in this table can
+    // take — see countLineWriteTypeEnum in db/enums.ts for the full
+    // reasoning. NOT NULL, default 'scan': every row that existed before
+    // this column was added genuinely was a scan/increment/quantity
+    // correction (editCountLineFills wrote no ledger row until this
+    // change), so the default backfills existing rows correctly with no
+    // separate data migration.
+    writeType: mysqlEnum("write_type", countLineWriteTypeEnum).notNull().default("scan"),
     // The delta THIS write contributed — never the line's running total.
     // Same "store what was observed, don't pre-aggregate" reasoning as
     // count_line's own sealed_case_qty/sealed_each_qty/partial_fills.
@@ -858,11 +872,37 @@ export const countLineWrite = mysqlTable(
     sealedEachDelta: int("sealed_each_delta").notNull().default(0),
     // The partial_fills entries this specific write contributed (a write
     // may add zero, one, or several open-bottle readings at once) — not
-    // the line's full partial_fills array.
+    // the line's full partial_fills array. Meaningless on `fill_correction`
+    // rows (stays its default `[]` there — see writeType and
+    // partialFillsBefore/After below); only `scan` rows compose by summing
+    // this column.
     partialFillsDelta: json("partial_fills_delta")
       .$type<number[]>()
       .notNull()
       .default([]),
+    // open-items.md #2. `editCountLineFills` REPLACES the whole
+    // partial_fills array rather than appending to it, so it has no delta
+    // representation in partialFillsDelta's additive shape (see writeType
+    // above). These two columns carry the full state transition instead,
+    // captured under the SAME row lock used for the update in
+    // lib/domain/counts.ts's editCountLineFills. Both NULL on `scan` rows —
+    // irrelevant there, since partialFillsDelta already answers "what did
+    // this write contribute" for that write type.
+    //
+    // Rationale (audit-trail self-containment): "who changed this bottle's
+    // fill level, and when" — the open item's own framing — should be
+    // answerable by reading ONE row of this ledger directly, not by
+    // replaying every prior write to reconstruct state at that point in
+    // time. Storing both before and after on the correction row itself is
+    // what makes that true.
+    //
+    // MariaDB has no native JSON type — `json` here is a `longtext` alias
+    // with a validity check (see db/README.md). mysql2 still parses it back
+    // into an array on read, same guarantee count_line.partial_fills and
+    // extraction_job.pages_needing_ocr rely on; that's a driver behaviour,
+    // not a schema one, so it's covered by a test rather than assumed.
+    partialFillsBefore: json("partial_fills_before").$type<number[]>(),
+    partialFillsAfter: json("partial_fills_after").$type<number[]>(),
     // The idempotency key. This UNIQUE index is the entire mechanism
     // described above — everything else in this table exists to make the
     // ledger useful for audit/debugging, not just a dedupe set.
@@ -898,9 +938,9 @@ export const countLineWrite = mysqlTable(
 // ---------------------------------------------------------------------------
 // docs/plans/phase-2.5-invoice-automation/02-architecture.md §2 is the spec.
 // Only `invoice` and `extraction_job` were built in Slice 1. `invoice_line`
-// (Slice 2), `vendor_alias` (Slice 3) and `product_cost_history` (Slice 4,
-// below) have since been added. `audit_packet` and `audit_packet_file`
-// remain later-slice tables and are NOT defined here yet.
+// (Slice 2), `vendor_alias` (Slice 3), `product_cost_history` (Slice 4) and
+// `audit_packet` / `audit_packet_file` (Slice 5, at the end of this file)
+// have since been added.
 //
 // [AR-4] The status machine (uploaded → processing → needs_review →
 // reviewed → approved | rejected) is declared as data in
@@ -1555,6 +1595,183 @@ export const productCostHistory = mysqlTable(
       columns: [table.organizationId, table.sourceInvoiceLineId],
       foreignColumns: [invoiceLine.organizationId, invoiceLine.id],
       name: "product_cost_history_organization_invoice_line_fk",
+    }).onDelete("restrict"),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// AuditPacket — Phase 2.5, Slice 5 (audit packet / two-year retention export)
+// ---------------------------------------------------------------------------
+// docs/plans/phase-2.5-invoice-automation/04-slices.md, "Slice 5 — Audit
+// Packet (Phase E)"; docs/plans/phase-2.5-invoice-automation/02-architecture.md
+// §6/§7 is the schema sketch this table implements, with one deliberate
+// narrowing — see `auditPacketSourceTableEnum` in db/enums.ts.
+//
+// The owner requests a date range → `createAuditPacketAction` writes this row
+// `building` → a background job (`buildAuditPacketJob`) assembles a ZIP of
+// every invoice and count in that range, for that tenant, and a manifest of
+// per-file SHA-256 hashes → the row moves to `ready` with a 10-minute
+// download window. Same "row exists before the work is done" shape as
+// `extraction_job`'s `awaiting_upload`, so the client can poll a real id
+// from the moment the request is accepted.
+//
+// [AR-3] Every query the background job runs is scoped to
+// `orgId = packet.organization_id`, read from THIS row — the job is handed
+// only a packetId, never an organization from a caller. See
+// `audit_packet_file`'s table comment for why that discipline has to live in
+// application code for this feature specifically.
+export const auditPacket = mysqlTable(
+  "audit_packet",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    organizationId: int("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "restrict" }),
+    status: mysqlEnum("status", auditPacketStatusEnum).notNull().default("building"),
+    // The REQUESTED range, as calendar days — "give me every invoice and
+    // count from March" is a date-range question, not a moment-in-time one,
+    // same reasoning as invoice.invoiceDate over a TIMESTAMP. mode: "string"
+    // + db/index.ts's `dateStrings: ["DATE"]` keeps these plain
+    // "YYYY-MM-DD" end to end.
+    dateFrom: date("date_from", { mode: "string" }).notNull(),
+    dateTo: date("date_to", { mode: "string" }).notNull(),
+    // Points into wherever the ZIP is stored (mirrors invoice.filePath's own
+    // storage-key reasoning), never `public/` [AR-1]. Nullable because the
+    // storage key is derived from this row's own `id` and the job hasn't run
+    // yet at insert time — NULL until `status` reaches `ready`, same "id
+    // doesn't exist until the row does" shape as invoice.filePath, not an
+    // empty-string placeholder the download route would have to special-case.
+    filePath: varchar("file_path", { length: 1024 }),
+    // SHA-256 of the whole ZIP (not a per-file hash — those live on
+    // audit_packet_file below), set alongside filePath when the job finishes.
+    fileSha256: varchar("file_sha256", { length: 64 }),
+    // {fileCount, totalSha256} today per 04-slices.md's flow E; shaped as an
+    // extensible per-file array so a future UI can render the manifest
+    // without re-deriving it from audit_packet_file. MariaDB has no native
+    // JSON type — `json` here is a `longtext` alias with a validity check
+    // (see db/README.md). mysql2 still parses it back into an object on
+    // read, same driver guarantee `extraction_job.rawResponse` and
+    // `count_line.partial_fills` rely on; that's a driver behaviour, not a
+    // schema one, so it's covered by a test rather than assumed. Nullable —
+    // set once, when `status` reaches `ready`.
+    manifestJson: json("manifest_json").$type<{
+      fileCount: number;
+      totalSha256: string;
+      files: Array<{
+        path: string;
+        sourceTable: (typeof auditPacketSourceTableEnum)[number];
+        sourceId: number;
+        sha256: string;
+      }>;
+    }>(),
+    // Set to now() + 10min the moment `status` becomes `ready` — the
+    // download-link TTL 04-slices.md's acceptance criteria require, enforced
+    // server-side at request time in `getAuditPacketAction`, never inferred
+    // from the URL alone. NULL until then; stays set (not cleared) once the
+    // packet expires — `status` moving to `expired` is what a stale
+    // `expires_at` gets read as, not a reason to blank the timestamp that
+    // proves when it lapsed.
+    expiresAt: timestamp("expires_at"),
+    // When the background job finished (success or failure) — distinct from
+    // `expires_at` (when the download link stops working) and from
+    // `auditColumns.updatedAt` (bumped by ANY row change, including the
+    // building -> ready transition itself, so it can't answer "how long did
+    // this job take" on its own). NULL while `status = building`.
+    completedAt: timestamp("completed_at"),
+    // The owner who requested this export — both the ownership check
+    // `getAuditPacketAction` runs (AR-2: another org's owner requesting this
+    // packetId gets NotFound, not a download URL) and the email recipient
+    // flow E sends the signed link to. NOT NULL: a packet is always created
+    // by exactly one `createAuditPacketAction` call, by the owner making it,
+    // so — same reasoning as `product_cost_history.createdBy` over
+    // `invoice.approvedBy` — "who requested this" is always known at insert
+    // time, unlike columns that describe an action which may not have
+    // happened yet.
+    createdBy: int("created_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    ...auditColumns,
+  },
+  (table) => [
+    // Target of audit_packet_file's composite tenant FK below. Same role as
+    // every other `*_organization_id_id_unique` in this file.
+    uniqueIndex("audit_packet_organization_id_id_unique").on(table.organizationId, table.id),
+    // The office UI's list/poll query: "this org's packets, filtered by
+    // status" (e.g. the badge that flips processing -> ready).
+    index("audit_packet_organization_status_idx").on(table.organizationId, table.status),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// AuditPacketFile — Phase 2.5, Slice 5 (manifest line items)
+// ---------------------------------------------------------------------------
+// One row per file the background job put in the ZIP — the durable manifest
+// that backs `audit_packet.manifest_json`'s summary and lets a future screen
+// list exactly what an export contained without re-opening the archive.
+// Append-only, like `count_line_write` and `product_cost_history`: a build
+// only ever inserts into this table, never updates or deletes a row, so
+// there is no `updated_at` alongside `created_at`.
+//
+// **`source_id` is polymorphic and therefore cannot be FK-guarded [AR-3].**
+// Depending on `source_table` it points into `invoice.id` or `count.id` —
+// two different tables with two different id sequences — so the database
+// cannot enforce that the referenced row belongs to `organization_id` the
+// way it can everywhere else in this file (compare
+// `product_cost_history`'s three FK-guarded ids, all of which point into
+// exactly one table each). This is the one place in the audit-packet path
+// where tenant scoping rests on application code rather than a constraint —
+// precisely where AR-3's original leak lived (a source query with no
+// `organization_id` predicate at all). The compensating controls, both
+// required and not belt-and-braces:
+//   1. Every source query in `buildAuditPacketJob` filters on
+//      `orgId = packet.organization_id`, read from the `audit_packet` row
+//      itself, never from a caller-supplied value.
+//   2. Before the packet is marked `ready`, the job asserts every row it is
+//      about to write here shares exactly one distinct `organization_id` —
+//      a cheap backstop that turns a future regression (a query that loses
+//      its predicate) into a failed build instead of a silent cross-tenant
+//      ZIP.
+export const auditPacketFile = mysqlTable(
+  "audit_packet_file",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    organizationId: int("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "restrict" }),
+    // No single-column FK — the composite tenant FK below covers it, same
+    // shape as invoice_line.invoiceId / product_cost_history's three ids.
+    auditPacketId: int("audit_packet_id").notNull(),
+    sourceTable: mysqlEnum("source_table", auditPacketSourceTableEnum).notNull(),
+    // Polymorphic; NOT FK-guarded. See the table comment above for why and
+    // for the two compensating controls that stand in for a constraint here.
+    sourceId: int("source_id").notNull(),
+    // The path WITHIN the zip archive (e.g. "invoices/42/original.pdf"), not
+    // a disk path — the disk/storage path for the source file already lives
+    // on `invoice.file_path`; this is where the job placed a copy of it
+    // inside the archive it's building.
+    filePath: varchar("file_path", { length: 1024 }).notNull(),
+    // Per-file SHA-256, independent of `audit_packet.file_sha256` (the whole
+    // ZIP's hash) — this is what lets a future integrity check verify one
+    // archived document without re-hashing the entire export.
+    sha256: varchar("sha256", { length: 64 }).notNull(),
+    // Append-only — see table comment above for why there is no updatedAt.
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    // The manifest-assembly read: "every file this packet contains."
+    index("audit_packet_file_organization_packet_idx").on(
+      table.organizationId,
+      table.auditPacketId,
+    ),
+    // Tenant integrity [AR-2] — same reasoning as every other composite
+    // tenant FK in this file. ON DELETE RESTRICT: nothing hard-deletes an
+    // audit_packet row (append-only export history, same discipline as
+    // product/invoice/count), so this is a backstop, not a path anything
+    // exercises.
+    foreignKey({
+      columns: [table.organizationId, table.auditPacketId],
+      foreignColumns: [auditPacket.organizationId, auditPacket.id],
+      name: "audit_packet_file_organization_packet_fk",
     }).onDelete("restrict"),
   ],
 );

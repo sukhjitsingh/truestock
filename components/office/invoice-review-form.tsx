@@ -32,6 +32,19 @@
  *       rawNet?: string | null,
  *       matchedProductId?: number | null,
  *     }>,
+ *     // Open item #32's fix. Every field optional; unlike the line
+ *     // corrections above, there is no `null`-clears-the-column case here
+ *     // (see `headerCorrectionSchema`'s own comment) — omitted means "leave
+ *     // this column alone," so this form only includes a key when the
+ *     // reviewer actually typed a non-blank value into it.
+ *     headerCorrections?: {
+ *       invoiceDate?: string,     // YYYY-MM-DD
+ *       invoiceNumber?: string,
+ *       totalGross?: string,      // DECIMAL(10,4) string, up to 4 decimals
+ *       totalNet?: string,        // DECIMAL(10,4) string, up to 4 decimals
+ *       currency?: string,        // 3-letter ISO 4217, case-insensitive input
+ *       retentionUntil?: string,  // YYYY-MM-DD
+ *     },
  *   }) => ActionResult<InvoiceRow>
  *
  *   rejectInvoiceAction(input: { invoiceId: number, reason: string })
@@ -45,10 +58,13 @@
  *
  * ## Status branching
  *
- * `needs_review` — the only status with editable money fields and an
- * Approve action (`reviewInvoiceAction`'s CAS only knows `needs_review ->
- * reviewed`; offering the button on any other status would just produce a
- * conflict error every time).
+ * `needs_review` — the only status with editable money fields (line AND
+ * header, open item #32) and an Approve action (`reviewInvoiceAction`'s CAS
+ * only knows `needs_review -> reviewed`; offering the button on any other
+ * status would just produce a conflict error every time). If Approve still
+ * fails after header corrections — a genuinely different required field is
+ * still missing — the existing `InvoiceNotWritableError` message surfaces
+ * the same way it always has; nothing about this form changes that path.
  * `reviewed` — read-only line values (nothing left in this slice writes
  * corrections to an already-reviewed line), but Return is still offered —
  * `lib/domain/invoices.ts`'s `INVOICE_TRANSITIONS` allows `reviewed ->
@@ -84,8 +100,10 @@ import type { InvoiceLineRow, InvoiceLineUom } from "@/lib/domain/invoice-lines"
 import type { ProductSummary } from "@/lib/domain/catalog";
 import {
   lineCorrectionSchema,
+  headerCorrectionSchema,
   rejectInvoiceSchema,
   type ReviewInvoiceInput,
+  type HeaderCorrectionInput,
 } from "@/lib/validation/invoices";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/field";
@@ -103,7 +121,7 @@ import {
 } from "@/components/ui/table";
 import { InvoiceExceptionBadges } from "@/components/office/invoice-exception-badges";
 import { computeLineAlerts } from "@/lib/invoice-line-alerts";
-import { formatCostForInput } from "@/lib/utils";
+import { formatCostForInput, formatCalendarDate } from "@/lib/utils";
 
 /** One `corrections[]` entry, exactly as `reviewInvoiceSchema` (the SAME
  * schema `reviewInvoiceAction` validates with) shapes it — see the header
@@ -143,6 +161,51 @@ function productLabel(product: ProductSummary): string {
   return product.brand ? `${product.name} — ${product.brand}` : product.name;
 }
 
+/**
+ * Open item #32's fix: the six `REQUIRED_FOR_REVIEW` header columns
+ * (`lib/domain/invoices.ts`), editable inline the same way a line's
+ * Gross/Discount/Net cell is — see this component's header comment. Keys
+ * match `HeaderCorrectionInput` exactly so `HEADER_FIELD_KEYS` can drive both
+ * the render loop and the submit-time candidate object below.
+ */
+type HeaderFieldState = Record<keyof HeaderCorrectionInput, string>;
+
+const HEADER_FIELD_KEYS = [
+  "invoiceDate",
+  "invoiceNumber",
+  "totalGross",
+  "totalNet",
+  "currency",
+  "retentionUntil",
+] as const satisfies readonly (keyof HeaderCorrectionInput)[];
+
+const HEADER_FIELD_LABELS: Record<keyof HeaderCorrectionInput, string> = {
+  invoiceDate: "Invoice date",
+  invoiceNumber: "Invoice number",
+  totalGross: "Total gross",
+  totalNet: "Total net",
+  currency: "Currency",
+  retentionUntil: "Retain until",
+};
+
+/**
+ * Unlike `initialFieldState` (line corrections), a blank header field is NOT
+ * a rare edit case — it is the exact gap open item #32 exists to fix
+ * (extraction couldn't determine the field at all). A NULL column renders as
+ * an empty, clearly-editable input here, never a blank label that could read
+ * as "nothing to do" — see this component's header comment.
+ */
+function initialHeaderFieldState(invoice: InvoiceRow): HeaderFieldState {
+  return {
+    invoiceDate: invoice.invoiceDate ?? "",
+    invoiceNumber: invoice.invoiceNumber ?? "",
+    totalGross: formatCostForInput(invoice.totalGross),
+    totalNet: formatCostForInput(invoice.totalNet),
+    currency: invoice.currency ?? "",
+    retentionUntil: invoice.retentionUntil ?? "",
+  };
+}
+
 export function InvoiceReviewForm({
   invoice,
   lines,
@@ -167,6 +230,13 @@ export function InvoiceReviewForm({
     Record<number, Partial<Record<"rawGross" | "rawDiscount" | "rawNet", string>>>
   >({});
 
+  const [headerFields, setHeaderFields] = useState<HeaderFieldState>(() =>
+    initialHeaderFieldState(invoice),
+  );
+  const [headerErrors, setHeaderErrors] = useState<
+    Partial<Record<keyof HeaderCorrectionInput, string>>
+  >({});
+
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -183,6 +253,10 @@ export function InvoiceReviewForm({
 
   function updateField(lineId: number, key: keyof LineFieldState, value: string) {
     setFields((prev) => ({ ...prev, [lineId]: { ...prev[lineId], [key]: value } }));
+  }
+
+  function updateHeaderField(key: keyof HeaderFieldState, value: string) {
+    setHeaderFields((prev) => ({ ...prev, [key]: value }));
   }
 
   async function handleApprove(event: React.FormEvent) {
@@ -220,16 +294,49 @@ export function InvoiceReviewForm({
       corrections.push(parsed.data);
     }
 
+    // Open item #32: a blank header field means "leave this column alone"
+    // (headerCorrectionSchema has no null/clear case — see that schema's own
+    // comment), so a field is only included when the reviewer actually typed
+    // something into it. `headerCorrectionSchema` is the SAME schema
+    // `reviewInvoiceAction` validates with, so this can never accept
+    // something the server would then reject.
+    const headerCandidate: Record<string, string> = {};
+    for (const key of HEADER_FIELD_KEYS) {
+      const value = headerFields[key].trim();
+      if (value !== "") headerCandidate[key] = value;
+    }
+    const headerParsed = headerCorrectionSchema.safeParse(headerCandidate);
+    let headerCorrections: HeaderCorrectionInput | undefined;
+    if (!headerParsed.success) {
+      const nextHeaderErrors: typeof headerErrors = {};
+      for (const issue of headerParsed.error.issues) {
+        const key = issue.path[0];
+        if (typeof key === "string" && key in HEADER_FIELD_LABELS) {
+          nextHeaderErrors[key as keyof HeaderCorrectionInput] = issue.message;
+        }
+      }
+      setHeaderErrors(nextHeaderErrors);
+      hasError = true;
+    } else {
+      setHeaderErrors({});
+      headerCorrections =
+        Object.keys(headerParsed.data).length > 0 ? headerParsed.data : undefined;
+    }
+
     setLineErrors(nextLineErrors);
     if (hasError) {
-      setError("Some lines need attention before this can be approved.");
+      setError("Some fields need attention before this can be approved.");
       return;
     }
 
     setPending(true);
     setError(null);
     try {
-      const result = await reviewInvoiceAction({ invoiceId: invoice.id, corrections });
+      const result = await reviewInvoiceAction({
+        invoiceId: invoice.id,
+        corrections,
+        headerCorrections,
+      });
       setPending(false);
       if (!result.ok) {
         setError(result.error.message);
@@ -336,6 +443,121 @@ export function InvoiceReviewForm({
       ) : null}
 
       <form method="post" onSubmit={editable ? handleApprove : (e) => e.preventDefault()}>
+        <div className="mb-6 rounded-md border border-border bg-card p-card-pad">
+          <h2 className="mb-3 text-label uppercase text-muted-foreground">Invoice details</h2>
+          {editable ? (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <Field
+                label={HEADER_FIELD_LABELS.invoiceDate}
+                htmlFor="header-invoiceDate"
+                error={headerErrors.invoiceDate}
+              >
+                <Input
+                  id="header-invoiceDate"
+                  type="date"
+                  value={headerFields.invoiceDate}
+                  onChange={(e) => updateHeaderField("invoiceDate", e.target.value)}
+                  className="w-full"
+                />
+              </Field>
+              <Field
+                label={HEADER_FIELD_LABELS.invoiceNumber}
+                htmlFor="header-invoiceNumber"
+                error={headerErrors.invoiceNumber}
+              >
+                <Input
+                  id="header-invoiceNumber"
+                  value={headerFields.invoiceNumber}
+                  onChange={(e) => updateHeaderField("invoiceNumber", e.target.value)}
+                  placeholder="Not entered"
+                  className="w-full"
+                />
+              </Field>
+              <Field
+                label={HEADER_FIELD_LABELS.totalGross}
+                htmlFor="header-totalGross"
+                error={headerErrors.totalGross}
+              >
+                <Input
+                  id="header-totalGross"
+                  inputMode="decimal"
+                  value={headerFields.totalGross}
+                  onChange={(e) => updateHeaderField("totalGross", e.target.value)}
+                  placeholder="0.00"
+                  className="w-full"
+                />
+              </Field>
+              <Field
+                label={HEADER_FIELD_LABELS.totalNet}
+                htmlFor="header-totalNet"
+                error={headerErrors.totalNet}
+              >
+                <Input
+                  id="header-totalNet"
+                  inputMode="decimal"
+                  value={headerFields.totalNet}
+                  onChange={(e) => updateHeaderField("totalNet", e.target.value)}
+                  placeholder="0.00"
+                  className="w-full"
+                />
+              </Field>
+              <Field
+                label={HEADER_FIELD_LABELS.currency}
+                htmlFor="header-currency"
+                error={headerErrors.currency}
+                hint="3-letter code, e.g. USD"
+              >
+                <Input
+                  id="header-currency"
+                  value={headerFields.currency}
+                  onChange={(e) => updateHeaderField("currency", e.target.value.toUpperCase())}
+                  placeholder="USD"
+                  maxLength={3}
+                  className="w-full uppercase"
+                />
+              </Field>
+              <Field
+                label={HEADER_FIELD_LABELS.retentionUntil}
+                htmlFor="header-retentionUntil"
+                error={headerErrors.retentionUntil}
+                hint="Auto-fills from invoice date if left blank"
+              >
+                <Input
+                  id="header-retentionUntil"
+                  type="date"
+                  value={headerFields.retentionUntil}
+                  onChange={(e) => updateHeaderField("retentionUntil", e.target.value)}
+                  className="w-full"
+                />
+              </Field>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+              {HEADER_FIELD_KEYS.map((key) => {
+                const raw = invoice[key];
+                const display =
+                  raw == null
+                    ? null
+                    : key === "invoiceDate" || key === "retentionUntil"
+                      ? formatCalendarDate(raw)
+                      : key === "totalGross" || key === "totalNet"
+                        ? formatCostForInput(raw)
+                        : raw;
+                return (
+                  <div key={key} className="flex flex-col gap-1">
+                    <span className="text-label uppercase text-muted-foreground">
+                      {HEADER_FIELD_LABELS[key]}
+                    </span>
+                    <span className="text-body text-card-foreground">
+                      {display ?? <NullValue reason="not-entered" />}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         <TableContainer>
           <Table>
             <TableCaption>

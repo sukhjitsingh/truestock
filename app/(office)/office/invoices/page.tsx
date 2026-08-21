@@ -98,6 +98,20 @@ export default async function InvoicesPage() {
             phase — for now this is the durable record that a document was received.
           </p>
         }
+        action={
+          // Same reasoning as the per-row "Review" link above: the
+          // destination is gated by `requireRole("owner")`
+          // (audit-packet/page.tsx), so a manager's link would be a dead
+          // 403 — built per role rather than rendered-then-hidden.
+          isOwner ? (
+            <Link
+              href="/office/invoices/audit-packet"
+              className="flex min-h-tap-min items-center rounded-md border border-input bg-transparent px-4 text-label uppercase text-foreground"
+            >
+              Audit packet
+            </Link>
+          ) : null
+        }
       />
 
       <div className="mt-6 rounded-md border border-border bg-card p-6">

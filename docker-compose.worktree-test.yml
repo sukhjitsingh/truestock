@@ -6,7 +6,7 @@
 # so a merge would fail to bind. This is a complete, independent file: its own
 # container_name, its own volumes, no published ports at all (only `docker
 # compose exec` is needed — nothing here needs a host port), and it is meant
-# to be run with `-p truestock-slice4-test` so it never collides with the main
+# to be run with `-p truestock-slice5-test` so it never collides with the main
 # checkout's own `truestock-mariadb`/`truestock-app` containers, which run
 # from a DIFFERENT working directory and are frequently already up while this
 # worktree is being tested.
@@ -15,16 +15,16 @@
 # for the incident this is fixing.
 #
 # Usage:
-#   docker compose -f docker-compose.worktree-test.yml -p truestock-slice4-test up -d --wait db
-#   docker compose -f docker-compose.worktree-test.yml -p truestock-slice4-test build app
-#   docker compose -f docker-compose.worktree-test.yml -p truestock-slice4-test run --rm app bunx drizzle-kit migrate
-#   docker compose -f docker-compose.worktree-test.yml -p truestock-slice4-test run --rm -e DATABASE_URL=mysql://truestock:truestock@db:3306/truestock_test app bun test
-#   docker compose -f docker-compose.worktree-test.yml -p truestock-slice4-test down -v
+#   docker compose -f docker-compose.worktree-test.yml -p truestock-slice5-test up -d --wait db
+#   docker compose -f docker-compose.worktree-test.yml -p truestock-slice5-test build app
+#   docker compose -f docker-compose.worktree-test.yml -p truestock-slice5-test run --rm app bunx drizzle-kit migrate
+#   docker compose -f docker-compose.worktree-test.yml -p truestock-slice5-test run --rm -e DATABASE_URL=mysql://truestock:truestock@db:3306/truestock_test app bun test
+#   docker compose -f docker-compose.worktree-test.yml -p truestock-slice5-test down -v
 
 services:
   db:
     image: mariadb:11.8
-    container_name: truestock-slice4-test-mariadb
+    container_name: truestock-slice5-test-mariadb
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_0900_ai_ci
@@ -45,9 +45,9 @@ services:
       # port to reach this container from outside the compose network.
       # 3309: 3307 and 3308 are already the main checkout's and a prior
       # Slice 3 verify stack's own bindings. 127.0.0.1 only.
-      - "127.0.0.1:3309:3306"
+      - "127.0.0.1:3310:3306"
     volumes:
-      - truestock-slice4-test-mariadb-data:/var/lib/mysql
+      - truestock-slice5-test-mariadb-data:/var/lib/mysql
       - ./docker/mariadb/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test:
@@ -62,7 +62,7 @@ services:
     build:
       context: .
       dockerfile: docker/app/Dockerfile
-    container_name: truestock-slice4-test-app
+    container_name: truestock-slice5-test-app
     depends_on:
       db:
         condition: service_healthy
@@ -83,17 +83,17 @@ services:
       # from :3010 would 403 on the Origin check without DEV_LAN_ORIGIN
       # widening it (that file's own comment documents this exact failure
       # mode for a mismatched port).
-      BETTER_AUTH_URL: http://localhost:3010
+      BETTER_AUTH_URL: http://localhost:3011
       BETTER_AUTH_SECRET: dev-only-local-secret-not-used-anywhere-real
-      DEV_LAN_ORIGIN: "http://localhost:3010"
+      DEV_LAN_ORIGIN: "http://localhost:3011"
     ports:
-      - "127.0.0.1:3010:3000"
+      - "127.0.0.1:3011:3000"
     volumes:
       - .:/app
-      - truestock-slice4-test-node-modules:/app/node_modules
-      - truestock-slice4-test-next-cache:/app/.next
+      - truestock-slice5-test-node-modules:/app/node_modules
+      - truestock-slice5-test-next-cache:/app/.next
 
 volumes:
-  truestock-slice4-test-mariadb-data:
-  truestock-slice4-test-node-modules:
-  truestock-slice4-test-next-cache:
+  truestock-slice5-test-mariadb-data:
+  truestock-slice5-test-node-modules:
+  truestock-slice5-test-next-cache:

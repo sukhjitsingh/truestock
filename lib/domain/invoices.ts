@@ -216,6 +216,54 @@ export function computeRetentionUntil(invoiceDate: string): string {
   return `${year}-${month}-${day}`;
 }
 
+/**
+ * A reviewer's correction to one of `REQUIRED_FOR_REVIEW`'s six columns —
+ * open item #32's fix (`docs/open-items.md`). `lib/validation/invoices.ts`'s
+ * `headerCorrectionSchema` is the Zod boundary for this same shape; every
+ * field here is a bare optional string (never `null`) for the reason that
+ * schema's own comment gives.
+ */
+export interface HeaderCorrection {
+  invoiceDate?: string;
+  invoiceNumber?: string;
+  totalGross?: string;
+  totalNet?: string;
+  currency?: string;
+  retentionUntil?: string;
+}
+
+/**
+ * Turns a reviewer's `HeaderCorrection` into the `data` argument
+ * `updateInvoiceStatusTx` already accepts — `lib/domain/invoice-lines.ts`'s
+ * `submitInvoiceReview` passes the result straight through as that call's
+ * `data`, in the SAME transaction as the line corrections, so a correction
+ * that fills a previously-NULL field is visible to THAT SAME call's own
+ * `merged` null-check (below, in `updateInvoiceStatusTx`): a correction makes
+ * a field non-null, it never bypasses the requirement.
+ *
+ * One derived field: if the correction sets `invoiceDate` and does NOT also
+ * separately correct `retentionUntil`, this fills `retentionUntil` in from
+ * `computeRetentionUntil(invoiceDate)` above — the exact computation
+ * `lib/domain/extraction-pipeline.ts` already trusts every time it
+ * successfully reads an invoice date off a document. `computeRetentionUntil`'s
+ * own comment names getting this date wrong as unrecoverable (it is the date
+ * before which a legally-required record must never be deleted), so deriving
+ * it here is safer than asking a reviewer to hand-calculate a three-years-out
+ * calendar date and free-text it in — the one case that function's comment
+ * warns is a real, silent risk. A correction that explicitly names
+ * `retentionUntil` is always honored as given; this only fills a gap, it
+ * never overrides an explicit value.
+ */
+export function resolveHeaderCorrectionData(
+  correction: HeaderCorrection,
+): Partial<typeof invoice.$inferInsert> {
+  const data: Partial<typeof invoice.$inferInsert> = { ...correction };
+  if (correction.invoiceDate != null && correction.retentionUntil == null) {
+    data.retentionUntil = computeRetentionUntil(correction.invoiceDate);
+  }
+  return data;
+}
+
 // ---------------------------------------------------------------------------
 // Create — upload request
 // ---------------------------------------------------------------------------

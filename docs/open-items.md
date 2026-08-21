@@ -106,7 +106,9 @@ Still untested on the write path:
 - **Concurrency.** The gap-lock deadlock and `withLockRetry` were reproduced
   manually against MySQL, never against MariaDB, and never as a test — bun's
   test runner needs two genuinely parallel connections to force it.
-- **`editCountLineFills`**, which by design writes no ledger row (item 2).
+- ~~`editCountLineFills`, which by design writes no ledger row (item 2)~~ —
+  now covered by `tests/count-write-path.test.ts`'s fill-correction block; see
+  item 2's close note.
 - **The `scanCountLine` barcode path**, which nothing calls yet (item 10).
 
 **How to close it.** The first four steps are done and reproducible from a cold
@@ -181,9 +183,7 @@ an unbounded one on a large table locks longer than a nightly job should.
 Schema audit 2026-07-27, finding F4. The index half is done; this is the half
 that was deliberately deferred.
 
-## 2. `editCountLineFills` writes no ledger entry
-
-**Trigger: when the compliance packet (spec §10, Phase 3) is built. Not before.**
+## ~~2. `editCountLineFills` writes no ledger entry~~ — **closed 2026-08-20**
 
 **Updated 2026-07-30 — the function is now actually reachable.** It had zero
 callers when this item was written, which made the gap theoretical. `FillEntry`
@@ -191,26 +191,46 @@ now has a correction mode (docs/mvp-gaps.md finding C), so fill corrections are
 a real thing that happens during a real count, and "who changed this bottle's
 fill level, and when" is a real question with no answer.
 
-That raises the priority but does not change the trigger, and it is still not a
-correctness bug. Every other write path to `count_line` records a
-`count_line_write` row. Fill corrections do not, because
-`count_line_write.partial_fills_delta` is modelled for additive appends from
-the scan path, and a full-array replace has no delta representation in that
-shape.
+That raised the priority but did not change the original trigger — it was
+never a correctness bug. A full-array replace is naturally idempotent at the
+`count_line` level (replaying it lands on the same value either way), so this
+was always an **audit-trail** gap, not a double-count risk. Closed early
+anyway once the ledger convention question below was answered, rather than
+waiting for the compliance packet (spec §10, Phase 3) to force the decision
+under more time pressure.
 
-A replace is naturally idempotent, so a replayed fill correction produces the
-identical row state — the count is right either way. It is an **audit trail**
-gap.
+**How it was closed.** Schema half: `count_line_write` gained a discriminator
+column, `write_type` (`countLineWriteTypeEnum = ["scan", "fill_correction"]`,
+`db/enums.ts`) — `NOT NULL DEFAULT 'scan'`, so every pre-existing row
+backfills correctly with no data migration — plus two new nullable columns,
+`partial_fills_before` / `partial_fills_after`. **Before/after arrays were
+chosen over a delta representation**: a full-array replace has no meaningful
+decomposition into `partial_fills_delta`'s additive-append shape, so
+`fill_correction` rows leave that column at its default `[]` and carry the
+transition on the two new columns instead — "who changed this bottle's fill
+level, and when" is answerable by reading one ledger row directly, no replay
+of prior writes needed.
 
-**Half of the work is already done.** `editCountLineFillsSchema` now requires a
-`clientLineId` (the offline queue needs an id to store the write under), so
-closing this is a change to the domain function alone rather than to the
-boundary and every caller of it.
+Domain half (`lib/domain/counts.ts`): `editCountLineFills` now follows the
+exact same idempotency pattern as `applyIncrement`/`setCountLineQuantities` —
+a `findReplayedLine` pre-check, then a transaction whose ledger insert goes
+second and uncaught, with a try/catch outside the transaction that falls back
+to `findReplayedLine` on a duplicate-key error. It never had this shape before
+because it never wrote a ledger row, so there was nothing to replay-protect;
+now that it does, a legitimate retry needed the same protection every other
+write path already had, or it would surface a raw duplicate-key error instead
+of the idempotent success every other write path guarantees.
+`editCountLineFillsSchema`'s `clientLineId` requirement (already in place
+since 2026-07-30) meant this was a change to the domain function alone, not
+to the boundary or any caller.
 
-**How to close it:** decide a ledger convention for replaces (a discriminator
-column, or storing before/after arrays) and write the entry inside the existing
-transaction. Do not invent the convention silently — it changes what the audit
-export means.
+Tests: `tests/count-write-path.test.ts`'s "fill corrections write a ledger
+entry" describe block — a normal correction writes one `fill_correction` row
+with the right before/after/zero-deltas, a replayed `clientLineId` inserts
+nothing new, and the scan/SET paths still default to `writeType: 'scan'`.
+Mutation-checked: deleting the ledger insert makes exactly the first two of
+those three fail. Run against a real MariaDB 11.8 in an isolated worktree
+Docker stack (`docker-compose.worktree-test.yml`) — full suite 410/410.
 
 ## ~~3. No user-management action exists~~ — **closed 2026-08-03**
 
@@ -1382,7 +1402,7 @@ guard silently while `resolveStoredPath`'s containment check still holds.
 
 ---
 
-## 32. A failed header-field extraction has no correction path on the review screen
+## ~~32. A failed header-field extraction has no correction path on the review screen~~ — **CLOSED 2026-08-20**
 
 **Trigger: the first time a real invoice reaches `needs_review` with a NULL
 `invoiceDate`, `invoiceNumber`, `totalGross`, `totalNet`, `currency`, or
@@ -1416,9 +1436,80 @@ also record which header field blocked it so it surfaces as more than a raw
 domain-error string. Whichever is chosen should have a test using a fixture
 invoice with one of the six fields NULL, not the always-fully-populated one.
 
+**Closed 2026-08-20 — the option this item itself suggested first: header
+corrections, mirroring the line-correction pattern.**
+
+Backend half: `headerCorrectionSchema` (`lib/validation/invoices.ts`) validates
+the six `REQUIRED_FOR_REVIEW` columns as bare optional strings — no `null`
+case, since clearing a required field back to NULL could only ever fail its
+own check — wired into `reviewInvoiceSchema` as an optional `headerCorrections`
+field. `lib/domain/invoices.ts` gained a matching `HeaderCorrection` interface
+and `resolveHeaderCorrectionData`, which shapes a correction into the `data`
+argument `updateInvoiceStatusTx` already accepted — no new null-check path,
+that function already merged `data` onto the current row and validated
+`REQUIRED_FOR_REVIEW` against the merge. `submitInvoiceReview`
+(`lib/domain/invoice-lines.ts`) takes a 4th param, `headerCorrections:
+HeaderCorrection = {}`, passed through in the same transaction as line
+corrections, and `reviewInvoiceAction` (`app/actions/invoices.ts`) forwards
+`parsed.headerCorrections`. `tests/helpers/test-db.ts` gained
+`createInvoiceMissingHeaderField(organizationId, field)`, and
+`tests/invoice-review-path.test.ts` gained 6 tests built against it — the
+fixture-always-populated gap this item itself named.
+
+Frontend half: `InvoiceReviewForm` (`components/office/invoice-review-form.tsx`)
+renders the six header fields inline in a new "Invoice details" card, above the
+line table but inside the same `<form method="post">` the line corrections
+already submit through — editable exactly when the line fields are
+(`invoice.status === "needs_review"`), read-only otherwise. Same conventions as
+the line-correction cells: `Field`/`Input`/`Select` from `components/ui/field`,
+client-side validation via `headerCorrectionSchema` imported directly (never
+re-implemented), and inline per-field error text. `invoiceDate`/`retentionUntil`
+use native `type="date"` inputs (their value format is exactly the schema's
+`YYYY-MM-DD`); `totalGross`/`totalNet` use `inputMode="decimal"` like the line
+Gross/Discount/Net cells; `currency` uppercases on input to match the schema's
+own normalization. A blank field is omitted from the submitted
+`headerCorrections` object rather than sent as `null` — the schema has no clear
+case, per its own comment — so an untouched, still-missing field reaches the
+server exactly as before and still fails Approve with the existing, unchanged
+`InvoiceNotWritableError` message; no regression to that path. **A NULL field
+renders as an empty, clearly-editable input**, not a blank label — the specific
+UX gap this item's fix instructions called out.
+
+Verification: `tsc --noEmit` and `eslint` both clean (the one pre-existing
+`catalog-table.tsx` React Compiler warning is unrelated and unchanged). No new
+component-level test was added for the inline header-editing UI itself — the
+6 new backend tests exercise the same `headerCorrectionSchema` and
+`resolveHeaderCorrectionData` this form calls into.
+
+**Browser-verified 2026-08-20**, closing the gap the paragraph above used to
+flag. Isolated stack (separate `truestock_browsercheck` database + a second
+app container on port 3001, so the running dev containers on port 3000 were
+never touched), one seeded `needs_review` invoice with `currency` NULL. All
+six header fields rendered as visibly editable inputs; the NULL `currency`
+field rendered as a genuinely empty, clearly-bordered input with a gray
+placeholder ("USD") and hint text — not a blank label that looks broken, the
+exact hazard this item's own fix instructions called out. The live uppercase
+transform worked (`usd` → `USD` on type). Clicking Approve transitioned the
+invoice from `needs_review` to `reviewed` on screen with no error, confirmed
+independently at the database level (`SELECT status, currency FROM invoice`
+returned `reviewed` / `USD`, not just inferred from the UI). Console was
+clean (no errors, no hydration-mismatch warnings) and the submit was a real
+`POST /office/invoices/1` — AGENTS.md's `method="post"` rule holds.
+
+Environmental finding surfaced along the way, unrelated to this item's own
+correctness but worth recording: bare `bun run dev` cannot start natively on
+an Intel Mac (`darwin-x64`) in this repo — `@firecrawl/pdf-inspector`, loaded
+unconditionally at server boot via `instrumentation-node.ts` →
+`lib/domain/extraction-pipeline.ts`, has never published a `darwin-x64`
+native binding (confirmed against the npm registry: only `darwin-arm64`,
+`linux-*`, `win32-x64` exist). This is exactly why local dev already runs
+through `docker/app/Dockerfile` rather than bare `bun run dev` — not a new
+gap, just newly confirmed as the reason, and worth remembering before
+reaching for `bun run dev` directly on this machine again.
+
 ---
 
-## 33. `matchLinesToProducts` is only proven in isolation, never through the real extraction pipeline
+## ~~33. `matchLinesToProducts` is only proven in isolation, never through the real extraction pipeline~~ — **CLOSED 2026-08-20**
 
 **Trigger: whenever `@firecrawl/pdf-inspector`'s native binding starts loading
 in this dev environment (see the memory `pdf-inspector-no-darwin-x64-binary`),
@@ -1458,6 +1549,25 @@ the right branch when the key is missing) — none of them assert `matchedProduc
 `matchedVendorAliasId` / `matchConfidence` on the resulting rows, which is the actual gap this item
 names. Still open; the blocker just moved from "untestable in this environment" to "not yet
 written," and the container technique above is the way to write it.
+
+**Closed 2026-08-20 — test-only, no production code changed.** Added a fourth DB-backed
+test to `tests/extraction-pipeline.test.ts`'s `"text-PDF queue routing"` describe block,
+alongside the three routing tests and item #34's `mixed`-classification test. It seeds a
+`vendor_alias` row (`organizationId`, `fx.vendorId`, `vendorItemCode: "FD252"` ->
+`fx.pricedProductId`) before calling `processExtractionQueue` against the same
+`PERFORMANCE_TEXT_INVOICE_MARKDOWN` fixture the first routing test already uses (three
+product lines, one of which carries `vendorItemCode: "FD252"`), then reads back the saved
+`invoice_line` rows and asserts the previously-unverified fields directly: the matched
+line carries `matchedProductId: fx.pricedProductId`, `matchedVendorAliasId: alias.id`,
+`matchMethod: "vendor_alias_code"`, `matchConfidence: "0.500"` (the schema's own default on
+first alias creation), and no `"unmatched item"` exception flag — while the other two lines
+(no alias seeded for their codes) stay fully unmatched and flagged, proving the alias lookup
+is scoped to the code it actually matches rather than matching everything on the invoice.
+Verified with the same throwaway `node:22-bookworm-slim` container technique as items
+#34-#38, pointed at the already-running shared `truestock-mariadb` container's
+`truestock_test` database: `tests/extraction-pipeline.test.ts` 30/30, full suite
+**411 pass, 0 fail, 1151 `expect()` calls, 30 files**. `tsc --noEmit` and `eslint` both clean
+(the one pre-existing `catalog-table.tsx` React Compiler warning is unrelated and unchanged).
 
 ---
 
@@ -1632,3 +1742,63 @@ change that writes at the wrong path segment).
 Fix, when the trigger fires: catch `EEXIST` specifically around the `mkdir` call and re-throw
 with a message naming the offending path and stating it must be a directory, rather than letting
 Node's raw error surface.
+
+---
+
+## 39. Two Slice 5 (Audit Packet) review findings were considered and deliberately not fixed
+
+**Trigger (a): the first date range wide enough to plausibly buffer more invoice
+bytes than the deploy target has free RAM for. Trigger (b): the first
+production incident (deploy, crash, OOM kill) that lands mid-build and is
+noticed by an owner still staring at a stuck "processing" screen.**
+
+Opened 2026-08-20, from the Slice 5 code/security review (`lib/domain/audit-packets.ts`,
+`buildAuditPacketJob`). Both rated low severity; a third finding from the same
+review (no per-organization concurrency guard, rated medium) *was* fixed same-day
+— see `createAuditPacket`'s header comment — and is not repeated here. Recorded so
+a later reader does not mistake either remaining gap for an oversight.
+
+**(a) `buildAuditPacketJob` buffers every matched invoice's full file bytes in
+memory before archiving, with no per-request size or count cap.** The date-range
+schema (`createAuditPacketSchema`) deliberately has no minimum *or maximum* span —
+04-slices.md's spec never asked for one, and owners are expected to request
+sensible ranges (a month, a quarter). On Truestock's small Hostinger Cloud
+Startup plan, an owner requesting a genuinely large range (a full year of a busy
+bar's invoices) could exhaust the Node process's memory before the ZIP is ever
+written. Not fixed now because the honest fix is streaming each file straight
+into the archive rather than staging it in memory first, which is a real
+`archiver`-usage change, not a guard clause — disproportionate to make as a
+same-day patch on top of a workflow-generated slice. The now-fixed concurrency
+guard (`createAuditPacket`'s pre-insert check) already caps this at one build
+per organization at a time, which bounds the *number of simultaneous* buffers
+even though it does nothing about the size of any one of them.
+
+**(b) No stale-job reclaim if the Node process dies mid-build.** Unlike
+`extraction_job` (`db/schema.ts`'s comment on `extractionJobStatusEnum`), which
+has a reaper (`reapStuckJobs`) that returns a stuck `running` job to `queued`,
+`audit_packet` has no equivalent.
+A process restart (deploy, crash, OOM from (a) above) while a build is in flight
+leaves that row at `status = 'building'` forever — the concurrency guard just
+added then permanently blocks that organization from ever requesting another
+packet, and `AuditPacket`'s poll loop (`components/office/audit-packet.tsx`) has
+no timeout of its own, so the owner is left watching "processing" indefinitely
+with no path back to a working state short of a manual database update. Not
+fixed now because a correct reclaim sweep needs the same in-process interval
+pattern `instrumentation-node.ts` already uses for `extraction_job` (a periodic
+"building for longer than N minutes → failed" sweep), and building that
+mechanism — plus deciding its threshold, plus the tests for it — is a new,
+separable unit of work, not a same-day patch.
+
+A third, lower finding from the same review is worth a one-line note rather than
+its own entry: `archiver@8`'s transitive dependency chain
+(`readdir-glob → minimatch → brace-expansion`) carries known high-severity DoS
+advisories in `minimatch`'s glob-matching. Currently dormant — nothing in this
+codebase calls `archive.glob()` or `archive.directory()`, only `archive.append()`
+against files this code has already resolved itself — so no action is needed
+unless the archiving strategy changes to accept glob patterns from anywhere.
+
+Covered by `tests/audit-packet.test.ts` for everything that *is* enforced today:
+the per-organization concurrency guard (`audit_packet_rejects_concurrent_build`,
+`audit_packet_allows_concurrent_build_once_prior_is_resolved`,
+`audit_packet_concurrent_build_guard_is_per_organization`). Neither (a) nor (b)
+above has a test, because neither has a fix yet to test.

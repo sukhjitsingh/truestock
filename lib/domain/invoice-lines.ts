@@ -15,7 +15,13 @@
  *     deletes or reorders anything the pipeline wrote. As of Slice 3, a
  *     manual match here also upserts a `vendor_alias` (see
  *     `applyLineReviewTx`'s own comment) so the SAME vendor SKU arrives
- *     pre-matched on every later invoice.
+ *     pre-matched on every later invoice. `submitInvoiceReview` also accepts
+ *     an OPTIONAL `HeaderCorrection` (open item #32,
+ *     `lib/domain/invoices.ts`) for the invoice's own header columns — not
+ *     an `invoice_line` write at all, but composed into the SAME transaction
+ *     as the line corrections and the status CAS, so a header field that was
+ *     blocking `needs_review -> reviewed` can be fixed in the same submit
+ *     that reaches it.
  * The two are structurally incompatible (wholesale replace vs. targeted
  * update) precisely because of WHEN each runs — see `writeExtractedLines`'s
  * own comment for why that ordering is what makes the delete-then-insert
@@ -51,7 +57,12 @@ import type { invoiceLineTypeEnum, invoiceLineUomEnum, invoiceMatchMethodEnum } 
 import type { Actor } from "@/lib/authz";
 import { withLockRetry } from "@/lib/domain/db-errors";
 import { NotFoundError } from "@/lib/domain/errors";
-import { updateInvoiceStatusTx, type InvoiceRow } from "@/lib/domain/invoices";
+import {
+  updateInvoiceStatusTx,
+  resolveHeaderCorrectionData,
+  type InvoiceRow,
+  type HeaderCorrection,
+} from "@/lib/domain/invoices";
 import { upsertAliasTx } from "@/lib/domain/matching";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -484,6 +495,17 @@ export async function applyLineReview(
  * left applied against an invoice that never actually reached `reviewed`
  * (04-slices.md's `review_conflicts_when_status_moved`).
  *
+ * `headerCorrections` — open item #32's fix — is resolved via
+ * `lib/domain/invoices.ts:resolveHeaderCorrectionData` and passed straight
+ * through as `updateInvoiceStatusTx`'s own `data` argument, so a correction
+ * that fills a previously-NULL `REQUIRED_FOR_REVIEW` column is visible to
+ * THAT SAME call's `merged` null-check: a correction makes a field non-null,
+ * it never bypasses the requirement. It never introduces a new
+ * client-supplied foreign id — every field it can touch is a scalar column
+ * on the invoice row this call already ownership-checks via
+ * `updateInvoiceStatusTx`'s own `SELECT ... FOR UPDATE` — so no new
+ * ownership check is needed here beyond that existing one.
+ *
  * `withLockRetry` (see db-errors.ts): a manual match inside
  * `applyLineReviewTx` calls `lib/domain/matching.ts:upsertAliasTx`, whose
  * duplicate-key recovery branch takes a `SELECT ... FOR UPDATE` on the
@@ -501,11 +523,19 @@ export async function submitInvoiceReview(
   actor: Actor,
   invoiceId: number,
   corrections: LineCorrection[],
+  headerCorrections: HeaderCorrection = {},
 ): Promise<InvoiceRow> {
   return withLockRetry(() =>
     db.transaction(async (tx) => {
       await applyLineReviewTx(tx, actor, invoiceId, corrections);
-      return updateInvoiceStatusTx(tx, actor, invoiceId, "needs_review", "reviewed");
+      return updateInvoiceStatusTx(
+        tx,
+        actor,
+        invoiceId,
+        "needs_review",
+        "reviewed",
+        resolveHeaderCorrectionData(headerCorrections),
+      );
     }),
   );
 }

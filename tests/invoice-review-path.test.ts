@@ -28,8 +28,14 @@ import { invoice, invoiceLine, extractionJob } from "@/db/schema";
 import { getLinesForInvoice, applyLineReview, submitInvoiceReview } from "@/lib/domain/invoice-lines";
 import { updateInvoiceStatus, resendInvoiceToExtraction, createInvoiceForUpload } from "@/lib/domain/invoices";
 import { getJobForInvoice } from "@/lib/domain/extraction";
-import { NotFoundError, ConflictError, DomainError } from "@/lib/domain/errors";
-import { migrateTestDatabase, resetDatabase, createFixtures, type Fixtures } from "./helpers/test-db";
+import { NotFoundError, ConflictError, DomainError, InvoiceNotWritableError } from "@/lib/domain/errors";
+import {
+  migrateTestDatabase,
+  resetDatabase,
+  createFixtures,
+  createInvoiceMissingHeaderField,
+  type Fixtures,
+} from "./helpers/test-db";
 
 let fx: Fixtures;
 
@@ -248,6 +254,79 @@ describe("submitInvoiceReview", () => {
 });
 
 // ---------------------------------------------------------------------------
+// submitInvoiceReview — header-field corrections (open item #32)
+// ---------------------------------------------------------------------------
+
+describe("submitInvoiceReview — header corrections (open item #32)", () => {
+  test(
+    "a NULL currency still blocks needs_review -> reviewed when no header correction is supplied, naming the field in the error",
+    async () => {
+      const invoiceId = await createInvoiceMissingHeaderField(fx.organizationId, "currency");
+
+      const attempt = submitInvoiceReview(fx.owner, invoiceId, []);
+      await expect(attempt).rejects.toBeInstanceOf(InvoiceNotWritableError);
+      await expect(attempt).rejects.toThrow(/currency/);
+
+      const row = await selectInvoice(invoiceId);
+      expect(row.status).toBe("needs_review");
+      expect(row.currency).toBeNull();
+    },
+  );
+
+  test(
+    "supplying the missing currency as a headerCorrection lets the SAME submit reach reviewed, with the corrected value persisted",
+    async () => {
+      const invoiceId = await createInvoiceMissingHeaderField(fx.organizationId, "currency");
+
+      // Called directly at the domain layer, bypassing
+      // `headerCorrectionSchema`'s own uppercase normalization — that
+      // normalization is a Zod-boundary concern, asserted separately below in
+      // `reviewInvoiceAction`'s own describe block, which goes through the
+      // real schema. The domain function itself persists whatever string it
+      // is handed.
+      const result = await submitInvoiceReview(fx.owner, invoiceId, [], { currency: "USD" });
+
+      expect(result.status).toBe("reviewed");
+      expect(result.currency).toBe("USD");
+      const row = await selectInvoice(invoiceId);
+      expect(row.status).toBe("reviewed");
+      expect(row.currency).toBe("USD");
+    },
+  );
+
+  test(
+    "a NULL invoiceNumber is likewise blocked with no correction and unblocked once corrected — proves this isn't currency-specific",
+    async () => {
+      const invoiceId = await createInvoiceMissingHeaderField(fx.organizationId, "invoiceNumber");
+
+      const blocked = submitInvoiceReview(fx.owner, invoiceId, []);
+      await expect(blocked).rejects.toBeInstanceOf(InvoiceNotWritableError);
+      await expect(blocked).rejects.toThrow(/invoiceNumber/);
+
+      const result = await submitInvoiceReview(fx.owner, invoiceId, [], { invoiceNumber: "CORRECTED-001" });
+      expect(result.status).toBe("reviewed");
+      expect(result.invoiceNumber).toBe("CORRECTED-001");
+    },
+  );
+
+  test(
+    "correcting invoiceDate alone (retentionUntil NOT supplied) derives retentionUntil via computeRetentionUntil, rather than leaving it NULL and blocking the transition",
+    async () => {
+      const invoiceId = await createInvoiceMissingHeaderField(fx.organizationId, "invoiceDate");
+      // This fixture only has invoiceDate NULL — retentionUntil starts NULL too,
+      // since the pipeline itself can never derive one without a date.
+      await db.update(invoice).set({ retentionUntil: null }).where(eq(invoice.id, invoiceId));
+
+      const result = await submitInvoiceReview(fx.owner, invoiceId, [], { invoiceDate: "2026-01-01" });
+
+      expect(result.status).toBe("reviewed");
+      expect(result.invoiceDate).toBe("2026-01-01");
+      expect(result.retentionUntil).toBe("2029-01-01");
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
 // resendInvoiceToExtraction — the rejected -> processing re-extract entry point
 // ---------------------------------------------------------------------------
 
@@ -436,6 +515,47 @@ describe("reviewInvoiceAction", () => {
     const line = await selectLine(fx.invoiceLineId);
     expect(line.rawGross).toBe("294.00");
   });
+
+  test(
+    "headerCorrections (open item #32) — a NULL totalNet blocks the action, and supplying it in the SAME action call reaches reviewed",
+    async () => {
+      const invoiceId = await createInvoiceMissingHeaderField(fx.organizationId, "totalNet");
+      const { reviewInvoiceAction } = await import("@/app/actions/invoices");
+      sessionUserId = fx.owner.userId;
+
+      const blocked = await reviewInvoiceAction({ invoiceId, corrections: [] });
+      expect(blocked.ok).toBe(false);
+
+      const corrected = await reviewInvoiceAction({
+        invoiceId,
+        corrections: [],
+        headerCorrections: { totalNet: "50.0000" },
+      });
+      expect(corrected.ok).toBe(true);
+      if (!corrected.ok) throw new Error("unreachable");
+      expect(corrected.data.status).toBe("reviewed");
+      expect(corrected.data.totalNet).toBe("50.0000");
+    },
+  );
+
+  test(
+    "headerCorrections' currency is normalized to uppercase by headerCorrectionSchema before it ever reaches the domain layer",
+    async () => {
+      const invoiceId = await createInvoiceMissingHeaderField(fx.organizationId, "currency");
+      const { reviewInvoiceAction } = await import("@/app/actions/invoices");
+      sessionUserId = fx.owner.userId;
+
+      const result = await reviewInvoiceAction({
+        invoiceId,
+        corrections: [],
+        headerCorrections: { currency: "usd" },
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("unreachable");
+      expect(result.data.currency).toBe("USD");
+    },
+  );
 });
 
 describe("rejectInvoiceAction", () => {

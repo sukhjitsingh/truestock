@@ -753,86 +753,145 @@ export async function setCountLineQuantities(
 
 // ---------------------------------------------------------------------------
 // Edit fills — a correction to partial_fills, not a scan. Naturally
-// idempotent at the count_line level (a SET). Does NOT currently write a
-// count_line_write ledger entry — see this session's report for why that's
-// a deliberate scope decision, not an oversight, and what it costs.
+// idempotent at the count_line level (a SET), but NOT at the ledger/audit
+// level — same reasoning as setCountLineQuantities above. Closes
+// docs/open-items.md #2: this writes a `count_line_write` row with
+// `write_type: 'fill_correction'`, carrying the full before/after arrays
+// (countLineWriteTypeEnum, db/enums.ts) rather than a delta, since a
+// full-array replace has no representation in `partial_fills_delta`'s
+// additive shape.
 // ---------------------------------------------------------------------------
 
 export async function editCountLineFills(
   actor: Actor,
   input: EditCountLineFillsInput,
 ): Promise<CountLineRow> {
-  // withLockRetry — see db-errors.ts. The lock ordering described below is
-  // what keeps this path from *causing* deadlocks; the retry is what keeps it
-  // surviving one caused elsewhere on the same rows.
-  const updated = await withLockRetry(() =>
-    db.transaction(async (tx) => {
-    // Lock ordering matters here: applyIncrement/setCountLineQuantities
-    // always lock `count` before `count_line`. If this function locked
-    // `count_line` first (by going straight to `SELECT ... FOR UPDATE` on
-    // it) and only then locked `count`, two concurrent transactions taking
-    // opposite lock orders could deadlock under load (a scan and a
-    // fill-edit on the same line, at the same time). This unlocked lookup
-    // just discovers which count owns the line, so the row lock below can
-    // follow the same count-then-line order as every other write path.
-    const [unlocked] = await tx
-      .select({ countId: countLine.countId })
-      .from(countLine)
-      .where(
-        and(
-          eq(countLine.id, input.countLineId),
-          eq(countLine.organizationId, actor.organizationId),
-        ),
-      )
-      .limit(1);
-    if (!unlocked) {
-      throw new NotFoundError("Count line");
+  // Fast-path pre-check — see the file header. Not the correctness
+  // mechanism, just avoids opening a transaction we already know would
+  // roll back for the common "ack was lost but the write landed" retry.
+  const preexisting = await findReplayedLine(actor.organizationId, input.clientLineId);
+  if (preexisting) {
+    return toCountLineRow(actor.role, preexisting);
+  }
+
+  let appliedLine: CountLineRecord | null = null;
+  let replayLine: CountLineRecord | null = null;
+
+  try {
+    // withLockRetry — see db-errors.ts. The lock ordering described below is
+    // what keeps this path from *causing* deadlocks; the retry is what keeps it
+    // surviving one caused elsewhere on the same rows.
+    appliedLine = await withLockRetry(() =>
+      db.transaction(async (tx) => {
+        // Lock ordering matters here: applyIncrement/setCountLineQuantities
+        // always lock `count` before `count_line`. If this function locked
+        // `count_line` first (by going straight to `SELECT ... FOR UPDATE` on
+        // it) and only then locked `count`, two concurrent transactions taking
+        // opposite lock orders could deadlock under load (a scan and a
+        // fill-edit on the same line, at the same time). This unlocked lookup
+        // just discovers which count owns the line, so the row lock below can
+        // follow the same count-then-line order as every other write path.
+        const [unlocked] = await tx
+          .select({ countId: countLine.countId })
+          .from(countLine)
+          .where(
+            and(
+              eq(countLine.id, input.countLineId),
+              eq(countLine.organizationId, actor.organizationId),
+            ),
+          )
+          .limit(1);
+        if (!unlocked) {
+          throw new NotFoundError("Count line");
+        }
+        await assertCountWritable(tx, actor.organizationId, unlocked.countId);
+
+        const [line] = await tx
+          .select()
+          .from(countLine)
+          .where(
+            and(
+              eq(countLine.id, input.countLineId),
+              eq(countLine.organizationId, actor.organizationId),
+            ),
+          )
+          .for("update");
+        if (!line) {
+          throw new NotFoundError("Count line");
+        }
+
+        // Captured under the same row lock as the update below — the ledger's
+        // "before" must be what this write actually replaced, not whatever
+        // the client thought the previous value was.
+        const partialFillsBefore = line.partialFills;
+        const partialFillsAfter = input.partialFills;
+
+        await tx
+          .update(countLine)
+          .set({
+            partialFills: input.partialFills,
+            countedBy: actor.userId,
+            countedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(countLine.id, input.countLineId),
+              eq(countLine.organizationId, actor.organizationId),
+            ),
+          );
+
+        // Ledger insert SECOND, deliberately not caught here — same
+        // reasoning as applyIncrement/setCountLineQuantities: a duplicate-key
+        // on client_line_id must roll back the update above along with it,
+        // not commit half a write.
+        await tx.insert(countLineWrite).values({
+          organizationId: actor.organizationId,
+          countLineId: line.id,
+          countId: line.countId,
+          writtenBy: actor.userId,
+          writeType: "fill_correction",
+          sealedCaseDelta: 0,
+          sealedEachDelta: 0,
+          partialFillsDelta: [],
+          partialFillsBefore,
+          partialFillsAfter,
+          clientLineId: input.clientLineId,
+        });
+
+        const [row] = await tx
+          .select()
+          .from(countLine)
+          .where(
+            and(
+              eq(countLine.id, input.countLineId),
+              eq(countLine.organizationId, actor.organizationId),
+            ),
+          )
+          .limit(1);
+        if (!row) throw new NotFoundError("Count line");
+        return row;
+      }),
+    );
+  } catch (err) {
+    if (!isDuplicateKeyError(err)) {
+      throw err;
     }
-    await assertCountWritable(tx, actor.organizationId, unlocked.countId);
-
-    const [line] = await tx
-      .select()
-      .from(countLine)
-      .where(
-        and(
-          eq(countLine.id, input.countLineId),
-          eq(countLine.organizationId, actor.organizationId),
-        ),
-      )
-      .for("update");
-    if (!line) {
-      throw new NotFoundError("Count line");
+    // Replay: the transaction rolled back in full, so nothing from this
+    // attempt persisted. Re-read whatever an earlier, already-committed
+    // write left behind and hand it back as an ordinary success — a
+    // retrying client must get the same answer it would have gotten the
+    // first time, never an error.
+    replayLine = await findReplayedLine(actor.organizationId, input.clientLineId);
+    if (!replayLine) {
+      throw err;
     }
+  }
 
-    await tx
-      .update(countLine)
-      .set({
-        partialFills: input.partialFills,
-        countedBy: actor.userId,
-        countedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(countLine.id, input.countLineId),
-          eq(countLine.organizationId, actor.organizationId),
-        ),
-      );
-
-    const [row] = await tx
-      .select()
-      .from(countLine)
-      .where(
-        and(
-          eq(countLine.id, input.countLineId),
-          eq(countLine.organizationId, actor.organizationId),
-        ),
-      )
-      .limit(1);
-    if (!row) throw new NotFoundError("Count line");
-    return row;
-    }),
-  );
-  return toCountLineRow(actor.role, updated);
+  const finalLine = appliedLine ?? replayLine;
+  if (!finalLine) {
+    throw new NotFoundError("Count line");
+  }
+  return toCountLineRow(actor.role, finalLine);
 }
 
 // ---------------------------------------------------------------------------

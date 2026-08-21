@@ -28,6 +28,12 @@ import * as invoices from "@/lib/domain/invoices";
 import * as invoiceLines from "@/lib/domain/invoice-lines";
 import { approveInvoice, type ApproveInvoiceResult } from "@/lib/domain/invoice-approval";
 import {
+  createAuditPacket,
+  buildAuditPacketJob,
+  getAuditPacketStatus,
+  type AuditPacketStatusResult,
+} from "@/lib/domain/audit-packets";
+import {
   uploadInvoiceSchema,
   confirmUploadSchema,
   getInvoiceSchema,
@@ -37,6 +43,8 @@ import {
   rejectInvoiceSchema,
   resendToExtractionSchema,
   approveInvoiceSchema,
+  createAuditPacketSchema,
+  getAuditPacketSchema,
 } from "@/lib/validation/invoices";
 
 export interface UploadInvoiceResult {
@@ -157,6 +165,11 @@ export async function getInvoiceLinesAction(
  * (mapped to a plain "conflict" message by `runAction`), and nothing is
  * written; it never silently overwrites (04-slices.md's
  * `review_conflicts_when_status_moved`).
+ *
+ * `headerCorrections` (open item #32) is optional and, when omitted,
+ * `submitInvoiceReview`'s own default (`{}`) leaves every
+ * `REQUIRED_FOR_REVIEW` column untouched — the common case where extraction
+ * read every header field correctly and nothing needs correcting.
  */
 export async function reviewInvoiceAction(
   input: unknown,
@@ -164,7 +177,12 @@ export async function reviewInvoiceAction(
   return runAction(async () => {
     const actor = await requireRole("owner");
     const parsed = reviewInvoiceSchema.parse(input);
-    return invoiceLines.submitInvoiceReview(actor, parsed.invoiceId, parsed.corrections);
+    return invoiceLines.submitInvoiceReview(
+      actor,
+      parsed.invoiceId,
+      parsed.corrections,
+      parsed.headerCorrections,
+    );
   });
 }
 
@@ -234,5 +252,58 @@ export async function resendToExtractionAction(
       extractionJobId: result.extractionJobId,
       status: result.invoice.status,
     };
+  });
+}
+
+export interface CreateAuditPacketResult {
+  packetId: number;
+}
+
+/**
+ * Phase 2.5, Slice 5 — the owner's date-range export request. Creates the
+ * `audit_packet` row (status `building`), then fires `buildAuditPacketJob`
+ * WITHOUT awaiting it: "background job" here means decoupled from this
+ * request/response, not a separate process — there is no message queue in
+ * this codebase, and none is needed, since each build job owns exactly one
+ * `packetId` with no cross-job contention to arbitrate (unlike the shared
+ * claimable `extraction_job` queue). The action returns `{packetId}`
+ * immediately; the office UI polls `getAuditPacketAction` for progress.
+ *
+ * The `.catch` below is load-bearing, not decorative: `buildAuditPacketJob`
+ * already never throws past its own boundary (its own top-level try/catch
+ * marks the packet `failed`), but a fire-and-forget promise with NO handler
+ * at all is one dropped `.catch` away from an unhandled rejection taking the
+ * process down if that invariant is ever violated by a future edit — this is
+ * the belt to that suspender's braces.
+ */
+export async function createAuditPacketAction(
+  input: unknown,
+): Promise<ActionResult<CreateAuditPacketResult>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = createAuditPacketSchema.parse(input);
+    const { packetId } = await createAuditPacket(actor, parsed);
+    buildAuditPacketJob(packetId).catch((err) => {
+      console.error(`[actions/invoices] buildAuditPacketJob(${packetId}) rejected unexpectedly`, err);
+    });
+    return { packetId };
+  });
+}
+
+/**
+ * The office UI's status poll for one audit packet. Ownership-checked inside
+ * `getAuditPacketStatus` (invariant 9: a cross-tenant `packetId` raises
+ * `NotFoundError`, never a download URL) and re-checks the 10-minute
+ * download-link expiry server-side at request time, lazily transitioning a
+ * lapsed `ready` packet to `expired` — see `lib/domain/audit-packets.ts` for
+ * both.
+ */
+export async function getAuditPacketAction(
+  input: unknown,
+): Promise<ActionResult<AuditPacketStatusResult>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = getAuditPacketSchema.parse(input);
+    return getAuditPacketStatus(actor, parsed.packetId);
   });
 }

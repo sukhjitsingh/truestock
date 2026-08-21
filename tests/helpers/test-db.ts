@@ -99,6 +99,13 @@ const TABLES_CHILD_FIRST = [
   "extraction_job",
   "invoice",
   "vendor",
+  // Phase 2.5, Slice 5. audit_packet_file's composite tenant FK points at
+  // audit_packet (organization_id, id) — listed first for the same
+  // child-before-parent documentation reasoning as invoice_line before
+  // invoice above. audit_packet itself also FKs to "user" (created_by), so
+  // both go before "user" below.
+  "audit_packet_file",
+  "audit_packet",
   "session",
   "account",
   "verification",
@@ -489,4 +496,47 @@ export async function createFixtures(): Promise<Fixtures> {
 /** A fresh idempotency key. One per WRITE ATTEMPT — never one per line. */
 export function newClientLineId(): string {
   return crypto.randomUUID();
+}
+
+/**
+ * A SECOND `needs_review` invoice, in the given org, with exactly ONE of
+ * `REQUIRED_FOR_REVIEW`'s six header columns (`lib/domain/invoices.ts`) left
+ * NULL — everything else populated, same as `createFixtures`' own
+ * `invoice`/`fx.invoiceId` row.
+ *
+ * Open item #32 (`docs/open-items.md`): `createFixtures`' shared fixture
+ * invoice deliberately always populates all six (its own comment says so,
+ * and many other tests rely on that to reach `reviewed` untouched), so it
+ * cannot double as the "one field missing" case a test of the null-check —
+ * or of correcting it — needs. This is a standalone helper rather than a
+ * parameter on `createFixtures` itself, so the shared fixture stays exactly
+ * as every other test already depends on it.
+ */
+export async function createInvoiceMissingHeaderField(
+  organizationId: number,
+  field: "invoiceDate" | "invoiceNumber" | "totalGross" | "totalNet" | "currency" | "retentionUntil",
+): Promise<number> {
+  const values: typeof invoiceTable.$inferInsert = {
+    organizationId,
+    status: "needs_review",
+    source: "pdf",
+    filePath: `${organizationId}/missing-header-fixture.pdf`,
+    fileSha256: "d".repeat(64),
+    fileSizeBytes: 4321,
+    pageCount: 1,
+    invoiceDate: "2026-06-01",
+    invoiceNumber: "FIXTURE-MISSING-001",
+    totalGross: "50.0000",
+    totalDiscount: "0.0000",
+    totalNet: "50.0000",
+    currency: "USD",
+    // invoice_date + 3 years, matching computeRetentionUntil's own rule —
+    // duplicated as a literal rather than imported, same reasoning as
+    // createFixtures' own invoice above.
+    retentionUntil: "2029-06-01",
+  };
+  delete values[field];
+
+  const [inv] = await db.insert(invoiceTable).values(values).$returningId();
+  return inv.id;
 }
