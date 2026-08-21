@@ -319,6 +319,36 @@ Written, reviewed, typechecked — never observed working.
 
 ## Recent history
 
+- **2026-08-20** — **Open items #2, #32, #33 closed as Slice 5 prerequisites, then
+  Slice 5 (Audit Packet, Phase E) built and verified end to end — Phase 2.5's
+  A–E feature set is now fully implemented.** Two PRs, stacked: #25
+  (`feat/phase-2.5-open-items-2-32-33` → `feat/phase-2.5-invoice-automation`,
+  commit `ed9bf86`) closes the fill-correction audit ledger (#2), adds a
+  correction path for a NULL invoice header field blocking Approve (#32, the
+  gap Slice 2 deferred), and adds the extraction-to-matching integration test
+  through the real `runClaimedJob`/`processExtractionQueue` cron path (#33).
+  #26 (`feat/phase-2.5-slice-5-v2` → `feat/phase-2.5-open-items-2-32-33`,
+  commit `d2b9d72`, schema pre-landed as `7ccb58b`) is Slice 5 itself: an
+  owner-only, on-demand audit packet export — a date range in,
+  `invoices/*.pdf` + `counts/*.json` + `manifest.json` (per-file and
+  whole-archive SHA-256) out as a ZIP, built by a background job with an
+  email notification and a 10-minute download link. A medium security-review
+  finding (`buildAuditPacketJob` buffers every matched invoice's bytes in
+  memory with no per-organization concurrency guard, against this app's
+  shared 5-10 connection pool) was fixed same-day: `createAuditPacket` now
+  refuses a second `building`-status packet per org with a new
+  `ConflictError`. Two low findings from the same review recorded as
+  `docs/open-items.md` #39 rather than fixed. Full detail on both PRs in
+  `docs/plans/phase-2.5-invoice-automation/00-status.md`. Verified in a real,
+  isolated-Docker browser run (`docker-compose.worktree-test.yml -p
+  truestock-slice5-test`): login → audit packet page → date-range submit →
+  live PROCESSING → READY poll → download link, with the produced ZIP
+  independently confirmed against the DB row — correct file list, correct
+  manifest, and the DB-recorded `file_sha256` matching `sha256sum` of the
+  actual file on disk byte-for-byte. Neither PR has merged yet. Phase 2.5's
+  remaining scope is F (auto-approve), deferred by design until ~100 invoices
+  of correction data exist (`04-slices.md`).
+
 - **2026-08-19** — **Open-items #34–#38 closed: Southern Glazer's Wine & Spirits
   invoices now parse correctly, and a vendor template documents the mapping for future
   vendors.** Built on `origin/feat/phase-2.5-invoice-automation` (Slice 4 merged) via a
