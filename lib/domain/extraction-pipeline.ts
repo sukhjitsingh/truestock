@@ -101,6 +101,24 @@ const PDF_INSPECTOR_TYPE_TO_SCHEMA: Record<string, PdfType> = {
   Mixed: "mixed",
 };
 
+/**
+ * Below this confidence, a `text`-classified PDF is rerouted to Vision as
+ * `mixed` — the markdown may be garbage from a borderline-scanned document.
+ */
+const CLASSIFICATION_CONFIDENCE_THRESHOLD = 0.7;
+
+/** Abort-safe timeout for native pdf-inspector calls on untrusted PDFs. */
+const PDF_PROCESSING_TIMEOUT_MS = 30_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms),
+    ),
+  ]);
+}
+
 export interface ClassifyPdfResult {
   pdfType: PdfType;
   pageCount: number;
@@ -110,16 +128,15 @@ export interface ClassifyPdfResult {
 }
 
 /**
- * `filePath` must already be a resolved, containment-checked absolute path
- * (`resolveStoredPath`) — this function does not perform that check itself.
- * Keeping the security-sensitive resolution in exactly one place
- * (`processExtractionQueue`) rather than repeating it here and in
- * `processPdf` is deliberate; see `lib/storage/invoice-files.ts`'s own
- * comment on why `resolveStoredPath` is "the only sanctioned way."
+ * Classifies a PDF from an in-memory buffer. The caller is responsible for
+ * reading the file and performing containment checks (`resolveStoredPath`).
  */
-export async function classifyPdf(filePath: string): Promise<ClassifyPdfResult> {
-  const bytes = await readFile(filePath);
-  const result = await pdfInspector.classifyPdfAsync(bytes);
+export async function classifyPdf(bytes: Buffer): Promise<ClassifyPdfResult> {
+  const result = await withTimeout(
+    pdfInspector.classifyPdfAsync(bytes),
+    PDF_PROCESSING_TIMEOUT_MS,
+    "classifyPdfAsync",
+  );
   const pdfType = PDF_INSPECTOR_TYPE_TO_SCHEMA[String(result.pdfType)];
   if (!pdfType) {
     throw new Error(`pdf-inspector returned an unrecognised pdfType: ${String(result.pdfType)}`);
@@ -137,15 +154,63 @@ export interface ProcessPdfResult {
   markdown: string | null;
   /** 1-indexed, per pdf-inspector's `processPdf`. */
   pagesWithTables: number[];
+  hasEncodingIssues: boolean;
 }
 
-/** Same `filePath` contract as `classifyPdf` above. */
-export async function processPdf(filePath: string): Promise<ProcessPdfResult> {
-  const bytes = await readFile(filePath);
-  const result = await pdfInspector.processPdfAsync(bytes);
+/** Extracts text and tables from a PDF buffer. Same caller responsibility as `classifyPdf`. */
+export async function processPdf(bytes: Buffer): Promise<ProcessPdfResult> {
+  const result = await withTimeout(
+    pdfInspector.processPdfAsync(bytes),
+    PDF_PROCESSING_TIMEOUT_MS,
+    "processPdfAsync",
+  );
   return {
     markdown: result.markdown && result.markdown.length > 0 ? result.markdown : null,
     pagesWithTables: result.pagesWithTables,
+    hasEncodingIssues: result.hasEncodingIssues ?? false,
+  };
+}
+
+export interface ProcessPdfWithOcrResult {
+  markdown: string;
+  /**
+   * 1-indexed pages pdf-inspector itself flags as needing a real vision
+   * model — empty means nothing in this document needed Vision at all.
+   * Sourced directly from `OcrPdfResult.pagesRecommendingHosted`.
+   */
+  pagesRecommendingHosted: number[];
+  /**
+   * 1-indexed pages that actually ran local OCR (a subset of what
+   * `classifyPdf` predicted). Logged for observability only — not
+   * persisted (see `02-architecture.md`'s Data section).
+   */
+  pagesRoutedToOcr: number[];
+}
+
+/**
+ * pdf-inspector's one-call selective-OCR pipeline: native extraction first,
+ * local OCR only on pages the native quality signals flag (`OcrMode.Auto`),
+ * and its own recommendation for which pages still need a hosted vision
+ * model. Same caller responsibility as `classifyPdf`/`processPdf` — the
+ * caller reads the file and performs containment checks.
+ *
+ * `mode` is asserted from the string literal `"Auto"` rather than written as
+ * `pdfInspector.OcrMode.Auto` — `OcrMode` is a `const enum` (same
+ * `isolatedModules` constraint noted on `PDF_INSPECTOR_TYPE_TO_SCHEMA`
+ * above: a const enum imported from another module can be referenced as a
+ * TYPE but its members can't be inlined as VALUES). `"Auto"` is `OcrMode`'s
+ * own runtime string value per the library's declaration.
+ */
+export async function processPdfWithOcr(bytes: Buffer): Promise<ProcessPdfWithOcrResult> {
+  const result = await withTimeout(
+    pdfInspector.processPdfWithOcr(bytes, { mode: "Auto" as pdfInspector.OcrMode }),
+    PDF_PROCESSING_TIMEOUT_MS,
+    "processPdfWithOcrAsync",
+  );
+  return {
+    markdown: result.markdown,
+    pagesRecommendingHosted: result.pagesRecommendingHosted,
+    pagesRoutedToOcr: result.pagesRoutedToOcr,
   };
 }
 
@@ -855,6 +920,9 @@ function getAnthropicClient(): Anthropic {
 export async function extractInvoice(doc: ExtractionDoc): Promise<ExtractInvoiceResult> {
   const client = getAnthropicClient();
   const effort = doc.pdfType === "text" ? "low" : "medium";
+  console.log(
+    `[extraction-pipeline] Vision call starting: pdfType=${doc.pdfType}, effort=${effort}, hasMarkdown=${doc.markdown != null}`,
+  );
 
   const userContent: Anthropic.ContentBlockParam[] = [
     {
@@ -893,6 +961,10 @@ export async function extractInvoice(doc: ExtractionDoc): Promise<ExtractInvoice
   if (message.parsed_output == null) {
     throw new Error("Claude Vision returned no parsed_output for this invoice.");
   }
+
+  console.log(
+    `[extraction-pipeline] Vision call finished: stop_reason=${message.stop_reason}, inputTokens=${message.usage.input_tokens ?? "?"}, outputTokens=${message.usage.output_tokens}, costUsd=${estimateCostUsd(MODEL_ID, message.usage.input_tokens, message.usage.output_tokens)}`,
+  );
 
   return {
     raw: message.parsed_output,
@@ -1129,6 +1201,7 @@ async function setJobPhase(jobId: number, phase: ExtractionPhase): Promise<void>
   // Best-effort, not CAS-guarded — `phase` is observability only (db/schema.ts's
   // extractionJob comment: "never a claim predicate"), so losing a race on it
   // costs a stale debugging value, never correctness.
+  console.log(`[extraction-pipeline] job ${jobId} -> phase ${phase}`);
   await db.update(extractionJob).set({ phase }).where(eq(extractionJob.id, jobId));
 }
 
@@ -1141,6 +1214,7 @@ export interface ProcessExtractionQueueDeps {
   extractInvoice?: ExtractInvoiceFn;
   classifyPdf?: typeof classifyPdf;
   processPdf?: typeof processPdf;
+  processPdfWithOcr?: typeof processPdfWithOcr;
   readPdfFile?: (filePath: string) => Promise<Buffer>;
 }
 
@@ -1160,9 +1234,11 @@ export async function processExtractionQueue(
   if (!job) {
     return { claimed: false };
   }
+  console.log(`[extraction-pipeline] worker ${workerId} claimed job ${job.id} (invoice ${job.invoiceId})`);
 
   try {
     await runClaimedJob(job, deps);
+    console.log(`[extraction-pipeline] job ${job.id} (invoice ${job.invoiceId}) done`);
     return { claimed: true, jobId: job.id, invoiceId: job.invoiceId, outcome: "done" };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1222,6 +1298,9 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
     // job's own CAS to done) — finish the one remaining step rather than
     // re-running extraction (which would re-derive the same drafts anyway,
     // at the cost of a second Vision call) or refusing outright.
+    console.log(
+      `[extraction-pipeline] job ${job.id}: invoice ${job.invoiceId} already needs_review — finishing job without re-extracting`,
+    );
     await updateJobStatus(job.id, "running", "done", { completedAt: new Date() });
     return;
   }
@@ -1238,10 +1317,18 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
   }
   const resolvedPath = resolveStoredPath(invoiceRow.filePath);
 
+  // Read the file once — the buffer is shared by classify, process, and the
+  // Vision base64 encode, matching the library's "single document load" design.
+  const readPdfFile = deps.readPdfFile ?? readFile;
+  const pdfBytes = await readPdfFile(resolvedPath);
+
   await setJobPhase(job.id, "classify");
   const classifyFn = deps.classifyPdf ?? classifyPdf;
   const processPdfFn = deps.processPdf ?? processPdf;
-  const classification = await classifyFn(resolvedPath);
+  const classification = await classifyFn(pdfBytes);
+  console.log(
+    `[extraction-pipeline] job ${job.id}: classified as ${classification.pdfType} (confidence=${classification.confidence.toFixed(2)}, pageCount=${classification.pageCount}, pagesNeedingOcr=${classification.pagesNeedingOcr.length})`,
+  );
   // Persist classification immediately rather than only on `done`: it is the
   // evidence that explains why a failed job did or did not require Vision.
   await db
@@ -1249,40 +1336,89 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
     .set({ pdfType: classification.pdfType, pagesNeedingOcr: classification.pagesNeedingOcr })
     .where(eq(extractionJob.id, job.id));
 
-  let markdown: string | null = null;
-  if (classification.pdfType === "text" || classification.pdfType === "mixed") {
-    await setJobPhase(job.id, "text_extract");
-    const processed = await processPdfFn(resolvedPath);
-    markdown = processed.markdown;
-  } else {
-    await setJobPhase(job.id, "ocr");
+  // Effective type may differ from the raw classification: low confidence or
+  // encoding issues reroute a `text` classification to `mixed` so Vision
+  // validates the extraction rather than trusting potentially-garbage markdown.
+  let effectivePdfType: PdfType = classification.pdfType;
+  if (effectivePdfType === "text" && classification.confidence < CLASSIFICATION_CONFIDENCE_THRESHOLD) {
+    effectivePdfType = "mixed";
+    console.log(
+      `[extraction-pipeline] job ${job.id}: rerouted text -> mixed (confidence ${classification.confidence.toFixed(2)} below threshold ${CLASSIFICATION_CONFIDENCE_THRESHOLD})`,
+    );
   }
+
+  let markdown: string | null = null;
+  if (effectivePdfType === "text" || effectivePdfType === "mixed") {
+    await setJobPhase(job.id, "text_extract");
+    const processed = await processPdfFn(pdfBytes);
+    markdown = processed.markdown;
+    // A text-classified PDF with broken font encodings produces mojibake
+    // markdown — reroute to Vision where the rendered image is readable.
+    if (effectivePdfType === "text" && processed.hasEncodingIssues) {
+      effectivePdfType = "mixed";
+      console.log(`[extraction-pipeline] job ${job.id}: rerouted text -> mixed (pdf-inspector reported encoding issues)`);
+    }
+  }
+  // Scanned PDFs skip the block above entirely (no text layer to extract),
+  // so their first phase update is the unconditional "ocr" set below —
+  // shared with `mixed`, which already went through "text_extract" above
+  // and now moves on to selective OCR too.
 
   let parsed: ParsedExtraction;
   let extraction: ExtractInvoiceResult | null = null;
-  if (classification.pdfType === "text") {
+  if (effectivePdfType === "text") {
     if (!markdown) {
       throw new Error("pdf-inspector classified this PDF as text-based but returned no usable Markdown.");
     }
     await setJobPhase(job.id, "parse");
     parsed = parseLinesFromMarkdown(markdown);
   } else {
-    // Mixed PDFs still need Vision because the extracted text layer is
-    // incomplete; attach whatever markdown exists as ground truth for the
-    // pages pdf-inspector could read.
-    if (classification.pdfType === "mixed") {
-      await setJobPhase(job.id, "ocr");
+    // Scanned/mixed PDFs run pdf-inspector's selective-OCR pipeline first.
+    // Single unconditional "ocr" phase call site for both (previously
+    // scanned got "ocr" from a separate branch above, and mixed got it from
+    // a now-removed conditional here — consolidated to this one call).
+    await setJobPhase(job.id, "ocr");
+    const processPdfWithOcrFn = deps.processPdfWithOcr ?? processPdfWithOcr;
+    const ocrResult = await processPdfWithOcrFn(pdfBytes);
+    console.log(
+      `[extraction-pipeline] job ${job.id}: selective OCR routed ${ocrResult.pagesRoutedToOcr.length} page(s) to local OCR, ${ocrResult.pagesRecommendingHosted.length} page(s) still recommend a hosted vision model`,
+    );
+
+    // Empty pagesRecommendingHosted means pdf-inspector itself is confident
+    // no page needs a hosted vision model — skip Claude Vision entirely and
+    // parse its fused markdown the same deterministic way the `text` path
+    // does. A parse failure here (no recognizable line-item table) is not
+    // treated as a hard error: it falls through to Vision below, same as
+    // today, so an invoice never costs MORE than the old pipeline — only
+    // sometimes less.
+    let markdownParsed: ParsedExtraction | null = null;
+    if (ocrResult.pagesRecommendingHosted.length === 0) {
+      await setJobPhase(job.id, "parse");
+      try {
+        markdownParsed = parseLinesFromMarkdown(ocrResult.markdown);
+      } catch {
+        // Fall through to Vision below.
+      }
     }
-    const readPdfFile = deps.readPdfFile ?? readFile;
-    const bytes = await readPdfFile(resolvedPath);
-    const extractFn = deps.extractInvoice ?? extractInvoice;
-    extraction = await extractFn({
-      pdfType: classification.pdfType,
-      markdown,
-      pdfBase64: bytes.toString("base64"),
-    });
-    await setJobPhase(job.id, "parse");
-    parsed = parseLinesFromVision(extraction.raw);
+
+    if (markdownParsed) {
+      parsed = markdownParsed;
+    } else {
+      // Unchanged from today: the whole buffer, not a page subset (see
+      // appendix-a-selective-ocr-audit.md — no page-scoped image is
+      // available from this library's Node.js binding). `markdown` here is
+      // deliberately the earlier native-extraction variable, not
+      // `ocrResult.markdown`, to keep this call byte-for-byte identical to
+      // the pre-existing Vision path.
+      const extractFn = deps.extractInvoice ?? extractInvoice;
+      extraction = await extractFn({
+        pdfType: effectivePdfType,
+        markdown,
+        pdfBase64: pdfBytes.toString("base64"),
+      });
+      await setJobPhase(job.id, "parse");
+      parsed = parseLinesFromVision(extraction.raw);
+    }
   }
   const { header, lines } = parsed;
 
@@ -1301,9 +1437,14 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
       line.exceptionFlags = [...(line.exceptionFlags ?? []), UNMATCHED_ITEM_FLAG];
     }
   }
+  const matchedCount = lines.filter((line) => line.matchedProductId != null).length;
+  console.log(`[extraction-pipeline] job ${job.id}: matched ${matchedCount}/${lines.length} line(s) to products`);
 
   const arithmetic = arithmeticCheck(lines, header.totalGross != null ? Number(header.totalGross) : null);
   const crossCheck = pdfInspectorCrossCheck(lines, markdown);
+  console.log(
+    `[extraction-pipeline] job ${job.id}: checks — arithmetic=${arithmetic.pass ? "pass" : "FAIL"}, crossCheck=${crossCheck.pass ? "pass" : "FAIL"}`,
+  );
   if (!arithmetic.pass || !crossCheck.pass) {
     if (lines.length === 0) {
       // A check failure is normally surfaced by flagging every line
@@ -1354,4 +1495,7 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
     costUsd: extraction?.costUsd ?? null,
     completedAt: new Date(),
   });
+  console.log(
+    `[extraction-pipeline] job ${job.id}: invoice ${job.invoiceId} -> needs_review (${lines.length} line(s), pdfType=${classification.pdfType}${extraction ? `, costUsd=${extraction.costUsd}` : ""})`,
+  );
 }

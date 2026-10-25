@@ -77,16 +77,25 @@ declare global {
 
 async function extractionTick(): Promise<void> {
   try {
+    let claimedCount = 0;
     for (let i = 0; i < MAX_JOBS_PER_TICK; i++) {
       const result = await processExtractionQueue(WORKER_ID);
       if (!result.claimed) {
         break;
       }
+      claimedCount++;
       if (result.outcome === "failed") {
         console.error(
           `[instrumentation] extraction job ${result.jobId} (invoice ${result.invoiceId}) failed: ${result.errorMessage}`,
         );
       }
+    }
+    // Silent on an idle tick (no job to claim) by design — this fires every 2
+    // minutes forever, and "nothing to do" is not worth a line. A tick that
+    // claimed at least one job gets a one-line summary; each job's own
+    // classify/match/check/done detail already came from extraction-pipeline.ts.
+    if (claimedCount > 0) {
+      console.log(`[instrumentation] extraction tick processed ${claimedCount} job(s)`);
     }
   } catch (err) {
     console.error("[instrumentation] extraction tick failed", err);
