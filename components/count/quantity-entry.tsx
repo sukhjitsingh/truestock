@@ -13,78 +13,75 @@ export interface QuantitySubmission {
   eaches: number;
 }
 
+export interface QuantityEntryProps {
+  productId?: number;
+  productName?: string;
+  currentCases?: number;
+  currentEaches?: number;
+  existingCaseQty?: number;
+  existingEachQty?: number;
+  caseSize?: number | null;
+  category?: string;
+  unitType?: string;
+  canSet?: boolean;
+  canSeeCost?: boolean;
+  unitCost?: number | string | null;
+  pending?: boolean;
+  onCommitQuantity?: (delta: {
+    caseQty: number;
+    eachQty: number;
+    mode: "add" | "set";
+  }) => Promise<void> | void;
+  onSubmit?: (submission: QuantitySubmission) => Promise<void> | void;
+  onCancel: () => void;
+}
+
+function clampInt(v: string | number): number {
+  const n = typeof v === "number" ? v : parseInt(v, 10);
+  return isNaN(n) || n < 0 ? 0 : Math.floor(n);
+}
+
 /**
- * Sealed-quantity entry for one product on one line.
+ * Sealed Backstock Stepper & Quantity Entry (spec §6, prototypes/count-sealed-qty.html)
  *
- * ADD and SET take the same numbers in the same boxes, and afterwards the
- * line reads "3 ea" either way — so a SET the user meant as an ADD loses
- * bottles with nothing on screen looking wrong. CLAUDE.md's answer is that
- * the submit button states the consequence as they type, and that there is
- * deliberately NO confirmation modal: a dialog on a control used ~150 times
- * per count gets clicked through blind inside a week, which is worse than no
- * guard because it feels like one.
- *
- * Cases and eaches stay separate all the way through (invariant 4). The
- * combined unit figure shown below the fields is reference only and is never
- * what gets written.
- *
- * Only bottled beer gets a Cases box (`isCountedByCase`). Rendering one for a
- * spirit hinting "No case size on file" invites a number into a field the
- * catalog leaves NULL on purpose — and a case count on a product with no case
- * size is the one input `computeLineUnits` cannot resolve, so it would take
- * the line out of the valuation entirely. Case entry for spirits is deferred
- * to Phase 2.0.
+ * Enforces:
+ * 1. 56px primary tap floor on steppers, mode toggles, and commit buttons.
+ * 2. Independent Cases and Loose Eaches storage and counting (Invariant 4).
+ * 3. Pack multipliers (e.g. × 12 per case).
+ * 4. Live consequence deltas on submit button (e.g. `SET TO 3 EA / was 12 ea · −9` or `ADD 3 EA / 12 → 15`).
+ * 5. Negative number disallowance (`clampInt >= 0`).
+ * 6. Role-gated value display on submit button (design-system.md §8).
  */
 export function QuantityEntry({
-  currentCases,
-  currentEaches,
-  caseSize,
-  category,
-  unitType,
-  canSet,
-  pending,
+  currentCases: propCurrentCases,
+  currentEaches: propCurrentEaches,
+  existingCaseQty,
+  existingEachQty,
+  caseSize = null,
+  category = "Spirits",
+  unitType = "bottle",
+  canSet = true,
+  canSeeCost = false,
+  unitCost = null,
+  pending = false,
+  onCommitQuantity,
   onSubmit,
   onCancel,
-}: {
-  currentCases: number;
-  currentEaches: number;
-  /** Snapshot case size, if known. Null is normal — most of the catalog has none. */
-  caseSize: number | null;
-  /**
-   * The product's identity, not a `showCases` boolean, so `isCountedByCase`
-   * stays the single definition of what a case is. A boolean prop would let a
-   * caller answer the question a second way, which is the drift
-   * lib/pack-level.ts exists to prevent.
-   */
-  category: string;
-  unitType: string;
-  /**
-   * SET maps to `setCountLineQuantitiesAction`, which needs an existing
-   * count line. A product not yet on this count can only be ADDed.
-   */
-  canSet: boolean;
-  pending?: boolean;
-  onSubmit: (submission: QuantitySubmission) => void;
-  onCancel: () => void;
-}) {
+}: QuantityEntryProps) {
+  const initialCases = propCurrentCases ?? existingCaseQty ?? 0;
+  const initialEaches = propCurrentEaches ?? existingEachQty ?? 0;
+
   const [mode, setMode] = useState<QuantityMode>("add");
-  const [caseInput, setCaseInput] = useState(0);
-  const [eaches, setEaches] = useState(0);
+  const [caseInput, setCaseInput] = useState<number>(0);
+  const [eachInput, setEachInput] = useState<number>(0);
 
   const countsByCase = isCountedByCase({ category, unitType });
 
-  /**
-   * Zero when there is no Cases box, derived rather than zeroed at the
-   * `onSubmit` call. Everything downstream — the consequence line, the unit
-   * figure, the disabled test — then reads the same number the server gets,
-   * so the button cannot promise a case the write does not make. Clearing the
-   * state instead would leave that gap open for one render, and would depend
-   * on an effect firing.
-   */
   const cases = countsByCase ? caseInput : 0;
+  const eaches = eachInput;
 
-  const nextCases = mode === "add" ? currentCases + cases : cases;
-  const nextEaches = mode === "add" ? currentEaches + eaches : eaches;
+  const nextCases = mode === "add" ? initialCases + cases : cases;
+  const nextEaches = mode === "add" ? initialEaches + eaches : eaches;
 
   const describe = (c: number, e: number) => {
     const parts: string[] = [];
@@ -93,153 +90,216 @@ export function QuantityEntry({
     return parts.join(", ");
   };
 
-  /**
-   * The same, for the AFTER side of a SET, where either count falling to
-   * zero is precisely what has to be said out loud. `describe` drops a zero
-   * case count AND drops a zero each count whenever the other part is
-   * present, so a line already carrying both would go from "2 cases, 3 ea"
-   * to "3 ea" (cases dropped) or from "1 case, 12 ea" to "1 case" (eaches
-   * dropped) — either way the loss reads as formatting, not as data going to
-   * zero. That is the SET-mistaken-for-ADD failure wearing a different hat.
-   * The guard is per axis, not one combined special case, because cases and
-   * eaches fall to zero independently: a case-only SET zeroes loose bottles
-   * without touching cases, and a bottled-beer product with cases already
-   * on the line can have either wiped on its own.
-   */
   const describeAfter = (c: number, e: number) => {
     const parts: string[] = [];
-    // Each axis is guarded on its own condition, not folded into one
-    // combined check, because cases and eaches reach zero independently — a
-    // case-only SET wipes loose bottles without touching cases, and either
-    // one can be the count that was already sitting on the line.
-    if (c > 0 || currentCases > 0) parts.push(`${c} ${c === 1 ? "case" : "cases"}`);
-    if (e > 0 || currentEaches > 0 || parts.length === 0) parts.push(`${e} ea`);
+    if (c > 0 || initialCases > 0) parts.push(`${c} ${c === 1 ? "case" : "cases"}`);
+    if (e > 0 || initialEaches > 0 || parts.length === 0) parts.push(`${e} ea`);
     return parts.join(", ");
   };
 
-  // Units are only computable when a case size is known — or when there are
-  // no cases at all, where "zero cases of an unknown size" is unambiguously
-  // zero (lib/domain/valuation.ts). Never guess a case size to fill this in.
+  // Units calculations
   const unitsKnown = caseSize != null || nextCases === 0;
   const nextUnits = unitsKnown ? nextCases * (caseSize ?? 0) + nextEaches : null;
   const currentUnits =
-    caseSize != null || currentCases === 0
-      ? currentCases * (caseSize ?? 0) + currentEaches
+    caseSize != null || initialCases === 0
+      ? initialCases * (caseSize ?? 0) + initialEaches
       : null;
 
-  const nothingEntered = cases === 0 && eaches === 0;
+  const unitDelta =
+    nextUnits != null && currentUnits != null ? nextUnits - currentUnits : null;
+
+  // Valuation calculations
+  const numericUnitCost =
+    typeof unitCost === "number"
+      ? unitCost
+      : unitCost != null && !isNaN(Number(unitCost))
+        ? Number(unitCost)
+        : null;
+  const isPriced = canSeeCost && numericUnitCost != null;
+  const totalValue = isPriced && numericUnitCost != null && nextUnits != null ? nextUnits * numericUnitCost : null;
+
+  const handleModeChange = (nextMode: QuantityMode) => {
+    setMode(nextMode);
+    if (nextMode === "set") {
+      // In SET mode, initialize with the current recorded numbers
+      setCaseInput(initialCases);
+      setEachInput(initialEaches);
+    } else {
+      // In ADD mode, initialize with 0
+      setCaseInput(0);
+      setEachInput(0);
+    }
+  };
+
+  const handleCommit = async () => {
+    if (onSubmit) {
+      await onSubmit({ mode, cases, eaches });
+    } else if (onCommitQuantity) {
+      await onCommitQuantity({
+        caseQty: cases,
+        eachQty: eaches,
+        mode,
+      });
+    }
+  };
+
+  const nothingEntered = mode === "add" && cases === 0 && eaches === 0;
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Mode Segmented Switcher — 56px Primary Floor */}
       {canSet ? (
         <div
           role="tablist"
           aria-label="Entry mode"
-          className="grid grid-cols-2 gap-1 rounded-md bg-muted p-1"
+          className="grid grid-cols-2 gap-1 rounded-md border border-input bg-muted p-1"
         >
-          {(["add", "set"] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              role="tab"
-              aria-selected={mode === m}
-              onClick={() => setMode(m)}
-              className={cn(
-                "min-h-tap-primary rounded-sm text-label uppercase",
-                // Brand blue marks the selected segment. design-system.md §3
-                // sanctions accent for selected states in forms and nav —
-                // this is a UI mode, not a stock status, so amber (which
-                // would read as "in progress") is deliberately avoided.
-                mode === m
-                  ? "bg-accent text-accent-foreground"
-                  : "bg-transparent text-muted-foreground",
-              )}
-            >
-              {m === "add" ? "Add (+)" : "Set exact (=)"}
-            </button>
-          ))}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "add"}
+            onClick={() => handleModeChange("add")}
+            className={cn(
+              "flex min-h-tap-primary items-center justify-center rounded-sm text-label font-bold uppercase tracking-wider transition-colors",
+              mode === "add"
+                ? "bg-accent text-accent-foreground shadow-sm"
+                : "bg-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Add (+)
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "set"}
+            onClick={() => handleModeChange("set")}
+            className={cn(
+              "flex min-h-tap-primary items-center justify-center rounded-sm text-label font-bold uppercase tracking-wider transition-colors",
+              mode === "set"
+                ? "bg-accent text-accent-foreground shadow-sm"
+                : "bg-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Set exact count (=)
+          </button>
         </div>
       ) : null}
 
-      {/*
-        Deliberately reports `currentCases` even where the Cases box is
-        hidden. Hiding the input must not hide cases the line already holds —
-        an invisible real number is worse than a field nobody should type in.
-      */}
-      <p className="text-caption text-muted-foreground">
-        {canSet ? (
+      {/* Current Recorded Line Context */}
+      <div className="rounded-md border border-border bg-muted p-3 text-caption text-muted-foreground">
+        {mode === "add" ? (
           <>
-            Already on this line: <strong className="text-foreground">
-              {describe(currentCases, currentEaches)}
+            Currently recorded on this line:{" "}
+            <strong className="text-foreground">
+              {describe(initialCases, initialEaches)}
             </strong>
-            {currentUnits != null ? ` (${formatUnits(currentUnits)} units)` : ""}.
+            {currentUnits != null ? ` (${formatUnits(currentUnits)} units)` : ""}. This adds
+            more on top.
           </>
         ) : (
-          "Not on this count yet — this creates the line."
+          <>
+            Correction mode: this <strong className="text-foreground">replaces</strong> the
+            line total outright. Dial it to the true count on the shelf.
+          </>
         )}
-      </p>
+      </div>
 
-      {/*
-        One column when there are no cases, so eaches is the input rather than
-        the left-hand half of a grid with a hole in it. A dim bar and one free
-        hand do not need a layout that reads as something failing to load.
-      */}
+      {/* Steppers Grid (Cases & Eaches) */}
       <div className={cn("grid gap-3", countsByCase ? "grid-cols-2" : "grid-cols-1")}>
         {countsByCase ? (
-          <Stepper
+          <StepperCard
             label="Cases"
             value={caseInput}
-            onChange={setCaseInput}
+            onChange={(v) => setCaseInput(clampInt(v))}
             hint={caseSize != null ? `× ${caseSize} per case` : "No case size on file"}
           />
         ) : null}
-        <Stepper
+        <StepperCard
           label="Eaches"
-          value={eaches}
-          onChange={setEaches}
-          hint={countsByCase ? "Loose bottles, not part of a case" : "Sealed bottles"}
+          value={eachInput}
+          onChange={(v) => setEachInput(clampInt(v))}
+          hint={countsByCase ? "Loose bottles, not part of a case" : "Sealed bottles / units"}
         />
       </div>
 
+      {/* Reference Summary */}
+      <div className="rounded-lg border border-border bg-muted p-card-pad">
+        <div className="flex items-baseline justify-between">
+          <span className="text-caption text-muted-foreground">
+            {mode === "add" ? "This write adds" : "Correction delta"}
+          </span>
+          <span className="text-numeral-sm font-semibold tabular-nums text-foreground">
+            {mode === "add"
+              ? // Cases of an unknown size are an unknown number of units, not 1
+                // each. Zero cases is unambiguously zero (same rule as
+                // `unitsKnown` above and `computeLineUnits`).
+                caseSize != null || cases === 0
+                ? `${cases * (caseSize ?? 0) + eaches} units`
+                : "units unknown — no case size"
+              :`${(unitDelta ?? 0) >= 0 ? "+" : ""}${unitDelta ?? 0} units`}
+          </span>
+        </div>
+        <div className="mt-1 flex items-baseline justify-between">
+          <span className="text-caption text-muted-foreground">Line total after save</span>
+          <span className="text-numeral-sm font-semibold tabular-nums text-foreground">
+            {describeAfter(nextCases, nextEaches)}
+            {nextUnits != null ? ` (${formatUnits(nextUnits)} units)` : ""}
+          </span>
+        </div>
+        <p className="mt-2 text-caption text-muted-foreground">
+          Cases and eaches are stored separately and never merged.
+        </p>
+      </div>
+
+      {/* Bottom Action Bar — 56px Floor */}
       <div className="flex gap-3">
-        <Button variant="outline" size="primary" className="flex-1" onClick={onCancel}>
+        <Button
+          type="button"
+          variant="outline"
+          size="primary"
+          className="flex-1"
+          onClick={onCancel}
+        >
           Cancel
         </Button>
 
-        {/*
-          The consequence, stated live. Two lines: what will happen, and what
-          it does to the line. No modal — see the component doc above.
-        */}
         <button
           type="button"
           disabled={pending || nothingEntered}
-          onClick={() => onSubmit({ mode, cases, eaches })}
-          className="flex min-h-tap-primary flex-[1.4] flex-col items-center justify-center gap-0.5 rounded-md bg-primary px-2 text-primary-foreground disabled:opacity-50"
+          onClick={() => void handleCommit()}
+          className={cn(
+            "flex min-h-tap-primary flex-[1.5] flex-col items-center justify-center rounded-md bg-primary px-3 text-primary-foreground shadow-sm transition-opacity disabled:opacity-50",
+            totalValue != null ? "gap-0.5 py-1.5" : "",
+          )}
         >
           <span className="flex items-baseline gap-1">
-            <span className="text-label uppercase">{mode === "add" ? "Add" : "Set to"}</span>
+            <span className="text-label uppercase">{mode === "add" ? "Save" : "Save correction"}</span>
             <span className="text-numeral-sm uppercase tabular-nums">
-              {mode === "add" ? describe(cases, eaches) : describeAfter(cases, eaches)}
+              {mode === "add" ? `(${describe(cases, eaches)})` : `(${describeAfter(cases, eaches)})`}
             </span>
           </span>
-          <span className="text-caption tabular-nums text-primary-foreground/70">
+
+          <span className="text-caption tabular-nums text-primary-foreground/75">
             {mode === "add"
-              ? `${describe(currentCases, currentEaches)} → ${describe(nextCases, nextEaches)}`
-              : `was ${describe(currentCases, currentEaches)}${
-                  currentUnits != null && nextUnits != null
-                    ? ` · ${nextUnits >= currentUnits ? "+" : "−"}${formatUnits(
-                        Math.abs(nextUnits - currentUnits),
-                      )}`
+              ? `${describe(initialCases, initialEaches)} → ${describe(nextCases, nextEaches)}`
+              : `was ${describe(initialCases, initialEaches)}${
+                  unitDelta != null
+                    ? ` · ${unitDelta >= 0 ? "+" : "−"}${formatUnits(Math.abs(unitDelta))}`
                     : ""
                 }`}
           </span>
+          {totalValue != null ? (
+            <span className="text-numeral-sm tabular-nums text-primary-foreground">
+              ${totalValue.toFixed(2)}
+            </span>
+          ) : null}
         </button>
       </div>
     </div>
   );
 }
 
-function Stepper({
+function StepperCard({
   label,
   value,
   onChange,
@@ -253,13 +313,15 @@ function Stepper({
   const id = `qty-${label.toLowerCase()}`;
   return (
     <div className="rounded-lg border border-border bg-card p-card-pad">
-      <span className="text-label uppercase text-muted-foreground">{label}</span>
-      <div className="mt-2 flex items-center gap-2">
+      <label htmlFor={id} className="block text-label uppercase text-muted-foreground">
+        {label}
+      </label>
+      <div className="mt-2.5 flex items-center gap-2">
         <button
           type="button"
           aria-label={`Decrease ${label.toLowerCase()}`}
-          onClick={() => onChange(Math.max(0, value - 1))}
-          className="flex size-14 shrink-0 items-center justify-center rounded-md border border-input text-numeral-md text-foreground active:bg-muted"
+          onClick={() => onChange(clampInt(value - 1))}
+          className="flex size-tap-primary shrink-0 items-center justify-center rounded-md border border-input bg-secondary text-numeral-md font-bold text-foreground transition-colors active:bg-muted"
         >
           –
         </button>
@@ -270,14 +332,14 @@ function Stepper({
           min={0}
           aria-label={label}
           value={value}
-          onChange={(e) => onChange(Math.max(0, Number(e.target.value) || 0))}
-          className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-2 text-center text-numeral-md tabular-nums text-foreground"
+          onChange={(e) => onChange(clampInt(e.target.value))}
+          className="min-w-0 flex-1 rounded-md border border-input bg-background py-2 text-center text-numeral-md font-bold tabular-nums text-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
         />
         <button
           type="button"
           aria-label={`Increase ${label.toLowerCase()}`}
-          onClick={() => onChange(value + 1)}
-          className="flex size-14 shrink-0 items-center justify-center rounded-md border border-input text-numeral-md text-foreground active:bg-muted"
+          onClick={() => onChange(clampInt(value + 1))}
+          className="flex size-tap-primary shrink-0 items-center justify-center rounded-md border border-input bg-secondary text-numeral-md font-bold text-foreground transition-colors active:bg-muted"
         >
           +
         </button>
