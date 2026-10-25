@@ -1,5 +1,6 @@
 import { requireOfficeUser } from "@/lib/current-user";
 import { listVendorsAction } from "@/app/actions/catalog";
+import { PageHeader } from "@/components/office/page-header";
 import { VendorsList } from "@/components/office/vendors-list";
 
 export const metadata = { title: "Vendors · Truestock" };
@@ -27,10 +28,14 @@ export default async function VendorsPage() {
 
   return (
     <div>
-      <h1 className="text-header-title">Vendors</h1>
-      <p className="mt-1 text-row-subtitle text-muted-foreground">
-        Suppliers for products and reorder grouping.
-      </p>
+      <PageHeader
+        title="Vendors"
+        subtitle={
+          <p className="text-row-subtitle text-muted-foreground">
+            Suppliers for products and reorder grouping.
+          </p>
+        }
+      />
 
       {!result.ok ? (
         <p className="mt-6 rounded-md bg-negative-bg px-3 py-2 text-caption text-negative" role="alert">

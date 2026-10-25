@@ -1,5 +1,6 @@
 import { requireOfficeUser } from "@/lib/current-user";
 import { listAllLocationsAction } from "@/app/actions/catalog";
+import { PageHeader } from "@/components/office/page-header";
 import { LocationsTable } from "@/components/office/locations-table";
 
 export const metadata = { title: "Locations · Truestock" };
@@ -25,11 +26,15 @@ export default async function LocationsPage() {
 
   return (
     <div>
-      <h1 className="text-header-title">Locations</h1>
-      <p className="mt-1 text-row-subtitle text-muted-foreground">
-        Where counts happen. Speed Rail and Back Bar count in tenths; Storeroom counts by
-        quantity.
-      </p>
+      <PageHeader
+        title="Locations"
+        subtitle={
+          <p className="text-row-subtitle text-muted-foreground">
+            Where counts happen. Speed Rail and Back Bar count in tenths; Storeroom counts by
+            quantity.
+          </p>
+        }
+      />
 
       {!result.ok ? (
         <p className="mt-6 rounded-md bg-negative-bg px-3 py-2 text-caption text-negative" role="alert">

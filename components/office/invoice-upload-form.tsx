@@ -92,6 +92,8 @@ function stageLabel(stage: Stage): string {
  * validation problem here that RHF would earn its keep on, and every
  * sibling form in `components/office/` uses this shape.
  */
+import { Upload, FileText, CheckCircle, AlertCircle } from "lucide-react";
+
 export function InvoiceUploadForm({ vendors }: { vendors: VendorSummary[] }) {
   const router = useRouter();
 
@@ -262,29 +264,35 @@ export function InvoiceUploadForm({ vendors }: { vendors: VendorSummary[] }) {
 
   return (
     <form method="post" onSubmit={handleSubmit} className="flex flex-col gap-section-gap" noValidate>
-      <h2 className="text-label uppercase text-muted-foreground">Upload an invoice</h2>
+      <div className="flex items-center gap-2">
+        <Upload className="size-4 text-accent" aria-hidden="true" />
+        <h2 className="text-label uppercase text-muted-foreground font-semibold">Upload an invoice</h2>
+      </div>
 
       <Field
-        label="File"
+        label="Invoice Document"
         htmlFor="invoice-file"
         error={fieldErrors.fileSha256 ?? fieldErrors.fileSizeBytes ?? fieldErrors.contentType}
         hint="PDF, JPEG, PNG, HEIC, or WEBP — up to 25 MB."
       >
-        <input
-          id="invoice-file"
-          type="file"
-          accept={ACCEPTED_INVOICE_CONTENT_TYPES.join(",")}
-          onChange={handleFileChange}
-          disabled={pending}
-          className="min-h-tap-min rounded-md border border-input bg-card px-3 py-2 text-body text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-2 file:text-label file:uppercase file:text-primary-foreground"
-        />
+        <div className="relative rounded-xl border border-dashed border-border/90 bg-secondary/30 p-4 transition-all hover:border-accent/60">
+          <input
+            id="invoice-file"
+            type="file"
+            accept={ACCEPTED_INVOICE_CONTENT_TYPES.join(",")}
+            onChange={handleFileChange}
+            disabled={pending}
+            className="w-full text-body text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-2 file:text-label file:uppercase file:text-primary-foreground font-semibold cursor-pointer"
+          />
+          {file ? (
+            <div className="mt-3 flex items-center gap-2 text-caption text-foreground bg-card/80 rounded-md p-2 border border-border/50">
+              <FileText className="size-4 text-accent shrink-0" aria-hidden="true" />
+              <span className="font-medium truncate">{file.name}</span>
+              <span className="text-muted-foreground">· {CONTENT_TYPE_LABEL[contentType] ?? contentType} · {(file.size / 1024).toFixed(0)} KB</span>
+            </div>
+          ) : null}
+        </div>
       </Field>
-
-      {file ? (
-        <p className="text-caption text-muted-foreground">
-          {file.name} · {CONTENT_TYPE_LABEL[contentType] ?? contentType} · {(file.size / 1024).toFixed(0)} KB
-        </p>
-      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Vendor" htmlFor="invoice-vendor" error={fieldErrors.vendorId} hint="Optional — leave blank if unknown.">
@@ -315,14 +323,16 @@ export function InvoiceUploadForm({ vendors }: { vendors: VendorSummary[] }) {
       </div>
 
       {error ? (
-        <p className="rounded-md bg-negative-bg px-3 py-2 text-caption text-negative" role="alert">
-          {error}
-        </p>
+        <div className="flex items-center gap-2 rounded-lg bg-negative-bg p-3 text-caption text-negative" role="alert">
+          <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
+          <span>{error}</span>
+        </div>
       ) : null}
       {stage === "done" ? (
-        <p className="rounded-md bg-success-bg px-3 py-2 text-caption text-success" role="status">
-          Uploaded and verified — it&apos;s in the archive below.
-        </p>
+        <div className="flex items-center gap-2 rounded-lg bg-success-bg p-3 text-caption text-success" role="status">
+          <CheckCircle className="size-4 shrink-0" aria-hidden="true" />
+          <span>Uploaded and verified — it&apos;s in the archive below.</span>
+        </div>
       ) : null}
 
       <div className="flex flex-wrap items-center gap-3">
@@ -331,7 +341,7 @@ export function InvoiceUploadForm({ vendors }: { vendors: VendorSummary[] }) {
             Retry upload
           </Button>
         ) : (
-          <Button type="submit" size="primary" disabled={pending || !file}>
+          <Button type="submit" size="primary" disabled={pending || !file} className="font-semibold shadow-xs">
             {stageLabel(stage)}
           </Button>
         )}
@@ -339,7 +349,7 @@ export function InvoiceUploadForm({ vendors }: { vendors: VendorSummary[] }) {
           <button
             type="button"
             onClick={reset}
-            className="text-caption text-muted-foreground underline hover:text-foreground"
+            className="text-caption text-accent font-semibold underline hover:text-accent/80"
           >
             Upload another
           </button>

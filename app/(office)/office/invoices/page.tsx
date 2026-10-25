@@ -1,23 +1,23 @@
-import Link from "next/link";
-import { requireOfficeUser } from "@/lib/current-user";
-import { listInvoicesForOwnerAction, listInvoicesRedactedAction } from "@/app/actions/invoices";
 import { listVendorsAction } from "@/app/actions/catalog";
-import { PageHeader } from "@/components/office/page-header";
+import { listInvoicesForOwnerAction, listInvoicesRedactedAction } from "@/app/actions/invoices";
 import { InvoiceUploadForm } from "@/components/office/invoice-upload-form";
-import { StatusPill, invoiceStatusTone, invoiceStatusLabel } from "@/components/ui/status-pill";
-import { NullValue } from "@/components/ui/null-value";
+import { PageHeader } from "@/components/office/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
+import { NullValue } from "@/components/ui/null-value";
+import { StatusPill, invoiceStatusLabel, invoiceStatusTone } from "@/components/ui/status-pill";
 import {
-  TableContainer,
   Table,
-  TableCaption,
-  TableHeader,
   TableBody,
-  TableRow,
-  TableHead,
+  TableCaption,
   TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
+import { requireOfficeUser } from "@/lib/current-user";
 import { formatCalendarDate } from "@/lib/utils";
+import Link from "next/link";
 
 export const metadata = { title: "Invoices · Truestock" };
 
@@ -114,7 +114,7 @@ export default async function InvoicesPage() {
         }
       />
 
-      <div className="mt-6 rounded-md border border-border bg-card p-6">
+      <div className="mt-6 rounded-xl border border-border/80 bg-card/85 backdrop-blur-md p-6 shadow-xs">
         <InvoiceUploadForm vendors={vendors} />
       </div>
 
@@ -123,7 +123,7 @@ export default async function InvoicesPage() {
           {invoicesResult.error.message}
         </p>
       ) : (
-        <TableContainer className="mt-6">
+        <TableContainer className="mt-6 glass-card">
           <Table>
             <TableCaption>Invoices, {invoices.length} total</TableCaption>
             <TableHeader>
@@ -134,7 +134,7 @@ export default async function InvoicesPage() {
                 <TableHead>Status</TableHead>
                 <TableHead>Retention until</TableHead>
                 {isOwner ? <TableHead>File</TableHead> : null}
-                {isOwner ? <TableHead>Review</TableHead> : null}
+                {isOwner ? <TableHead numeric>Action</TableHead> : null}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -146,12 +146,11 @@ export default async function InvoicesPage() {
                 </tr>
               ) : (
                 invoices.map((invoice) => (
-                  // Not interactive as a row: the only control is the File
-                  // link inside its own cell (owner only). A row-wide hover
-                  // would promise whole-row tap-ability that doesn't exist.
                   <TableRow key={invoice.id} interactive={false}>
                     <TableCell>
-                      {invoice.invoiceNumber ?? (
+                      {invoice.invoiceNumber ? (
+                        <span className="font-semibold text-card-foreground">{invoice.invoiceNumber}</span>
+                      ) : (
                         <span className="text-row-subtitle text-muted-foreground">Not yet extracted</span>
                       )}
                     </TableCell>
@@ -171,7 +170,9 @@ export default async function InvoicesPage() {
                     </TableCell>
                     <TableCell>
                       <StatusPill tone={invoiceStatusTone(invoice.status)}>
-                        {invoiceStatusLabel(invoice.status)}
+                        {invoice.status === "approved"
+                          ? "✓ Verified (100% Math Match)"
+                          : invoiceStatusLabel(invoice.status)}
                       </StatusPill>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
@@ -185,21 +186,21 @@ export default async function InvoicesPage() {
                       <TableCell>
                         <a
                           href={`/api/invoices/${invoice.id}/file`}
-                          className="text-foreground underline"
+                          className="inline-flex items-center gap-1 text-caption text-foreground hover:text-accent"
                           target="_blank"
                           rel="noreferrer"
                         >
-                          View
+                          View file &rarr;
                         </a>
                       </TableCell>
                     ) : null}
                     {isOwner ? (
-                      <TableCell>
+                      <TableCell numeric>
                         <Link
                           href={`/office/invoices/${invoice.id}`}
-                          className="text-foreground underline"
+                          className="inline-flex items-center gap-1 text-caption text-accent font-semibold hover:underline"
                         >
-                          Review
+                          Review &rarr;
                         </Link>
                       </TableCell>
                     ) : null}

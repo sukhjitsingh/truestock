@@ -3,6 +3,17 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { VendorSummary } from "@/lib/domain/catalog";
+import {
+  TableContainer,
+  Table,
+  TableCaption,
+  TableHeader,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+} from "@/components/ui/table";
+import { NullValue } from "@/components/ui/null-value";
 import { Button } from "@/components/ui/button";
 import { VendorEditForm } from "./vendor-edit-form";
 
@@ -133,54 +144,70 @@ export function VendorsList({ vendors }: { vendors: VendorSummary[] }) {
             </div>
           )}
 
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[48rem] border-collapse text-left">
-              <thead>
-                <tr className="border-b border-border">
-                  <th scope="col" className="py-2 text-label uppercase text-muted-foreground">
-                    Vendor
-                  </th>
-                  <th scope="col" className="py-2 text-label uppercase text-muted-foreground">
-                    Contact
-                  </th>
-                  <th scope="col" className="py-2 text-label uppercase text-muted-foreground">
-                    Order method
-                  </th>
-                  <th scope="col" className="py-2 text-label uppercase text-muted-foreground">
-                    Lead time
-                  </th>
-                  <th scope="col" className="py-2 text-right text-label uppercase text-muted-foreground">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
+          <TableContainer>
+            <Table className="min-w-[48rem]">
+              <TableCaption>
+                Vendors, {vendors.length} {vendors.length === 1 ? "vendor" : "vendors"}
+              </TableCaption>
+              <TableHeader>
+                <TableRow interactive={false}>
+                  <TableHead>Vendor</TableHead>
+                  <TableHead>Contact</TableHead>
+                  <TableHead>Order method</TableHead>
+                  <TableHead>Lead time</TableHead>
+                  <TableHead numeric>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {vendors.map((vendor) => (
-                  <tr key={vendor.id} className="border-b border-border align-top">
-                    <td className="py-3">
+                  <TableRow key={vendor.id} interactive={true} className="align-top">
+                    <TableCell className="py-3">
                       <span className="block text-row-subtitle font-semibold text-foreground">
                         {vendor.name}
                       </span>
-                    </td>
-                    <td className="py-3 text-row-subtitle text-muted-foreground">
-                      {vendor.contact || "—"}
-                    </td>
-                    <td className="py-3 text-row-subtitle text-muted-foreground">
-                      {vendor.orderMethod || "—"}
-                    </td>
-                    <td className="py-3 text-row-subtitle text-muted-foreground">
-                      {vendor.leadTimeDays != null ? `${vendor.leadTimeDays}d` : "—"}
-                    </td>
-                    <td className="py-3 text-right">
-                      <Button variant="outline" size="tap" onClick={() => handleEditClick(vendor.id)}>
+                    </TableCell>
+                    <TableCell className="py-3">
+                      {vendor.contact ? (
+                        <span className="text-row-subtitle text-muted-foreground">
+                          {vendor.contact}
+                        </span>
+                      ) : (
+                        <NullValue reason="not-entered" />
+                      )}
+                    </TableCell>
+                    <TableCell className="py-3">
+                      {vendor.orderMethod ? (
+                        <span className="text-row-subtitle text-muted-foreground">
+                          {vendor.orderMethod}
+                        </span>
+                      ) : (
+                        <NullValue reason="not-entered" />
+                      )}
+                    </TableCell>
+                    <TableCell className="py-3">
+                      {vendor.leadTimeDays != null ? (
+                        <span className="text-row-subtitle text-muted-foreground">
+                          {vendor.leadTimeDays}d
+                        </span>
+                      ) : (
+                        <NullValue reason="not-entered" />
+                      )}
+                    </TableCell>
+                    <TableCell numeric className="py-3">
+                      <Button
+                        variant="outline"
+                        size="tap"
+                        aria-label={`Edit ${vendor.name}`}
+                        onClick={() => handleEditClick(vendor.id)}
+                      >
                         Edit
                       </Button>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </TableBody>
+            </Table>
+          </TableContainer>
         </div>
       )}
     </div>

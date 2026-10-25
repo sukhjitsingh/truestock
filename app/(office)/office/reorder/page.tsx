@@ -73,23 +73,25 @@ export default async function ReorderPage() {
       */}
       {items.length === 0 && asOfCountId != null ? (
         productsWithPar === 0 ? (
-          <p className="mt-6 max-w-prose text-row-subtitle text-muted-foreground">
-            No product has a par level yet, so nothing can appear here. Set one on a
-            product in the{" "}
-            <Link href="/office/catalog" className="text-foreground underline">
-              catalog
-            </Link>{" "}
-            — the products missing one are tagged{" "}
-            <strong className="text-foreground">Needs par</strong>.
-          </p>
+          <div className="mt-6 max-w-prose rounded-xl border border-border/80 bg-card/85 backdrop-blur-md p-6 text-row-subtitle text-muted-foreground shadow-xs">
+            <p>
+              No product has a par level configured yet, so order deficits cannot be calculated. Set target stock levels on products in the{" "}
+              <Link href="/office/catalog" className="text-accent font-semibold underline">
+                catalog
+              </Link>{" "}
+              — items missing target stock are tagged{" "}
+              <strong className="text-foreground">Needs par</strong>.
+            </p>
+          </div>
         ) : (
-          <p className="mt-6 text-row-subtitle text-muted-foreground">
-            Nothing is below its reorder point.{" "}
-            <span className="text-caption">
-              ({productsWithPar} {productsWithPar === 1 ? "product has" : "products have"} a
-              par level.)
-            </span>
-          </p>
+          <div className="mt-6 rounded-xl border border-success/30 bg-success-bg/80 p-6 text-row-subtitle text-success backdrop-blur-md shadow-xs">
+            <p>
+              All inventoried items are currently stocked at or above target par levels.{" "}
+              <span className="text-caption text-muted-foreground">
+                ({productsWithPar} {productsWithPar === 1 ? "product has" : "products have"} an active par level.)
+              </span>
+            </p>
+          </div>
         )
       ) : null}
 
