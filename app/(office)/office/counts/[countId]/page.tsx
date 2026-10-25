@@ -177,7 +177,11 @@ function Delta({
 
 function Rollup({ title, groups, showCost }: { title: string; groups: SummaryGroup[]; showCost?: boolean }) {
   return (
-    <section>
+    // min-w-0: a grid item defaults to `min-width: auto`, i.e. as wide as its
+    // content. The table inside is `min-w-max`, so without this the section
+    // grows to the table's width, the container's own `overflow-x-auto` never
+    // has anything to clip, and the whole page scrolls sideways at phone width.
+    <section className="min-w-0">
       <h2 className="mb-3 text-label uppercase text-muted-foreground font-semibold">{title}</h2>
       <TableContainer className="glass-card">
         <Table>
