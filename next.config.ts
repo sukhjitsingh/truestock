@@ -88,6 +88,17 @@ const nextConfig: NextConfig = {
         source: "/(.*)",
         headers: SECURITY_HEADERS,
       },
+      // The invoice file is shown in the review page's "Source Document
+      // Preview" <iframe>, which `X-Frame-Options: DENY` blocks outright.
+      // Next documents that when two entries match a path and set the same
+      // key, the LATER one wins — so this entry must stay after the global
+      // one above, and only relaxes the legacy header to same-origin for this
+      // one path. The matching CSP half (`frame-ancestors`, `object-src`) is
+      // in lib/csp.ts; the two have to move together.
+      {
+        source: "/api/invoices/:id(\\d+)/file",
+        headers: [{ key: "X-Frame-Options", value: "SAMEORIGIN" }],
+      },
     ];
   },
 };
