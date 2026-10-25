@@ -1337,8 +1337,12 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
     .where(eq(extractionJob.id, job.id));
 
   // Effective type may differ from the raw classification: low confidence or
-  // encoding issues reroute a `text` classification to `mixed` so Vision
-  // validates the extraction rather than trusting potentially-garbage markdown.
+  // encoding issues reroute a `text` classification to `mixed`, so the
+  // document goes through selective OCR instead of trusting
+  // potentially-garbage native markdown. Vision still runs afterwards if OCR
+  // fails, still recommends a hosted page, or its markdown has no parsable
+  // line-item table — but a rerouted document whose OCR output parses cleanly
+  // is accepted without Vision.
   let effectivePdfType: PdfType = classification.pdfType;
   if (effectivePdfType === "text" && classification.confidence < CLASSIFICATION_CONFIDENCE_THRESHOLD) {
     effectivePdfType = "mixed";
@@ -1379,10 +1383,22 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
     // a now-removed conditional here — consolidated to this one call).
     await setJobPhase(job.id, "ocr");
     const processPdfWithOcrFn = deps.processPdfWithOcr ?? processPdfWithOcr;
-    const ocrResult = await processPdfWithOcrFn(pdfBytes);
-    console.log(
-      `[extraction-pipeline] job ${job.id}: selective OCR routed ${ocrResult.pagesRoutedToOcr.length} page(s) to local OCR, ${ocrResult.pagesRecommendingHosted.length} page(s) still recommend a hosted vision model`,
-    );
+    // The native OCR call can throw (model load failure on a small host) or
+    // hit PDF_PROCESSING_TIMEOUT_MS on a long scan. Either way the job must
+    // not fail: before selective OCR existed, every scanned PDF went straight
+    // to Vision, so Vision is the known-good fallback. Treat a failed OCR step
+    // as "nothing here was confident enough to skip Vision".
+    let ocrResult: ProcessPdfWithOcrResult | null = null;
+    try {
+      ocrResult = await processPdfWithOcrFn(pdfBytes);
+      console.log(
+        `[extraction-pipeline] job ${job.id}: selective OCR routed ${ocrResult.pagesRoutedToOcr.length} page(s) to local OCR, ${ocrResult.pagesRecommendingHosted.length} page(s) still recommend a hosted vision model`,
+      );
+    } catch (err) {
+      console.warn(
+        `[extraction-pipeline] job ${job.id}: selective OCR failed (${err instanceof Error ? err.message : String(err)}); falling back to Claude Vision`,
+      );
+    }
 
     // Empty pagesRecommendingHosted means pdf-inspector itself is confident
     // no page needs a hosted vision model — skip Claude Vision entirely and
@@ -1392,7 +1408,7 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
     // today, so an invoice never costs MORE than the old pipeline — only
     // sometimes less.
     let markdownParsed: ParsedExtraction | null = null;
-    if (ocrResult.pagesRecommendingHosted.length === 0) {
+    if (ocrResult && ocrResult.pagesRecommendingHosted.length === 0) {
       await setJobPhase(job.id, "parse");
       try {
         markdownParsed = parseLinesFromMarkdown(ocrResult.markdown);

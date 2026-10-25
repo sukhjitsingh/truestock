@@ -886,6 +886,108 @@ describe("selective-OCR queue routing", () => {
     });
     expect(savedLines.map((line) => line.vendorItemCode)).toEqual(["FALLBACK-SKU-1"]);
   });
+
+  test("a scanned job whose selective-OCR step throws (model load failure or the 30s timeout) still reaches needs_review/done via Claude Vision instead of failing — before selective OCR existed every scanned PDF went to Vision, so an OCR error must not make an extractable invoice worse than that", async () => {
+    await db
+      .update(invoice)
+      .set({
+        status: "uploaded",
+        pageCount: null,
+        invoiceDate: null,
+        invoiceNumber: null,
+        totalGross: null,
+        totalDiscount: null,
+        totalNet: null,
+        currency: null,
+        retentionUntil: null,
+      })
+      .where(eq(invoice.id, fx.invoiceId));
+    await db
+      .update(extractionJob)
+      .set({ status: "queued", phase: null, pdfType: null, completedAt: null })
+      .where(eq(extractionJob.id, fx.extractionJobId));
+
+    let claudeWasCalled = false;
+    const result = await processExtractionQueue("selective-ocr-throw-fallback-test", {
+      classifyPdf: async () => ({
+        pdfType: "scanned",
+        pageCount: 3,
+        confidence: 1,
+        pagesNeedingOcr: [0, 1, 2],
+      }),
+      // The same message withTimeout() raises, so this stands in for both a
+      // native OCR crash and a long scan that outlasts PDF_PROCESSING_TIMEOUT_MS.
+      processPdfWithOcr: async () => {
+        throw new Error("processPdfWithOcrAsync timed out after 30000ms");
+      },
+      readPdfFile: async () => Buffer.from("%PDF-1.4 test fixture"),
+      extractInvoice: async () => {
+        claudeWasCalled = true;
+        return {
+          raw: {
+            invoiceDate: "2026-08-01",
+            invoiceNumber: "OCR-THROW-1",
+            totalGross: null,
+            totalDiscount: null,
+            totalNet: null,
+            currency: "USD",
+            lines: [
+              {
+                rawText: "1 case Vision After OCR Failure",
+                lineType: "product",
+                vendorItemCode: "OCR-THROW-SKU-1",
+                description: "Vision After OCR Failure",
+                packDescription: null,
+                quantity: 1,
+                uom: "case",
+                packSize: 12,
+                unitCost: 50,
+                extendedCost: 50,
+                rawGross: 50,
+                rawDiscount: null,
+                rawNet: 50,
+                confidence: 0.95,
+              },
+            ],
+          },
+          provider: "anthropic",
+          modelId: "claude-sonnet-5",
+          promptVersion: "invoice-extraction-v1",
+          rawResponse: {},
+          inputTokens: 100,
+          outputTokens: 50,
+          costUsd: "0.001000",
+        };
+      },
+    });
+
+    expect(result).toMatchObject({
+      claimed: true,
+      jobId: fx.extractionJobId,
+      invoiceId: fx.invoiceId,
+      outcome: "done",
+    });
+    expect(claudeWasCalled).toBe(true);
+
+    const [savedInvoice, savedJob, savedLines] = await Promise.all([
+      db.query.invoice.findFirst({ where: (row, { eq }) => eq(row.id, fx.invoiceId) }),
+      db.query.extractionJob.findFirst({ where: (row, { eq }) => eq(row.id, fx.extractionJobId) }),
+      db.query.invoiceLine.findMany({
+        where: (row, { eq }) => eq(row.invoiceId, fx.invoiceId),
+        orderBy: (row, { asc }) => asc(row.lineNumber),
+      }),
+    ]);
+    expect(savedInvoice?.status).toBe("needs_review");
+    expect(savedInvoice?.invoiceNumber).toBe("OCR-THROW-1");
+    expect(savedJob).toMatchObject({
+      status: "done",
+      phase: "parse",
+      pdfType: "scanned",
+      provider: "anthropic",
+      modelId: "claude-sonnet-5",
+    });
+    expect(savedLines.map((line) => line.vendorItemCode)).toEqual(["OCR-THROW-SKU-1"]);
+  });
 });
 
 describe("parseLinesFromVision", () => {
