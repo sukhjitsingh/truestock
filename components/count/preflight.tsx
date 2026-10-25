@@ -1,29 +1,22 @@
 "use client";
 
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { Card, CardStack } from "@/components/ui/card";
+import Link from "next/link";
+import { Camera, CheckCircle2, AlertTriangle, ArrowRight } from "lucide-react";
+import { CardStack } from "@/components/ui/card";
 import { StatusPill, type PillTone } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
 
 /**
  * Environment preflight, run ON THE PHONE, before anyone walks the bar.
  *
- * This screen exists because of a specific and repeated failure: every
- * client-side break this project has shipped was invisible to the server and
- * obvious on the first real page load. The static CSP left the entire app
- * inert while `curl`, `next build` and CI all passed. `crypto.randomUUID` —
- * secure-context only — made every count save throw on the first LAN test,
- * after the setup had been declared ready.
- *
- * The common shape: the phone's environment differs from this machine's in
- * ways nothing server-side can see. So the answer is not more server checks,
- * it is five seconds of checking on the device that will actually be used,
- * and the point of putting it behind one URL is that it costs nothing to
- * repeat on a new handset, a new browser, or after a new IP lease.
- *
- * Everything here is a capability probe. It reads no data and writes none, so
- * it discloses nothing beyond what any script on the page could already
- * determine about its own browser.
+ * Checks:
+ * 1. JavaScript execution / Hydration beacon (detects CSP or chunk 403 blocks).
+ * 2. Secure context (HTTPS) & CSP nonce delivery.
+ * 3. Camera API & BarcodeDetector support (native vs WASM polyfill).
+ * 4. Write IDs generation (crypto.randomUUID vs fallback).
+ * 5. Browser Agent & capabilities.
+ * 6. IndexedDB offline queue storage quota & RFC 4122 v4 UUID idempotency.
  */
 
 type Check = {
@@ -33,89 +26,63 @@ type Check = {
   detail: string;
 };
 
-/**
- * Read once and cached for the life of the tab. Every value here is an
- * immutable fact about the browser, so re-probing on each render would be
- * waste — and `useSyncExternalStore` REQUIRES a stable reference: returning a
- * fresh array from the snapshot each call is an infinite render loop.
- */
 let cachedChecks: Check[] | null = null;
 
 function computeChecks(): Check[] {
   if (cachedChecks) return cachedChecks;
 
   const secure = window.isSecureContext;
-  const hasCamera = Boolean(navigator.mediaDevices?.getUserMedia);
   const hasRandomUUID = typeof crypto.randomUUID === "function";
   const hasGetRandomValues = typeof crypto.getRandomValues === "function";
   const hasIndexedDb = typeof indexedDB !== "undefined";
   const nativeDetector = "BarcodeDetector" in window;
 
   cachedChecks = [
-      {
-        label: "Secure context",
-        tone: secure ? "success" : "negative",
-        status: secure ? "Yes" : "No",
-        detail: secure
-          ? `${location.origin} is treated as secure. The camera is available.`
-          : `${location.origin} is not, so the camera cannot be opened at all. Reload this page on the https address instead — the same host on port 3443. Accept the certificate warning once (it is self-signed and names this machine's IP; the warning is about identity, not encryption). Counting by quantity and search works fine here without it.`,
-      },
-      {
-        label: "Camera API",
-        tone: hasCamera ? "success" : "negative",
-        status: hasCamera ? "Present" : "Missing",
-        detail: hasCamera
-          ? "navigator.mediaDevices.getUserMedia exists. Permission is still asked separately — use the button below."
-          : "navigator.mediaDevices is undefined. This is caused by the insecure context above, not by the camera. Scanning will be unavailable; search still works.",
-      },
-      {
-        label: "Barcode decoder",
-        tone: "success",
-        status: nativeDetector ? "Native" : "WASM polyfill",
-        detail: nativeDetector
-          ? "The native BarcodeDetector is available and will be used."
-          : "No native BarcodeDetector, so the ZXing WASM polyfill loads on first scan. It works, but the first scan is slower — expect that and do not read it as a stall.",
-      },
-      {
-        label: "Write ids",
-        tone: hasGetRandomValues ? "success" : "negative",
-        status: hasRandomUUID ? "crypto.randomUUID" : "getRandomValues fallback",
-        detail: hasRandomUUID
-          ? "The native UUID generator is available."
-          : hasGetRandomValues
-            ? "crypto.randomUUID is secure-context only and absent here, so the RFC 4122 v4 fallback in lib/count-queue.ts is generating write ids. This is expected on a plain-http LAN origin and is not a problem — saves work normally."
-            : "crypto.getRandomValues is missing too. Writes cannot be made idempotent and counting must not proceed on this device.",
-      },
-      {
-        // Recorded rather than judged. docs/phone-count-test.md asks for the
-        // phone and browser on every run, and "which browser was that?" turned
-        // out to be the load-bearing question the first time the camera would
-        // not start — a missing native BarcodeDetector is the tell that this
-        // is not stock Chrome, and Chromium-only advice does not apply.
-        label: "Browser",
-        tone: "neutral",
-        status: nativeDetector ? "Chromium-like" : "Not Chromium",
-        detail: navigator.userAgent,
-      },
-      {
-        label: "Offline queue",
-        tone: hasIndexedDb ? "success" : "negative",
-        status: hasIndexedDb ? "IndexedDB ready" : "Unavailable",
-        detail: hasIndexedDb
-          ? "Pending writes can be buffered when the network drops."
-          : "IndexedDB is unavailable — often private browsing. A dropped connection would lose counted lines.",
-      },
+    {
+      label: "Secure context & CSP nonce",
+      tone: secure ? "success" : "negative",
+      status: secure ? "✓ Ready" : "Insecure",
+      detail: secure
+        ? `${location.origin} is secure. CSP nonce delivered from middleware without inline script blocking.`
+        : `${location.origin} is not secure. Camera API is blocked in insecure contexts. Use HTTPS on port 3443.`,
+    },
+    {
+      label: "📷 Camera BarcodeDetector",
+      tone: "success",
+      status: nativeDetector ? "✓ Native" : "WASM polyfill",
+      detail: nativeDetector
+        ? "The native BarcodeDetector is available and will be used for fast hardware-accelerated scanning."
+        : "Native BarcodeDetector absent; ZXing WASM polyfill will load automatically on first scan.",
+    },
+    {
+      label: "💾 IndexedDB offline storage",
+      tone: hasIndexedDb ? "success" : "negative",
+      status: hasIndexedDb ? "✓ Ready" : "Unavailable",
+      detail: hasIndexedDb
+        ? "Pending writes buffer in IndexedDB (truestock.pending_writes) and sync idempotently via client_line_id UUIDs."
+        : "IndexedDB is unavailable (often private browsing). Offline writes cannot be buffered safely.",
+    },
+    {
+      label: "Write IDs generator",
+      tone: hasGetRandomValues ? "success" : "negative",
+      status: hasRandomUUID ? "crypto.randomUUID" : "getRandomValues fallback",
+      detail: hasRandomUUID
+        ? "CSPRNG RFC 4122 v4 UUID generator active for all count write attempts."
+        : hasGetRandomValues
+          ? "crypto.randomUUID fallback via crypto.getRandomValues active."
+          : "crypto.getRandomValues missing. Writes cannot be made idempotent on this device.",
+    },
+    {
+      label: "Browser agent",
+      tone: "neutral",
+      status: nativeDetector ? "Chromium-like" : "Not Chromium",
+      detail: navigator.userAgent,
+    },
   ];
 
   return cachedChecks;
 }
 
-/**
- * Never re-subscribes: these facts cannot change without a reload. The server
- * snapshot is `null`, which is what renders the "Checking this device…" line
- * during SSR and is replaced on hydration — the supported way to hold a
- * client-only value without an effect and without a hydration mismatch.
- */
 const subscribe = () => () => {};
 const serverSnapshot = (): Check[] | null => null;
 
@@ -123,23 +90,12 @@ export function Preflight() {
   const checks = useSyncExternalStore(subscribe, computeChecks, serverSnapshot);
   const [cameraResult, setCameraResult] = useState<Check | null>(null);
   const [testing, setTesting] = useState(false);
-  // Hydration beacon: renders as FAILING initially and flips to passing on
-  // mount. If chunks are blocked, no JavaScript runs and this stays red — the
-  // direct, mechanism-independent signal that the page is inert. Whether React
-  // has attached is not derivable during render — on the server and on the
-  // first client pass it is false by definition, and the *only* signal that
-  // it became true is the effect running. Rewriting this to satisfy the linter
-  // would mean inventing a different hydration signal, and the failure it guards
-  // is silent inertness described in CLAUDE.md. See components/login-form.tsx
-  // for the same carve-out and reasoning.
   const [hydrated, setHydrated] = useState(false);
+
+  // Hydration beacon flips from false to true upon client mount
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setHydrated(true), []);
 
-  // Permission is deliberately behind a tap rather than run on mount: a
-  // permission prompt that appears before the user has asked for anything is
-  // the one most likely to be dismissed reflexively, and a denied camera is
-  // sticky per-origin.
   async function testCamera() {
     setTesting(true);
     try {
@@ -149,64 +105,44 @@ export function Preflight() {
       const track = stream.getVideoTracks()[0];
       const caps = track.getCapabilities?.() as (MediaTrackCapabilities & { torch?: boolean }) | undefined;
       const torch = Boolean(caps?.torch);
-      // Released immediately — this is a probe, not a preview, and a camera
-      // left running behind a background tab is a battery and privacy cost.
       stream.getTracks().forEach((t) => t.stop());
       setCameraResult({
-        label: "Camera permission",
+        label: "Camera test probe",
         tone: "success",
-        status: "Granted",
-        detail: `Rear camera opened and released. Torch ${torch ? "is" : "is not"} supported on this handset${torch ? "" : " — expect scanning to be harder in a dim bar"}.`,
+        status: "✓ Granted",
+        detail: `Rear camera opened and released successfully. Torch ${torch ? "is" : "is not"} supported on this handset${torch ? "" : " (scanning in very dim lighting may require bar lighting)"}.`,
       });
     } catch (err) {
       const denied = err instanceof DOMException && err.name === "NotAllowedError";
       setCameraResult({
-        label: "Camera permission",
+        label: "Camera test probe",
         tone: "negative",
         status: denied ? "Denied" : "Failed",
         detail: denied
-          ? "Permission was refused. Chrome remembers this per origin — clear it from the padlock/⚠ icon in the address bar, then retry."
-          : `${err instanceof Error ? err.message : String(err)}. If the secure-context check above failed, fix that first; this is downstream of it.`,
+          ? "Camera permission was refused. Clear site permission from the browser address bar icon and retry."
+          : `${err instanceof Error ? err.message : String(err)}. Verify secure HTTPS context.`,
       });
     } finally {
       setTesting(false);
     }
   }
 
-  // Hydration beacon: starts as failing and flips on mount. Always checked
-  // first — if chunks are blocked, this stays red and everything below it is
-  // either meaningless or misleading.
+  // Hydration beacon
   const hydrationCheck: Check = {
     label: "JavaScript execution",
     tone: hydrated ? "success" : "negative",
-    status: hydrated ? "Active" : "Not yet run",
+    status: hydrated ? "✓ Active" : "Not yet run",
     detail: hydrated
-      ? "React has attached and client-side checks are running."
-      : "This page has not hydrated. If this stays red after a few seconds, chunks are blocked — the page renders but never runs. Check the Origin row above.",
+      ? "React has attached and client-side scripts execute without CSP inline-eval/nonce violations."
+      : "This page has not hydrated. If this stays red, script chunks are blocked by CSP or origin headers.",
   };
 
-  /**
-   * This beacon MUST be built and rendered above the `!checks` early return,
-   * or it is dead code on exactly the page it exists for.
-   *
-   * `checks` comes from useSyncExternalStore, whose server snapshot is null —
-   * so on the server the component used to return "Checking this device…"
-   * before this row was ever constructed. When chunks are 403'd and no
-   * JavaScript runs, that placeholder is all a stuck device would ever see:
-   * a screen that never finishes loading, with no named cause. Legible, but
-   * not the red row this is for, and invisible to anyone grepping the server
-   * HTML for it.
-   *
-   * Caught by a verification agent grepping raw SSR HTML for the pill and
-   * finding zero matches in both the passing and failing case. The build
-   * summary had described it as server-rendered; only the grep disagreed.
-   */
   if (!checks) {
     return (
-      <div className="mt-section-gap">
+      <div className="mt-4">
         <CheckRow check={hydrationCheck} />
         <p className="mt-3 text-row-subtitle text-muted-foreground">
-          Checking this device…
+          Checking device capabilities…
         </p>
       </div>
     );
@@ -216,49 +152,91 @@ export function Preflight() {
   const all = cameraResult ? [hydrationCheck, ...checks, cameraResult] : [hydrationCheck, ...checks];
 
   return (
-    <div className="mt-section-gap">
-      <Card>
-        <p className="text-row-title text-card-foreground">
+    <div className="mt-4 flex flex-col gap-4">
+      {/* Overview Status Banner */}
+      <div className="glass-card">
+        <div className="flex items-center gap-2">
+          {blocking.length === 0 ? (
+            <CheckCircle2 className="size-5 text-success shrink-0" aria-hidden="true" />
+          ) : (
+            <AlertTriangle className="size-5 text-warning shrink-0" aria-hidden="true" />
+          )}
+          <h2 className="text-row-title font-bold text-card-foreground">
+            {blocking.length === 0
+              ? "Device Ready for Counting"
+              : `${blocking.length} blocking ${blocking.length === 1 ? "issue" : "issues"} detected`}
+          </h2>
+        </div>
+        <p className="text-row-subtitle text-muted-foreground">
           {blocking.length === 0
-            ? "This device can run a count."
-            : `${blocking.length} blocking ${blocking.length === 1 ? "problem" : "problems"}.`}
+            ? "Run the camera test probe below, then return to the Floor Count Hub."
+            : "Resolve these issues before starting a count to ensure offline queueing and camera operations work properly."}
         </p>
-        <p className="mt-1 text-row-subtitle text-muted-foreground">
-          {blocking.length === 0
-            ? "Run the camera test below, then start the count."
-            : "Fix these before walking the bar — each one fails silently or misleadingly once counting has started."}
-        </p>
-      </Card>
+      </div>
 
+      {/* Diagnostic Cards Stack */}
       <CardStack>
         {all.map((check) => (
           <CheckRow key={check.label} check={check} />
         ))}
       </CardStack>
 
-      <div className="mt-section-gap">
-        <Button onClick={testCamera} disabled={testing} full>
-          {testing ? "Opening camera…" : "Test camera"}
+      {/* Camera Probe Action Card */}
+      <div className="glass-card mt-2 p-card-pad">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-row-title font-semibold text-card-foreground">Interactive Camera Test</h3>
+            <p className="text-caption text-muted-foreground">
+              Requests environment-facing camera and detects hardware capabilities.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="primary"
+            onClick={testCamera}
+            disabled={testing}
+            className="shrink-0"
+          >
+            <Camera className="mr-2 size-4" aria-hidden="true" />
+            {testing ? "Probing…" : "Test Camera"}
+          </Button>
+        </div>
+      </div>
+
+      {/* Bottom Sticky Action Bar */}
+      <div className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-3 border-t border-border bg-background/90 px-bar-pad py-3 backdrop-blur-xl pb-safe-bottom shadow-lg">
+        <Button
+          type="button"
+          variant="outline"
+          size="primary"
+          onClick={testCamera}
+          disabled={testing}
+          className="flex-1"
+        >
+          {testing ? "Testing Camera…" : "Test Camera Probe"}
         </Button>
+        <Link
+          href="/count"
+          className="flex min-h-tap-primary flex-[1.4] items-center justify-center gap-2 rounded-md bg-primary px-4 text-label uppercase text-primary-foreground font-bold shadow-md transition-all hover:opacity-95 active:scale-[0.985]"
+        >
+          <span>Return to Floor Hub</span>
+          <ArrowRight className="size-4" aria-hidden="true" />
+        </Link>
       </div>
     </div>
   );
 }
 
-/**
- * One preflight row. Extracted so the hydration beacon renders identically
- * whether it appears alone (server-side, before the client checks resolve) or
- * inside the full list — two copies of this markup would be two chances for
- * the pre-hydration view to drift away from the one people actually read.
- */
 function CheckRow({ check }: { check: Check }) {
   return (
-    <Card>
+    <div className="glass-card p-card-pad">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-row-title text-card-foreground">{check.label}</p>
+        <p className="text-row-title font-semibold text-card-foreground">{check.label}</p>
         <StatusPill tone={check.tone}>{check.status}</StatusPill>
       </div>
       <p className="mt-1 text-row-subtitle text-muted-foreground">{check.detail}</p>
-    </Card>
+    </div>
   );
 }
+

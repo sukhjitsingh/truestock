@@ -191,7 +191,7 @@ export function OfficeRail({
     <nav
       aria-label="Back office"
       className={cn(
-        "flex shrink-0 flex-col items-stretch gap-1 border-r border-border bg-card px-2.5 py-3",
+        "flex shrink-0 flex-col items-stretch gap-1 border-r border-border/70 bg-card/75 px-2.5 py-3 backdrop-blur-xl transition-all",
         expanded ? "w-52" : "w-16 items-center",
       )}
     >
@@ -230,7 +230,11 @@ export function OfficeRail({
             // text when expanded — never both, or a screen reader reads it twice.
             aria-label={expanded ? undefined : link.label}
             title={expanded ? undefined : link.label}
-            className={cn(itemClass, active && "border-border bg-background text-accent")}
+            className={cn(
+              itemClass,
+              "transition-all duration-150",
+              active && "border-accent/40 bg-accent/10 font-semibold text-accent shadow-xs",
+            )}
           >
             <Icon className="size-5 shrink-0" />
             {expanded ? (

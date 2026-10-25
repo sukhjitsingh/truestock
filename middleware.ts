@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { buildCsp } from "@/lib/csp";
 
 /**
  * Content-Security-Policy, generated per request so it can carry a nonce.
@@ -25,43 +26,14 @@ import { NextResponse, type NextRequest } from "next/server";
  * while an injected one still does not. Note that when a nonce is present
  * browsers deliberately ignore 'unsafe-inline', so the two cannot be mixed
  * as a belt-and-braces measure — the nonce has to actually be correct.
+ *
+ * The policy itself is built in `lib/csp.ts` so it can be unit-tested; it is
+ * the same everywhere except the invoice file route, which must be framable
+ * by the review page's preview <iframe>.
  */
-function buildCsp(nonce: string): string {
-  const isDev = process.env.NODE_ENV === "development";
-
-  return [
-    "default-src 'self'",
-    // 'wasm-unsafe-eval' is for the barcode scanner: `barcode-detector`'s
-    // ZXing-WASM polyfill calls WebAssembly.instantiate on a same-origin
-    // .wasm module wherever the native BarcodeDetector is missing. It does
-    // not permit eval()/new Function() — that needs the far broader
-    // 'unsafe-eval', which stays out of production entirely.
-    //
-    // Development adds 'unsafe-eval' because Turbopack's HMR client and React
-    // Fast Refresh evaluate modules at runtime. This is scoped to dev by
-    // NODE_ENV and never reaches a deployed build.
-    `script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'${isDev ? " 'unsafe-eval'" : ""}`,
-    // Radix/shadcn primitives (the fill-level slider and dialog) set inline
-    // style attributes for transforms and positioning. Inline styles cannot
-    // execute script, so this is a far smaller concession than the same
-    // keyword on script-src.
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
-    "font-src 'self'",
-    // Every fetch in the MVP is same-origin. Dev also needs the HMR
-    // websocket. Revisit when a vision API or object storage arrives —
-    // neither is in MVP scope (CLAUDE.md).
-    `connect-src 'self'${isDev ? " ws: wss:" : ""}`,
-    "object-src 'none'",
-    "base-uri 'self'",
-    "form-action 'self'",
-    "frame-ancestors 'none'",
-  ].join("; ");
-}
-
 export function middleware(request: NextRequest) {
   const nonce = crypto.randomUUID();
-  const csp = buildCsp(nonce);
+  const csp = buildCsp(nonce, request.nextUrl.pathname);
 
   // Next reads the CSP off the *request* headers to discover the nonce and
   // apply it to the inline scripts it generates. Setting it only on the

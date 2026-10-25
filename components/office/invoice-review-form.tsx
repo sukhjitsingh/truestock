@@ -89,6 +89,7 @@
  */
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { FileText, ExternalLink } from "lucide-react";
 import {
   reviewInvoiceAction,
   rejectInvoiceAction,
@@ -423,393 +424,425 @@ export function InvoiceReviewForm({
   const columnCount = 7;
 
   return (
-    <div className="mt-6 flex flex-col gap-section-gap">
+    <div className="mt-6 flex flex-col gap-6">
       {invoice.status === "reviewed" ? (
-        <p className="rounded-md bg-warning-bg px-3 py-2 text-caption text-warning" role="status">
+        <p className="rounded-xl border border-warning/30 bg-warning-bg/80 p-3 text-caption text-warning backdrop-blur-md" role="status">
           Reviewed — awaiting approval. Lines are locked; use Return below if this needs another
           look before it&apos;s approved.
         </p>
       ) : null}
       {invoice.status === "rejected" ? (
-        <p className="rounded-md bg-negative-bg px-3 py-2 text-caption text-negative" role="status">
+        <p className="rounded-xl border border-negative/30 bg-negative-bg/80 p-3 text-caption text-negative backdrop-blur-md" role="status">
           Returned for re-extraction. The lines below are from the last attempt, kept for
           diagnosis — retry to run extraction again.
         </p>
       ) : null}
       {invoice.status === "approved" ? (
-        <p className="rounded-md bg-success-bg px-3 py-2 text-caption text-success" role="status">
+        <p className="rounded-xl border border-success/30 bg-success-bg/80 p-3 text-caption text-success backdrop-blur-md" role="status">
           Approved. This is a permanent record and can no longer be changed here.
         </p>
       ) : null}
 
-      <form method="post" onSubmit={editable ? handleApprove : (e) => e.preventDefault()}>
-        <div className="mb-6 rounded-md border border-border bg-card p-card-pad">
-          <h2 className="mb-3 text-label uppercase text-muted-foreground">Invoice details</h2>
-          {editable ? (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              <Field
-                label={HEADER_FIELD_LABELS.invoiceDate}
-                htmlFor="header-invoiceDate"
-                error={headerErrors.invoiceDate}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Left Column: Document Viewer Pane (Sticky on desktop) */}
+        <div className="lg:col-span-5 flex flex-col gap-4">
+          <div className="rounded-xl border border-border/80 bg-card/85 backdrop-blur-md p-4 shadow-xs lg:sticky lg:top-20">
+            <div className="flex items-center justify-between pb-3 border-b border-border/80">
+              <div className="flex items-center gap-2">
+                <FileText className="size-4 text-accent" aria-hidden="true" />
+                <h2 className="text-label uppercase text-muted-foreground font-semibold">
+                  Source Document Preview
+                </h2>
+              </div>
+              <a
+                href={`/api/invoices/${invoice.id}/file`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-caption text-accent font-semibold hover:underline"
               >
-                <Input
-                  id="header-invoiceDate"
-                  type="date"
-                  value={headerFields.invoiceDate}
-                  onChange={(e) => updateHeaderField("invoiceDate", e.target.value)}
-                  className="w-full"
-                />
-              </Field>
-              <Field
-                label={HEADER_FIELD_LABELS.invoiceNumber}
-                htmlFor="header-invoiceNumber"
-                error={headerErrors.invoiceNumber}
-              >
-                <Input
-                  id="header-invoiceNumber"
-                  value={headerFields.invoiceNumber}
-                  onChange={(e) => updateHeaderField("invoiceNumber", e.target.value)}
-                  placeholder="Not entered"
-                  className="w-full"
-                />
-              </Field>
-              <Field
-                label={HEADER_FIELD_LABELS.totalGross}
-                htmlFor="header-totalGross"
-                error={headerErrors.totalGross}
-              >
-                <Input
-                  id="header-totalGross"
-                  inputMode="decimal"
-                  value={headerFields.totalGross}
-                  onChange={(e) => updateHeaderField("totalGross", e.target.value)}
-                  placeholder="0.00"
-                  className="w-full"
-                />
-              </Field>
-              <Field
-                label={HEADER_FIELD_LABELS.totalNet}
-                htmlFor="header-totalNet"
-                error={headerErrors.totalNet}
-              >
-                <Input
-                  id="header-totalNet"
-                  inputMode="decimal"
-                  value={headerFields.totalNet}
-                  onChange={(e) => updateHeaderField("totalNet", e.target.value)}
-                  placeholder="0.00"
-                  className="w-full"
-                />
-              </Field>
-              <Field
-                label={HEADER_FIELD_LABELS.currency}
-                htmlFor="header-currency"
-                error={headerErrors.currency}
-                hint="3-letter code, e.g. USD"
-              >
-                <Input
-                  id="header-currency"
-                  value={headerFields.currency}
-                  onChange={(e) => updateHeaderField("currency", e.target.value.toUpperCase())}
-                  placeholder="USD"
-                  maxLength={3}
-                  className="w-full uppercase"
-                />
-              </Field>
-              <Field
-                label={HEADER_FIELD_LABELS.retentionUntil}
-                htmlFor="header-retentionUntil"
-                error={headerErrors.retentionUntil}
-                hint="Auto-fills from invoice date if left blank"
-              >
-                <Input
-                  id="header-retentionUntil"
-                  type="date"
-                  value={headerFields.retentionUntil}
-                  onChange={(e) => updateHeaderField("retentionUntil", e.target.value)}
-                  className="w-full"
-                />
-              </Field>
+                Open file <ExternalLink className="size-3.5" aria-hidden="true" />
+              </a>
             </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
-              {HEADER_FIELD_KEYS.map((key) => {
-                const raw = invoice[key];
-                const display =
-                  raw == null
-                    ? null
-                    : key === "invoiceDate" || key === "retentionUntil"
-                      ? formatCalendarDate(raw)
-                      : key === "totalGross" || key === "totalNet"
-                        ? formatCostForInput(raw)
-                        : raw;
-                return (
-                  <div key={key} className="flex flex-col gap-1">
-                    <span className="text-label uppercase text-muted-foreground">
-                      {HEADER_FIELD_LABELS[key]}
-                    </span>
-                    <span className="text-body text-card-foreground">
-                      {display ?? <NullValue reason="not-entered" />}
-                    </span>
-                  </div>
-                );
-              })}
+            <div className="mt-3 overflow-hidden rounded-lg border border-border/80 bg-muted/30 w-full h-[650px]">
+              <iframe
+                src={`/api/invoices/${invoice.id}/file`}
+                title={`Source Invoice Document #${invoice.id}`}
+                className="h-full w-full border-0"
+              />
             </div>
-          )}
+          </div>
         </div>
 
-        <TableContainer>
-          <Table>
-            <TableCaption>
-              Invoice {invoice.invoiceNumber ?? `#${invoice.id}`} lines, {orderedLines.length} total
-            </TableCaption>
-            <TableHeader>
-              <TableRow interactive={false}>
-                <TableHead>Description</TableHead>
-                <TableHead numeric>Qty</TableHead>
-                <TableHead>UOM</TableHead>
-                <TableHead>Pack</TableHead>
-                <TableHead>Vendor code</TableHead>
-                <TableHead>Matched product</TableHead>
-                <TableHead>Gross / Discount / Net</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {orderedLines.length === 0 ? (
-                <tr>
-                  <td colSpan={columnCount}>
-                    <p className="py-section-gap text-center text-row-subtitle text-muted-foreground">
-                      No lines were extracted from this document.
-                    </p>
-                  </td>
-                </tr>
+        {/* Right Column: Extracted Ledger & Review Actions */}
+        <div className="lg:col-span-7 flex flex-col gap-6">
+          <form method="post" onSubmit={editable ? handleApprove : (e) => e.preventDefault()} className="flex flex-col gap-6">
+            <div className="rounded-xl border border-border/80 bg-card/85 backdrop-blur-md p-card-pad shadow-xs">
+              <h2 className="mb-3 text-label uppercase text-muted-foreground font-semibold">Invoice Details</h2>
+              {editable ? (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  <Field
+                    label={HEADER_FIELD_LABELS.invoiceDate}
+                    htmlFor="header-invoiceDate"
+                    error={headerErrors.invoiceDate}
+                  >
+                    <Input
+                      id="header-invoiceDate"
+                      type="date"
+                      value={headerFields.invoiceDate}
+                      onChange={(e) => updateHeaderField("invoiceDate", e.target.value)}
+                      className="w-full"
+                    />
+                  </Field>
+                  <Field
+                    label={HEADER_FIELD_LABELS.invoiceNumber}
+                    htmlFor="header-invoiceNumber"
+                    error={headerErrors.invoiceNumber}
+                  >
+                    <Input
+                      id="header-invoiceNumber"
+                      value={headerFields.invoiceNumber}
+                      onChange={(e) => updateHeaderField("invoiceNumber", e.target.value)}
+                      placeholder="Not entered"
+                      className="w-full"
+                    />
+                  </Field>
+                  <Field
+                    label={HEADER_FIELD_LABELS.totalGross}
+                    htmlFor="header-totalGross"
+                    error={headerErrors.totalGross}
+                  >
+                    <Input
+                      id="header-totalGross"
+                      inputMode="decimal"
+                      value={headerFields.totalGross}
+                      onChange={(e) => updateHeaderField("totalGross", e.target.value)}
+                      placeholder="0.00"
+                      className="w-full"
+                    />
+                  </Field>
+                  <Field
+                    label={HEADER_FIELD_LABELS.totalNet}
+                    htmlFor="header-totalNet"
+                    error={headerErrors.totalNet}
+                  >
+                    <Input
+                      id="header-totalNet"
+                      inputMode="decimal"
+                      value={headerFields.totalNet}
+                      onChange={(e) => updateHeaderField("totalNet", e.target.value)}
+                      placeholder="0.00"
+                      className="w-full"
+                    />
+                  </Field>
+                  <Field
+                    label={HEADER_FIELD_LABELS.currency}
+                    htmlFor="header-currency"
+                    error={headerErrors.currency}
+                    hint="3-letter code, e.g. USD"
+                  >
+                    <Input
+                      id="header-currency"
+                      value={headerFields.currency}
+                      onChange={(e) => updateHeaderField("currency", e.target.value.toUpperCase())}
+                      placeholder="USD"
+                      maxLength={3}
+                      className="w-full uppercase"
+                    />
+                  </Field>
+                  <Field
+                    label={HEADER_FIELD_LABELS.retentionUntil}
+                    htmlFor="header-retentionUntil"
+                    error={headerErrors.retentionUntil}
+                    hint="Auto-fills from date if blank"
+                  >
+                    <Input
+                      id="header-retentionUntil"
+                      type="date"
+                      value={headerFields.retentionUntil}
+                      onChange={(e) => updateHeaderField("retentionUntil", e.target.value)}
+                      className="w-full"
+                    />
+                  </Field>
+                </div>
               ) : (
-                orderedLines.map((line) => {
-                  const state = fields[line.id];
-                  const rowErrors = lineErrors[line.id];
-                  const matchedProduct =
-                    line.matchedProductId != null ? productById.get(line.matchedProductId) : undefined;
-                  // Live field state while this row is editable (mirrors the
-                  // Gross/Discount/Net cell's own editable branch below),
-                  // the persisted line otherwise — never a mix of the two.
-                  const lineAlerts = computeLineAlerts(
-                    editable ? state.rawGross : line.rawGross,
-                    editable ? state.rawDiscount : line.rawDiscount,
-                    editable ? state.rawNet : line.rawNet,
-                  );
-                  return (
-                    <TableRow key={line.id} interactive={false} className="align-top">
-                      <TableCell>
-                        <div className="flex flex-col gap-1.5">
-                          <span>
-                            {line.description ?? <NullValue reason="not-entered" />}
-                          </span>
-                          <InvoiceExceptionBadges flags={line.exceptionFlags} />
-                          {lineAlerts.length > 0 ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              {lineAlerts.map((alert) => (
-                                <StatusPill key={alert.key} tone={alert.tone}>
-                                  {alert.label}
-                                </StatusPill>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      </TableCell>
-                      <TableCell numeric className="text-muted-foreground">
-                        {line.quantity ?? <NullValue reason="not-entered" />}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {line.uom ? UOM_LABEL[line.uom] : <NullValue reason="not-entered" />}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {line.packDescription ?? <NullValue reason="not-entered" />}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {line.vendorItemCode ?? <NullValue reason="not-entered" />}
-                      </TableCell>
-                      <TableCell>
-                        {editable ? (
-                          <Select
-                            aria-label={`Matched product for line ${line.lineNumber}`}
-                            value={state.matchedProductId}
-                            onChange={(e) => updateField(line.id, "matchedProductId", e.target.value)}
-                            className="min-w-[12rem]"
-                          >
-                            <option value="">Not matched</option>
-                            {products.map((product) => (
-                              <option key={product.id} value={product.id}>
-                                {productLabel(product)}
-                              </option>
-                            ))}
-                          </Select>
-                        ) : matchedProduct ? (
-                          <span>{productLabel(matchedProduct)}</span>
-                        ) : (
-                          <NullValue reason="not-entered" />
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {editable ? (
-                          <div className="grid grid-cols-3 gap-2">
-                            <Field
-                              label="Gross"
-                              htmlFor={`line-${line.id}-gross`}
-                              error={rowErrors?.rawGross}
-                              className="gap-1"
-                            >
-                              <Input
-                                id={`line-${line.id}-gross`}
-                                inputMode="decimal"
-                                value={state.rawGross}
-                                onChange={(e) => updateField(line.id, "rawGross", e.target.value)}
-                                placeholder="0.00"
-                                className="min-h-9 w-full"
-                              />
-                            </Field>
-                            <Field
-                              label="Discount"
-                              htmlFor={`line-${line.id}-discount`}
-                              error={rowErrors?.rawDiscount}
-                              className="gap-1"
-                            >
-                              <Input
-                                id={`line-${line.id}-discount`}
-                                inputMode="decimal"
-                                value={state.rawDiscount}
-                                onChange={(e) => updateField(line.id, "rawDiscount", e.target.value)}
-                                placeholder="0.00"
-                                className="min-h-9 w-full"
-                              />
-                            </Field>
-                            <Field
-                              label="Net"
-                              htmlFor={`line-${line.id}-net`}
-                              error={rowErrors?.rawNet}
-                              className="gap-1"
-                            >
-                              <Input
-                                id={`line-${line.id}-net`}
-                                inputMode="decimal"
-                                value={state.rawNet}
-                                onChange={(e) => updateField(line.id, "rawNet", e.target.value)}
-                                placeholder="0.00"
-                                className="min-h-9 w-full"
-                              />
-                            </Field>
-                          </div>
-                        ) : (
-                          <span className="tabular-nums text-card-foreground">
-                            {formatCostForInput(line.rawGross) || "—"} /{" "}
-                            {formatCostForInput(line.rawDiscount) || "—"} /{" "}
-                            {formatCostForInput(line.rawNet) || "—"}
-                          </span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+                  {HEADER_FIELD_KEYS.map((key) => {
+                    const raw = invoice[key];
+                    const display =
+                      raw == null
+                        ? null
+                        : key === "invoiceDate" || key === "retentionUntil"
+                          ? formatCalendarDate(raw)
+                          : key === "totalGross" || key === "totalNet"
+                            ? formatCostForInput(raw)
+                            : raw;
+                    return (
+                      <div key={key} className="flex flex-col gap-1">
+                        <span className="text-label uppercase text-muted-foreground font-semibold">
+                          {HEADER_FIELD_LABELS[key]}
+                        </span>
+                        <span className="text-body font-medium text-card-foreground">
+                          {display ?? <NullValue reason="not-entered" />}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
-            </TableBody>
-          </Table>
-        </TableContainer>
+            </div>
 
-        {error ? (
-          <p className="mt-4 rounded-md bg-negative-bg px-3 py-2 text-caption text-negative" role="alert">
-            {error}{" "}
-            <button
-              type="button"
-              onClick={() => router.refresh()}
-              className="underline"
+            <TableContainer className="glass-card">
+              <Table>
+                <TableCaption>
+                  Invoice {invoice.invoiceNumber ?? `#${invoice.id}`} lines, {orderedLines.length} total
+                </TableCaption>
+                <TableHeader>
+                  <TableRow interactive={false}>
+                    <TableHead>Description</TableHead>
+                    <TableHead numeric>Qty</TableHead>
+                    <TableHead>UOM</TableHead>
+                    <TableHead>Pack</TableHead>
+                    <TableHead>Vendor code</TableHead>
+                    <TableHead>Matched product</TableHead>
+                    <TableHead>Gross / Discount / Net</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {orderedLines.length === 0 ? (
+                    <tr>
+                      <td colSpan={columnCount}>
+                        <p className="py-section-gap text-center text-row-subtitle text-muted-foreground">
+                          No lines were extracted from this document.
+                        </p>
+                      </td>
+                    </tr>
+                  ) : (
+                    orderedLines.map((line) => {
+                      const state = fields[line.id];
+                      const rowErrors = lineErrors[line.id];
+                      const matchedProduct =
+                        line.matchedProductId != null ? productById.get(line.matchedProductId) : undefined;
+                      const lineAlerts = computeLineAlerts(
+                        editable ? state.rawGross : line.rawGross,
+                        editable ? state.rawDiscount : line.rawDiscount,
+                        editable ? state.rawNet : line.rawNet,
+                      );
+                      return (
+                        <TableRow key={line.id} interactive={false} className="align-top">
+                          <TableCell>
+                            <div className="flex flex-col gap-1.5">
+                              <span className="font-medium">
+                                {line.description ?? <NullValue reason="not-entered" />}
+                              </span>
+                              <InvoiceExceptionBadges flags={line.exceptionFlags} />
+                              {lineAlerts.length > 0 ? (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {lineAlerts.map((alert) => (
+                                    <StatusPill key={alert.key} tone={alert.tone}>
+                                      {alert.label}
+                                    </StatusPill>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          </TableCell>
+                          <TableCell numeric className="text-muted-foreground tabular-nums">
+                            {line.quantity ?? <NullValue reason="not-entered" />}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {line.uom ? UOM_LABEL[line.uom] : <NullValue reason="not-entered" />}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {line.packDescription ?? <NullValue reason="not-entered" />}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {line.vendorItemCode ?? <NullValue reason="not-entered" />}
+                          </TableCell>
+                          <TableCell>
+                            {editable ? (
+                              <Select
+                                aria-label={`Matched product for line ${line.lineNumber}`}
+                                value={state.matchedProductId}
+                                onChange={(e) => updateField(line.id, "matchedProductId", e.target.value)}
+                                className="min-w-[12rem]"
+                              >
+                                <option value="">Not matched</option>
+                                {products.map((product) => (
+                                  <option key={product.id} value={product.id}>
+                                    {productLabel(product)}
+                                  </option>
+                                ))}
+                              </Select>
+                            ) : matchedProduct ? (
+                              <span className="font-medium">{productLabel(matchedProduct)}</span>
+                            ) : (
+                              <NullValue reason="not-entered" />
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {editable ? (
+                              <div className="grid grid-cols-3 gap-2">
+                                <Field
+                                  label="Gross"
+                                  htmlFor={`line-${line.id}-gross`}
+                                  error={rowErrors?.rawGross}
+                                  className="gap-1"
+                                >
+                                  <Input
+                                    id={`line-${line.id}-gross`}
+                                    inputMode="decimal"
+                                    value={state.rawGross}
+                                    onChange={(e) => updateField(line.id, "rawGross", e.target.value)}
+                                    placeholder="0.00"
+                                    className="min-h-9 w-full"
+                                  />
+                                </Field>
+                                <Field
+                                  label="Discount"
+                                  htmlFor={`line-${line.id}-discount`}
+                                  error={rowErrors?.rawDiscount}
+                                  className="gap-1"
+                                >
+                                  <Input
+                                    id={`line-${line.id}-discount`}
+                                    inputMode="decimal"
+                                    value={state.rawDiscount}
+                                    onChange={(e) => updateField(line.id, "rawDiscount", e.target.value)}
+                                    placeholder="0.00"
+                                    className="min-h-9 w-full"
+                                  />
+                                </Field>
+                                <Field
+                                  label="Net"
+                                  htmlFor={`line-${line.id}-net`}
+                                  error={rowErrors?.rawNet}
+                                  className="gap-1"
+                                >
+                                  <Input
+                                    id={`line-${line.id}-net`}
+                                    inputMode="decimal"
+                                    value={state.rawNet}
+                                    onChange={(e) => updateField(line.id, "rawNet", e.target.value)}
+                                    placeholder="0.00"
+                                    className="min-h-9 w-full"
+                                  />
+                                </Field>
+                              </div>
+                            ) : (
+                              <span className="tabular-nums text-card-foreground font-semibold">
+                                {formatCostForInput(line.rawGross) || "—"} /{" "}
+                                {formatCostForInput(line.rawDiscount) || "—"} /{" "}
+                                {formatCostForInput(line.rawNet) || "—"}
+                              </span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+
+            {error ? (
+              <p className="rounded-xl border border-negative/30 bg-negative-bg/80 p-3 text-caption text-negative backdrop-blur-md" role="alert">
+                {error}{" "}
+                <button
+                  type="button"
+                  onClick={() => router.refresh()}
+                  className="font-semibold underline"
+                >
+                  Reload this invoice
+                </button>
+              </p>
+            ) : null}
+
+            {editable || canReturn || canApproveCosts ? (
+              <div className="flex flex-wrap items-center gap-3">
+                {editable ? (
+                  <Button type="submit" size="primary" disabled={pending} className="font-semibold shadow-xs">
+                    {pending ? "Approving…" : "Approve"}
+                  </Button>
+                ) : null}
+                {canApproveCosts ? (
+                  <Button
+                    type="button"
+                    size="primary"
+                    disabled={pending || approvingCosts}
+                    onClick={handleApproveCosts}
+                    className="font-semibold shadow-xs"
+                  >
+                    {approvingCosts ? "Posting costs…" : "Approve & post costs"}
+                  </Button>
+                ) : null}
+                {canReturn ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="primary"
+                    disabled={pending || approvingCosts}
+                    onClick={() => setReturning(true)}
+                  >
+                    Return
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+          </form>
+
+          {returning ? (
+            <form
+              method="post"
+              onSubmit={handleConfirmReturn}
+              className="flex flex-col gap-3 rounded-xl border border-border/80 bg-card/85 backdrop-blur-md p-card-pad shadow-xs"
             >
-              Reload this invoice
-            </button>
-          </p>
-        ) : null}
-
-        {editable || canReturn || canApproveCosts ? (
-          <div className="mt-6 flex flex-wrap items-center gap-3">
-            {editable ? (
-              <Button type="submit" size="primary" disabled={pending}>
-                {pending ? "Approving…" : "Approve"}
-              </Button>
-            ) : null}
-            {canApproveCosts ? (
-              <Button
-                type="button"
-                size="primary"
-                disabled={pending || approvingCosts}
-                onClick={handleApproveCosts}
+              <h2 className="text-label uppercase text-muted-foreground font-semibold">
+                Return {invoice.invoiceNumber ?? `invoice #${invoice.id}`} for re-extraction
+              </h2>
+              <Field
+                label="Reason"
+                htmlFor="reject-reason"
+                error={reasonError ?? undefined}
+                hint="Recorded on the invoice. Required."
               >
-                {approvingCosts ? "Posting costs…" : "Approve & post costs"}
-              </Button>
-            ) : null}
-            {canReturn ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="primary"
-                disabled={pending || approvingCosts}
-                onClick={() => setReturning(true)}
-              >
-                Return
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-      </form>
+                <textarea
+                  id="reject-reason"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  rows={3}
+                  className={textareaClassName}
+                />
+              </Field>
+              <div className="flex flex-wrap gap-3">
+                <Button type="submit" variant="destructive" size="tap" disabled={pending}>
+                  {pending ? "Returning…" : "Confirm return"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="tap"
+                  disabled={pending}
+                  onClick={() => {
+                    setReturning(false);
+                    setReason("");
+                    setReasonError(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          ) : null}
 
-      {returning ? (
-        <form
-          method="post"
-          onSubmit={handleConfirmReturn}
-          className="flex flex-col gap-3 rounded-md border border-border bg-card p-card-pad"
-        >
-          <h2 className="text-label uppercase text-muted-foreground">
-            Return {invoice.invoiceNumber ?? `invoice #${invoice.id}`} for re-extraction
-          </h2>
-          <Field
-            label="Reason"
-            htmlFor="reject-reason"
-            error={reasonError ?? undefined}
-            hint="Recorded on the invoice. Required."
-          >
-            <textarea
-              id="reject-reason"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={3}
-              className={textareaClassName}
-            />
-          </Field>
-          <div className="flex flex-wrap gap-3">
-            <Button type="submit" variant="destructive" size="tap" disabled={pending}>
-              {pending ? "Returning…" : "Confirm return"}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="tap"
-              disabled={pending}
-              onClick={() => {
-                setReturning(false);
-                setReason("");
-                setReasonError(null);
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
-        </form>
-      ) : null}
-
-      {canRetry ? (
-        <form method="post" onSubmit={handleRetry} className="flex flex-col gap-3">
-          <Button type="submit" size="primary" disabled={pending} className="w-fit">
-            {pending ? "Retrying…" : "Retry extraction"}
-          </Button>
-        </form>
-      ) : null}
+          {canRetry ? (
+            <form method="post" onSubmit={handleRetry} className="flex flex-col gap-3">
+              <Button type="submit" size="primary" disabled={pending} className="w-fit font-semibold shadow-xs">
+                {pending ? "Retrying…" : "Retry extraction"}
+              </Button>
+            </form>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }

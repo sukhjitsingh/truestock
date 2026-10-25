@@ -35,16 +35,21 @@ export default async function CountsListPage() {
   const result = await listCountsAction({});
   const counts = result.ok ? result.data : [];
   const showValue = user.role === "owner";
-  const columnCount = showValue ? 6 : 5;
+  const columnCount = showValue ? 7 : 6;
 
   return (
     <div>
       <PageHeader
         title="Counts"
+        subtitle={
+          <p className="text-row-subtitle text-muted-foreground">
+            Audit-ready count session records, immutable snapshots, and verified valuations.
+          </p>
+        }
         action={
           <Link
             href="/count"
-            className="flex min-h-tap-min items-center rounded-md bg-primary px-4 text-label uppercase text-primary-foreground"
+            className="flex min-h-tap-min items-center rounded-md bg-primary px-4 text-label uppercase text-primary-foreground font-semibold shadow-xs hover:bg-primary/90"
           >
             Start a count
           </Link>
@@ -56,7 +61,7 @@ export default async function CountsListPage() {
           {result.error.message}
         </p>
       ) : (
-        <TableContainer className="mt-6">
+        <TableContainer className="mt-6 glass-card">
           <Table>
             <TableCaption>Counts, {counts.length} total</TableCaption>
             <TableHeader>
@@ -66,7 +71,8 @@ export default async function CountsListPage() {
                 <TableHead>Started</TableHead>
                 <TableHead>Opened by</TableHead>
                 <TableHead>Closed by</TableHead>
-                {showValue ? <TableHead numeric>Value</TableHead> : null}
+                {showValue ? <TableHead numeric>Snapshot Value</TableHead> : null}
+                <TableHead numeric>Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -78,21 +84,18 @@ export default async function CountsListPage() {
                 </tr>
               ) : (
                 counts.map((count) => (
-                  // Not interactive as a row: the only control is the `#id`
-                  // link inside the first cell. A row-wide hover would promise
-                  // whole-row tap-ability that does not exist.
                   <TableRow key={count.id} interactive={false}>
                     <TableCell>
-                      <Link href={`/office/counts/${count.id}`} className="text-foreground underline">
-                        #{count.id}
-                      </Link>
-                      <span className="ml-2 text-caption text-muted-foreground">
-                        {count.type.replace(/_/g, " ")}
-                      </span>
+                      <div className="flex items-baseline gap-2">
+                        <span className="font-semibold text-card-foreground">#{count.id}</span>
+                        <span className="text-caption text-muted-foreground">
+                          {count.type.replace(/_/g, " ")}
+                        </span>
+                      </div>
                     </TableCell>
                     <TableCell>
                       <StatusPill tone={countStatusTone(count.status)}>
-                        {countStatusLabel(count.status)}
+                        {count.status === "closed" ? "✓ Closed & Locked" : countStatusLabel(count.status)}
                       </StatusPill>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
@@ -102,22 +105,26 @@ export default async function CountsListPage() {
                       {count.openedByName ?? <NullValue reason="not-applicable" />}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {/* Null while the count is open — will be filled in at
-                          close, same as the Value column below. */}
                       {count.closedByName ?? <NullValue reason="not-entered" />}
                     </TableCell>
                     {showValue ? (
                       <TableCell numeric>
-                        {/* Null here means the count isn't closed, so no
-                            value has been locked in — distinct from a value
-                            being withheld by role. */}
                         {count.totalValue == null ? (
                           <NullValue reason="not-entered" />
                         ) : (
-                          <Money value={count.totalValue} />
+                          <Money value={count.totalValue} className="font-semibold tabular-nums text-card-foreground" />
                         )}
                       </TableCell>
                     ) : null}
+                    <TableCell numeric>
+                      <Link
+                        href={`/office/counts/${count.id}`}
+                        className="inline-flex items-center gap-1 text-caption text-accent font-semibold hover:underline"
+                        aria-label={`View audit report for count #${count.id}`}
+                      >
+                        {count.status === "closed" ? "Audit report →" : "View detail →"}
+                      </Link>
+                    </TableCell>
                   </TableRow>
                 ))
               )}

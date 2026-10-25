@@ -53,6 +53,7 @@
  * a time, not a stack of them.
  */
 import { useEffect, useState } from "react";
+import { FileArchive, Download, Loader2, AlertCircle, CheckCircle, RotateCcw } from "lucide-react";
 import { createAuditPacketAction, getAuditPacketAction } from "@/app/actions/invoices";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
@@ -91,9 +92,9 @@ function statusTone(status: Status): PillTone {
 function statusLabel(status: Status): string {
   switch (status) {
     case "ready":
-      return "Ready";
+      return "✓ Ready for Download";
     case "processing":
-      return "Processing";
+      return "Building Packet…";
     case "unavailable":
       return "Unavailable";
   }
@@ -196,47 +197,72 @@ export function AuditPacket() {
 
   if (status != null) {
     return (
-      <div className="flex flex-col gap-4 rounded-md border border-border bg-card p-6">
-        <div className="flex flex-wrap items-center gap-3">
-          <StatusPill tone={statusTone(status)}>{statusLabel(status)}</StatusPill>
-          <span className="text-row-subtitle text-muted-foreground">
-            {dateFrom} — {dateTo}
-          </span>
+      <div className="flex flex-col gap-5 rounded-xl border border-border/80 bg-card/85 backdrop-blur-md p-6 shadow-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/80 pb-4">
+          <div className="flex items-center gap-3">
+            <StatusPill tone={statusTone(status)}>
+              {statusLabel(status)}
+            </StatusPill>
+            <span className="text-row-subtitle font-medium text-muted-foreground">
+              {dateFrom} — {dateTo}
+            </span>
+          </div>
+          {status === "processing" ? (
+            <span className="inline-flex items-center gap-1.5 text-caption text-warning">
+              <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> Live polling
+            </span>
+          ) : null}
         </div>
 
         {status === "processing" ? (
-          <p className="text-row-subtitle text-muted-foreground">
-            Building your export — invoices, counts, and a SHA-256 manifest for this date range.
-            This page checks again every few seconds; you can leave and come back.
-          </p>
+          <div className="flex flex-col gap-2">
+            <p className="text-row-subtitle text-muted-foreground">
+              Building your compliance audit archive containing supplier invoices, count snapshot ledgers, and SHA-256 integrity manifest for the selected date range.
+            </p>
+            <p className="text-caption text-muted-foreground">
+              This process runs in the background. You can stay on this page or return later.
+            </p>
+          </div>
         ) : null}
 
         {status === "ready" && downloadUrl ? (
-          <div className="flex flex-col gap-2">
-            <p className="text-row-subtitle text-muted-foreground">
-              The packet is ready. The download link expires
-              {expiresAt ? ` at ${formatDateTime(expiresAt)}` : " in 10 minutes"} — after that,
-              request a new one.
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-2 text-success">
+              <CheckCircle className="size-5" aria-hidden="true" />
+              <p className="text-row-subtitle font-medium">
+                The audit archive is ready for download.
+              </p>
+            </div>
+            <p className="text-caption text-muted-foreground">
+              The secure download link expires
+              {expiresAt ? ` at ${formatDateTime(expiresAt)}` : " in 10 minutes"}.
             </p>
-            <a
-              href={downloadUrl}
-              className="flex min-h-tap-min w-fit items-center rounded-md bg-primary px-4 text-label uppercase text-primary-foreground"
-            >
-              Download ZIP
-            </a>
+            <div>
+              <a
+                href={downloadUrl}
+                className="inline-flex min-h-tap-min items-center gap-2 rounded-md bg-primary px-5 text-label uppercase text-primary-foreground font-semibold shadow-xs hover:bg-primary/90"
+              >
+                <Download className="size-4" aria-hidden="true" />
+                Download ZIP
+              </a>
+            </div>
           </div>
         ) : null}
 
         {status === "unavailable" ? (
-          <p className="text-row-subtitle text-muted-foreground">
-            {error ?? "This packet expired or the export failed to build."}
-          </p>
+          <div className="flex items-center gap-2 text-negative">
+            <AlertCircle className="size-5" aria-hidden="true" />
+            <p className="text-row-subtitle text-muted-foreground">
+              {error ?? "This packet expired or the export failed to build."}
+            </p>
+          </div>
         ) : null}
 
         {status === "ready" || status === "unavailable" ? (
-          <div>
-            <Button type="button" variant="outline" size="tap" onClick={resetToForm}>
-              Request a new packet
+          <div className="pt-2 border-t border-border/80">
+            <Button type="button" variant="outline" size="tap" onClick={resetToForm} className="font-semibold gap-1.5">
+              <RotateCcw className="size-3.5" aria-hidden="true" />
+              Request another packet
             </Button>
           </div>
         ) : null}
@@ -248,10 +274,13 @@ export function AuditPacket() {
     <form
       method="post"
       onSubmit={handleSubmit}
-      className="flex flex-col gap-section-gap rounded-md border border-border bg-card p-6"
+      className="flex flex-col gap-section-gap rounded-xl border border-border/80 bg-card/85 backdrop-blur-md p-6 shadow-xs"
       noValidate
     >
-      <h2 className="text-label uppercase text-muted-foreground">Create audit packet</h2>
+      <div className="flex items-center gap-2">
+        <FileArchive className="size-4 text-accent" aria-hidden="true" />
+        <h2 className="text-label uppercase text-muted-foreground font-semibold">Create audit packet</h2>
+      </div>
       <p className="text-row-subtitle text-muted-foreground">
         Pick a date range to export every invoice and count in it, plus a SHA-256 manifest, as a
         ZIP. Building it happens in the background; a download link is emailed to you and appears
@@ -283,13 +312,14 @@ export function AuditPacket() {
       </div>
 
       {error ? (
-        <p className="rounded-md bg-negative-bg px-3 py-2 text-caption text-negative" role="alert">
-          {error}
-        </p>
+        <div className="flex items-center gap-2 rounded-lg bg-negative-bg p-3 text-caption text-negative" role="alert">
+          <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
+          <span>{error}</span>
+        </div>
       ) : null}
 
       <div>
-        <Button type="submit" size="primary" disabled={submitting}>
+        <Button type="submit" size="primary" disabled={submitting} className="font-semibold shadow-xs">
           {submitting ? "Requesting…" : "Create audit packet"}
         </Button>
       </div>

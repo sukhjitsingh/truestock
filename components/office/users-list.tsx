@@ -4,6 +4,17 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { actionSetUserActive, actionSetUserRole } from "@/app/actions/users";
 import type { UserSummary } from "@/lib/domain/users";
+import {
+  TableContainer,
+  Table,
+  TableCaption,
+  TableHeader,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+} from "@/components/ui/table";
+import { StatusPill } from "@/components/ui/status-pill";
 
 /**
  * User management table — role select and active toggle per row.
@@ -70,51 +81,53 @@ export function UsersList({ users }: { users: UserSummary[] }) {
     );
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       {feedback && (
         <div
-          role="status"
-          className={`rounded-md px-4 py-2 text-sm ${
+          role={feedback.kind === "ok" ? "status" : "alert"}
+          className={`rounded-md px-4 py-2.5 text-caption font-medium ${
             feedback.kind === "ok"
-              ? "bg-green-900/30 text-green-300"
-              : "bg-destructive/20 text-destructive-foreground"
+              ? "bg-success-bg text-success"
+              : "bg-negative-bg text-negative"
           }`}
         >
           {feedback.msg}
         </div>
       )}
 
-      <div className="rounded-md border border-border overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border bg-muted/50 text-left text-muted-foreground">
-              <th className="px-4 py-3 font-medium">Name</th>
-              <th className="px-4 py-3 font-medium">Email</th>
-              <th className="px-4 py-3 font-medium">Role</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-            </tr>
-          </thead>
-          <tbody>
+      <TableContainer>
+        <Table className="min-w-[40rem]">
+          <TableCaption>
+            Users, {users.length} {users.length === 1 ? "user" : "users"}
+          </TableCaption>
+          <TableHeader>
+            <TableRow interactive={false}>
+              <TableHead>User & Email</TableHead>
+              <TableHead>Role</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead numeric>Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {users.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="h-24 text-center text-muted-foreground">
+              <TableRow interactive={false}>
+                <TableCell colSpan={4} className="py-section-gap text-center text-row-subtitle text-muted-foreground">
                   No users found.
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : (
               users.map((u) => {
                 const busy = busyId === u.id || isPending;
                 return (
-                  <tr
-                    key={u.id}
-                    className="border-b border-border last:border-0 hover:bg-muted/30"
-                  >
-                    <td className="px-4 py-3 font-medium">{u.name}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{u.email}</td>
-                    <td className="px-4 py-3">
+                  <TableRow key={u.id} interactive={true}>
+                    <TableCell className="py-3.5">
+                      <div className="font-semibold text-foreground">{u.name}</div>
+                      <div className="text-caption text-muted-foreground">{u.email}</div>
+                    </TableCell>
+                    <TableCell className="py-3.5">
                       <select
                         aria-label={`Role for ${u.name}`}
-                        className="min-h-11 rounded border border-input bg-background px-2 py-1 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+                        className="min-h-tap-min rounded-lg border border-border/80 bg-background px-3 py-1.5 text-caption font-semibold uppercase text-foreground transition-all hover:border-accent/40 focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50"
                         value={u.role}
                         disabled={busy}
                         onChange={(e) => handleRoleChange(u.id, e.target.value)}
@@ -123,33 +136,34 @@ export function UsersList({ users }: { users: UserSummary[] }) {
                         <option value="manager">Manager</option>
                         <option value="staff">Staff</option>
                       </select>
-                    </td>
-                    <td className="px-4 py-3">
-                      <label className="flex min-h-11 cursor-pointer items-center gap-2">
-                        <input
-                          type="checkbox"
-                          aria-label={`Active for ${u.name}`}
-                          className="h-5 w-5 accent-primary"
-                          checked={u.active}
-                          disabled={busy}
-                          onChange={(e) => handleActiveChange(u.id, e.target.checked)}
-                        />
-                        <span
-                          className={`text-xs ${
-                            u.active ? "text-green-400" : "text-muted-foreground"
-                          }`}
-                        >
-                          {u.active ? "Active" : "Inactive"}
-                        </span>
-                      </label>
-                    </td>
-                  </tr>
+                    </TableCell>
+                    <TableCell className="py-3.5">
+                      <StatusPill tone={u.active ? "success" : "negative"}>
+                        {u.active ? "Active" : "Inactive"}
+                      </StatusPill>
+                    </TableCell>
+                    <TableCell className="py-3.5 text-right">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        aria-label={`${u.active ? "Deactivate" : "Activate"} ${u.name}`}
+                        onClick={() => handleActiveChange(u.id, !u.active)}
+                        className={`inline-flex min-h-tap-min items-center rounded-lg border px-3 py-1.5 text-caption font-semibold uppercase transition-all active:scale-95 disabled:opacity-50 ${
+                          u.active
+                            ? "border-destructive/30 text-destructive hover:bg-destructive/10"
+                            : "border-success/30 text-success hover:bg-success/10"
+                        }`}
+                      >
+                        {u.active ? "Deactivate" : "Activate"}
+                      </button>
+                    </TableCell>
+                  </TableRow>
                 );
               })
             )}
-          </tbody>
-        </table>
-      </div>
+          </TableBody>
+        </Table>
+      </TableContainer>
     </div>
   );
 }

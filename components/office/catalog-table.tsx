@@ -445,12 +445,14 @@ export function CatalogTable({
       accessorFn: (row) => `${row.category} ${row.subcategory ?? ""}`,
       header: "Category",
       cell: ({ row }) => (
-        <span className="text-row-subtitle text-muted-foreground">
-          {row.original.category}
+        <div>
+          <span className="inline-flex items-center rounded-full bg-secondary/80 px-2.5 py-0.5 text-label uppercase font-semibold text-foreground">
+            {row.original.category}
+          </span>
           {row.original.subcategory ? (
-            <span className="block text-caption">{row.original.subcategory}</span>
+            <span className="mt-0.5 block text-caption text-muted-foreground">{row.original.subcategory}</span>
           ) : null}
-        </span>
+        </div>
       ),
     });
 

@@ -45,9 +45,16 @@ export default async function CountSummaryPage({
       <PageHeader
         title={`Count #${summary.countId}`}
         breadcrumb={{ label: "← All counts", href: "/office/counts" }}
+        subtitle={
+          <p className="text-row-subtitle text-muted-foreground">
+            {summary.status === "closed"
+              ? "Permanent immutable audit record. Unit costs and case sizes are stamped snapshot values."
+              : "Active count session summary."}
+          </p>
+        }
         pills={
           <StatusPill tone={countStatusTone(summary.status)}>
-            {countStatusLabel(summary.status)}
+            {summary.status === "closed" ? "✓ Closed & Locked" : countStatusLabel(summary.status)}
           </StatusPill>
         }
       />
@@ -59,32 +66,37 @@ export default async function CountSummaryPage({
           summary.totalValue != null ? "sm:grid-cols-3" : "sm:grid-cols-2"
         }`}
       >
-        <Stat label="Lines" value={String(summary.lines.length)} />
-        <Stat label="Total units" value={formatUnits(summary.totalUnits)} />
+        <Stat label="Count Lines" value={String(summary.lines.length)} subtext="recorded lines" />
+        <Stat label="Total Units" value={formatUnits(summary.totalUnits)} subtext="on-hand volume" />
         {summary.totalValue != null ? (
-          <Stat label="Total value" value={<Money value={summary.totalValue} className="text-numeral-md" />} />
+          <Stat
+            label="Snapshot Valuation"
+            value={<Money value={summary.totalValue} className="text-numeral-md font-bold text-card-foreground" />}
+            subtext="costed when each line was first counted"
+          />
         ) : null}
       </div>
 
       {summary.excludedLineCount > 0 ? (
-        <div className="mt-3 flex items-start gap-2.5 rounded-md border border-border bg-warning-bg p-3 text-warning">
+        <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-warning/30 bg-warning-bg/80 p-4 text-warning backdrop-blur-md">
           <p className="text-row-subtitle">
-            {summary.pricedLineCount} priced &middot; {summary.excludedLineCount} excluded from
-            valuation — no cost or case size on file. Excluded lines are left out of the total
-            rather than counted as free.
+            <strong className="font-semibold">{summary.pricedLineCount} priced</strong> &middot;{" "}
+            <strong className="font-semibold">{summary.excludedLineCount} excluded</strong> from
+            valuation (missing unit cost or case size snapshot). Excluded lines are omitted from monetary totals,
+            never valued at zero.
           </p>
         </div>
       ) : null}
 
       {summary.previous ? (
-        <Card className="mt-6">
-          <p className="text-label uppercase text-muted-foreground">
-            vs. count #{summary.previous.countId}
+        <Card className="mt-6 glass-card">
+          <p className="text-label uppercase text-muted-foreground font-semibold">
+            Comparison vs. Count #{summary.previous.countId}
             {summary.previous.closedAt ? ` (closed ${formatDate(summary.previous.closedAt)})` : ""}
           </p>
-          <div className="mt-2 flex flex-wrap gap-8">
+          <div className="mt-3 flex flex-wrap gap-8">
             <Delta
-              label="Units"
+              label="Units Variance"
               current={formatUnits(summary.totalUnits)}
               previous={formatUnits(summary.previous.totalUnits)}
               delta={summary.previous.unitsDelta}
@@ -102,7 +114,7 @@ export default async function CountSummaryPage({
             summary.previous.totalValue != null &&
             summary.previous.valueDelta != null ? (
               <Delta
-                label="Value"
+                label="Valuation Variance"
                 current={`$${summary.totalValue.toFixed(2)}`}
                 previous={`$${summary.previous.totalValue.toFixed(2)}`}
                 delta={summary.previous.valueDelta}
@@ -114,18 +126,19 @@ export default async function CountSummaryPage({
       ) : null}
 
       <div className="mt-8 grid gap-section-gap lg:grid-cols-2">
-        <Rollup title="By category" groups={summary.byCategory} />
-        <Rollup title="By location" groups={summary.byLocation} />
+        <Rollup title="Rollup by Category" groups={summary.byCategory} showCost={summary.totalValue != null} />
+        <Rollup title="Rollup by Location" groups={summary.byLocation} showCost={summary.totalValue != null} />
       </div>
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+function Stat({ label, value, subtext }: { label: string; value: React.ReactNode; subtext?: string }) {
   return (
-    <Card>
-      <p className="text-label uppercase text-muted-foreground">{label}</p>
-      <p className="mt-1 text-numeral-md text-card-foreground">{value}</p>
+    <Card className="glass-card">
+      <p className="text-label uppercase text-muted-foreground font-semibold">{label}</p>
+      <p className="mt-1 text-numeral-md font-bold text-card-foreground">{value}</p>
+      {subtext ? <p className="mt-0.5 text-caption text-muted-foreground">{subtext}</p> : null}
     </Card>
   );
 }
@@ -150,9 +163,9 @@ function Delta({
   const sign = delta > 0 ? "+" : delta < 0 ? "−" : "";
   return (
     <div>
-      <p className="text-label uppercase text-muted-foreground">{label}</p>
-      <p className="mt-1 text-numeral-sm tabular-nums text-foreground">
-        {previous} → {current}
+      <p className="text-label uppercase text-muted-foreground font-semibold">{label}</p>
+      <p className="mt-1 text-numeral-sm font-semibold tabular-nums text-foreground">
+        {previous} &rarr; {current}
       </p>
       <p className="text-caption tabular-nums text-muted-foreground">
         {sign}
@@ -162,35 +175,39 @@ function Delta({
   );
 }
 
-function Rollup({ title, groups }: { title: string; groups: SummaryGroup[] }) {
+function Rollup({ title, groups, showCost }: { title: string; groups: SummaryGroup[]; showCost?: boolean }) {
   return (
-    <section>
-      <h2 className="mb-3 text-label uppercase text-muted-foreground">{title}</h2>
-      <TableContainer>
+    // min-w-0: a grid item defaults to `min-width: auto`, i.e. as wide as its
+    // content. The table inside is `min-w-max`, so without this the section
+    // grows to the table's width, the container's own `overflow-x-auto` never
+    // has anything to clip, and the whole page scrolls sideways at phone width.
+    <section className="min-w-0">
+      <h2 className="mb-3 text-label uppercase text-muted-foreground font-semibold">{title}</h2>
+      <TableContainer className="glass-card">
         <Table>
           <TableCaption>{title}, {groups.length} groups</TableCaption>
           <TableBody>
             {groups.length === 0 ? (
               <tr>
-                <td colSpan={3}>
+                <td colSpan={showCost ? 3 : 2}>
                   <EmptyState message="Nothing counted." />
                 </td>
               </tr>
             ) : (
               groups.map((group) => (
                 <TableRow key={group.key} interactive={false}>
-                  <TableCell className="max-w-[16rem] truncate" title={group.label}>
+                  <TableCell className="max-w-[16rem] truncate font-medium" title={group.label}>
                     {group.label}
                   </TableCell>
-                  <TableCell numeric className="text-muted-foreground">
+                  <TableCell numeric className="text-muted-foreground tabular-nums">
                     {formatUnits(group.units)} units
                     {group.excludedLineCount > 0 ? (
-                      <span className="ml-2 text-caption">({group.excludedLineCount} excl.)</span>
+                      <span className="ml-2 text-caption text-warning">({group.excludedLineCount} excl.)</span>
                     ) : null}
                   </TableCell>
                   {group.value != null ? (
                     <TableCell numeric>
-                      <Money value={group.value} />
+                      <Money value={group.value} className="font-semibold tabular-nums text-card-foreground" />
                     </TableCell>
                   ) : null}
                 </TableRow>

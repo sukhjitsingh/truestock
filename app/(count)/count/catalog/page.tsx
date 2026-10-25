@@ -1,28 +1,45 @@
+import Link from "next/link";
+import { ChevronLeft } from "lucide-react";
 import { requireUser } from "@/lib/current-user";
 import { CountCatalogSearch } from "@/components/count/catalog-search";
 
 export const metadata = { title: "Catalog · Truestock" };
 
 /**
- * Read-only product lookup from the phone — "do we already carry this?"
- * mid-shift, without opening a count.
+ * Mobile Catalog Lookup (`/count/catalog`, Target 12)
  *
- * Deliberately does NOT request `includeOnHand`. On-hand comes from the last
- * closed count, so on this device it would be answering a question nobody
- * asked with a number that is stale by definition; the back-office catalog
- * is where that figure belongs. Keeping it off also keeps this on the same
- * single-indexed-lookup path the count-time picker uses.
+ * Read-only product lookup and scan-to-enroll from mobile.
  */
 export default async function CountCatalogPage() {
   await requireUser();
 
   return (
-    <div className="px-bar-pad pb-8 pt-6">
-      <h1 className="text-header-title text-foreground">Catalog</h1>
-      <p className="mt-1 text-row-subtitle text-muted-foreground">
-        Look up a product. To count one, open a count.
-      </p>
+    <div className="px-bar-pad pb-action-bar pt-4">
+      {/* Top Header Bar */}
+      <header className="flex items-center justify-between border-b border-border/60 pb-3.5">
+        <Link
+          href="/count"
+          aria-label="Back to Floor Count Hub"
+          className="flex size-11 items-center justify-center rounded-full border border-border/80 bg-card/85 text-foreground backdrop-blur-md shadow-xs transition-all hover:border-accent/40 active:scale-95"
+        >
+          <ChevronLeft className="size-5" aria-hidden="true" />
+        </Link>
+        <span className="text-screen-title font-semibold uppercase tracking-wider text-foreground">
+          Mobile Catalog
+        </span>
+        <div className="size-11" aria-hidden="true" />
+      </header>
+
+      {/* Screen Title & Subtitle */}
+      <div className="pt-4">
+        <h1 className="text-header-title text-foreground">Catalog Lookup</h1>
+        <p className="mt-0.5 text-row-subtitle text-muted-foreground">
+          Search items or scan barcodes to look up and enroll products
+        </p>
+      </div>
+
       <CountCatalogSearch />
     </div>
   );
 }
+

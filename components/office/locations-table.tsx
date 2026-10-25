@@ -8,6 +8,16 @@ import {
   deactivateLocationAction,
 } from "@/app/actions/catalog";
 import type { LocationSummary } from "@/lib/domain/catalog";
+import {
+  TableContainer,
+  Table,
+  TableCaption,
+  TableHeader,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+} from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/field";
 
@@ -279,61 +289,59 @@ export function LocationsTable({ locations }: { locations: LocationSummary[] }) 
           No locations yet. Add one to give the counting screen a place to scan into.
         </p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[48rem] border-collapse text-left">
-            <thead>
-              <tr className="border-b border-border">
-                <th scope="col" className="py-2 text-label uppercase text-muted-foreground">
-                  Name
-                </th>
-                <th scope="col" className="py-2 text-label uppercase text-muted-foreground">
-                  Counting mode
-                </th>
-                <th scope="col" className="py-2 text-right text-label uppercase text-muted-foreground">
-                  Sort order
-                </th>
+        <TableContainer>
+          <Table className="min-w-[48rem]">
+            <TableCaption>
+              Locations, {activeCount} active{locations.length - activeCount > 0 ? `, ${locations.length - activeCount} retired` : ""}
+            </TableCaption>
+            <TableHeader>
+              <TableRow interactive={false}>
+                <TableHead>Name</TableHead>
+                <TableHead>Counting mode</TableHead>
+                <TableHead numeric>Sort order</TableHead>
                 {/* `pl-4` because the column to the left is right-aligned, so
-                    its content ends flush against this one's start and the two
-                    render as "SORT ORDERSTATUS" / "1Active" with nothing
-                    between them. */}
-                <th scope="col" className="py-2 pl-4 text-label uppercase text-muted-foreground">
-                  Status
-                </th>
-                <th scope="col" className="py-2 text-right text-label uppercase text-muted-foreground">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody>
+                    its content ends flush against this one's start. */}
+                <TableHead className="pl-4">Status</TableHead>
+                <TableHead numeric>Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {locations.map((loc) => (
                 <Fragment key={loc.id}>
-                  <tr className="border-b border-border align-top">
-                    <td className="py-3">
+                  <TableRow interactive={true} className="align-top">
+                    <TableCell className="py-3">
                       <span className="block text-row-subtitle font-semibold text-foreground">
                         {loc.name}
                       </span>
                       {loc.notes ? (
                         <span className="block text-caption text-muted-foreground">{loc.notes}</span>
                       ) : null}
-                    </td>
-                    <td className="py-3 text-row-subtitle text-muted-foreground">
-                      {countModeLabel[loc.countMode] ?? loc.countMode}
-                    </td>
-                    <td className="py-3 text-right text-row-subtitle tabular-nums text-muted-foreground">
+                    </TableCell>
+                    <TableCell className="py-3">
+                      <span className="inline-flex items-center rounded-full bg-accent/15 px-2.5 py-0.5 text-label uppercase font-semibold text-accent">
+                        {countModeLabel[loc.countMode] ?? loc.countMode}
+                      </span>
+                    </TableCell>
+                    <TableCell numeric className="py-3 text-muted-foreground font-semibold">
                       {loc.sortOrder}
-                    </td>
-                    <td className="py-3 pl-4 text-row-subtitle">
+                    </TableCell>
+                    <TableCell className="py-3 pl-4">
                       {loc.active ? (
-                        <span className="text-muted-foreground">Active</span>
+                        <span className="inline-flex items-center rounded-full bg-success-bg px-2.5 py-0.5 text-label uppercase font-semibold text-success">
+                          Active
+                        </span>
                       ) : (
-                        <span className="text-negative">Retired</span>
+                        <span className="inline-flex items-center rounded-full bg-negative-bg px-2.5 py-0.5 text-label uppercase font-semibold text-negative">
+                          Retired
+                        </span>
                       )}
-                    </td>
-                    <td className="py-3 text-right">
+                    </TableCell>
+                    <TableCell numeric className="py-3">
                       <div className="flex justify-end gap-2">
                         <Button
                           variant="outline"
                           size="tap"
+                          aria-label={`Edit ${loc.name}`}
                           onClick={() => handleEditClick(loc.id)}
                         >
                           Edit
@@ -344,6 +352,7 @@ export function LocationsTable({ locations }: { locations: LocationSummary[] }) 
                               <Button
                                 variant="outline"
                                 size="tap"
+                                aria-label={`Cancel retiring ${loc.name}`}
                                 onClick={(e) => handleCancelRetire(e)}
                                 disabled={retirePendingId === loc.id}
                               >
@@ -352,6 +361,7 @@ export function LocationsTable({ locations }: { locations: LocationSummary[] }) 
                               <Button
                                 variant="destructive"
                                 size="tap"
+                                aria-label={`Confirm retiring ${loc.name}`}
                                 onClick={(e) => handleConfirmRetire(e, loc.id)}
                                 disabled={retirePendingId === loc.id}
                               >
@@ -359,31 +369,36 @@ export function LocationsTable({ locations }: { locations: LocationSummary[] }) 
                               </Button>
                             </>
                           ) : (
-                            <Button variant="outline" size="tap" onClick={(e) => handleRetireClick(e, loc.id)}>
+                            <Button
+                              variant="outline"
+                              size="tap"
+                              aria-label={`Retire ${loc.name}`}
+                              onClick={(e) => handleRetireClick(e, loc.id)}
+                            >
                               Retire
                             </Button>
                           )
                         ) : null}
                       </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                   {retireErrors[loc.id] ? (
-                    <tr key={`${loc.id}-error`} className="border-b border-border">
-                      <td colSpan={5} className="pb-3">
+                    <TableRow key={`${loc.id}-error`} interactive={false}>
+                      <TableCell colSpan={5} className="pb-3">
                         <p
                           className="rounded-md bg-negative-bg px-3 py-2 text-caption text-negative"
                           role="alert"
                         >
                           {retireErrors[loc.id]}
                         </p>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ) : null}
                 </Fragment>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </TableContainer>
       )}
     </div>
   );

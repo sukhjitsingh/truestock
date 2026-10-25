@@ -617,7 +617,7 @@ describe("GET /api/invoices/[id]/file", () => {
     expect(res.status).toBe(403);
   });
 
-  test("owner succeeds and receives the exact bytes with an attachment disposition", async () => {
+  test("owner succeeds and receives the exact bytes with an inline disposition", async () => {
     const created = await uploadAndWriteMatchingFile(fx.owner);
     sessionUserId = fx.owner.userId;
     const { GET } = await import("@/app/api/invoices/[id]/file/route");
@@ -625,7 +625,11 @@ describe("GET /api/invoices/[id]/file", () => {
     const res = await GET(new Request(`http://localhost/api/invoices/${created.id}/file`), fakeParams(String(created.id)));
 
     expect(res.status).toBe(200);
-    expect(res.headers.get("content-disposition")).toContain("attachment");
+    // `inline`, not `attachment` — this route is embedded by
+    // InvoiceReviewForm's document-preview <iframe>, which `attachment`
+    // silently defeated (the iframe forced a save-as instead of rendering
+    // the file). See app/api/invoices/[id]/file/route.ts's GET comment.
+    expect(res.headers.get("content-disposition")).toContain("inline");
     const body = Buffer.from(await res.arrayBuffer());
     expect(body.toString()).toBe("hello invoice");
   });

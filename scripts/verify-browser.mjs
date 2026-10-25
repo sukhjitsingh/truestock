@@ -19,13 +19,21 @@
  * stay out of the shell history and the process list. `--env-file` is Node's
  * own flag; there is no dotenv dependency.
  *
+ * `INVOICE_STORAGE_DIR` must resolve to the same directory the app under test
+ * uses. The harness writes fixture PDFs for its SQL-seeded invoices and
+ * deletes them again, so against an app in a container (or any process whose
+ * env file differs from the one given here) a mismatch leaves the app unable
+ * to find the file — a 404 on `/api/invoices/<id>/file` — and leaks the
+ * uploaded fixture in the app's directory. Load the app's own env file too:
+ *   node --env-file=<app>/.env.local --env-file=.env.local scripts/verify-browser.mjs
+ *
  * Against a local dev database only — it signs in, changes a role, and
  * creates/renames/retires its own throwaway locations. Everything it mutates
  * it either created itself or restores; see restoreLog at the end of the run.
  */
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { unlink } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import mysql from "mysql2/promise";
 import { chromium } from "playwright";
@@ -139,9 +147,18 @@ page.on("console", (m) => {
   if (m.type() === "error") consoleErrors.push(m.text());
 });
 page.on("pageerror", (e) => consoleErrors.push(String(e)));
+// Chrome's "Failed to load resource: ... 404" console error names no URL, which
+// makes it undiagnosable on its own. Keep the failing responses so the
+// "no console errors" detail below can say which request it was.
+const failedResponses = [];
+page.on("response", (r) => {
+  if (r.status() >= 400) failedResponses.push(`${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}`);
+});
 await page.addInitScript(() => {
   document.addEventListener("securitypolicyviolation", (e) => {
-    (window.__csp ??= []).push(`${e.violatedDirective} blocked ${e.blockedURI}`);
+    // sourceFile:line is what tells a first-party violation from a library's
+    // feature probe (the zod `Function("")` check), so keep it.
+    (window.__csp ??= []).push(`${e.violatedDirective} blocked ${e.blockedURI} (${e.sourceFile}:${e.lineNumber})`);
   });
 
   /**
@@ -182,6 +199,37 @@ let slice3UnmatchedInvoiceId = null;
 let slice3PrematchedInvoiceId = null;
 let slice3VendorId = null;
 let slice3CreatedVendor = false;
+
+/**
+ * Smallest well-formed one-page PDF. The slice 3 invoices are seeded with SQL
+ * rather than uploaded, and the review page renders the stored file in an
+ * iframe unconditionally. A seeded row with no file therefore makes the
+ * browser request `/api/invoices/<id>/file`, get a 404, and log a console
+ * error — a harness artefact, since a real invoice always has a file.
+ */
+const FIXTURE_PDF = Buffer.from(
+  "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n" +
+    "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\n" +
+    "xref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000052 00000 n \n0000000101 00000 n \n" +
+    "trailer<</Size 4/Root 1 0 R>>\nstartxref\n160\n%%EOF\n",
+);
+
+function invoiceStorageRoot() {
+  return path.resolve((process.env.INVOICE_STORAGE_DIR ?? "").trim() || "./var/invoices");
+}
+
+/** Gives a SQL-seeded invoice a real stored file, keyed the way the app keys them. */
+async function attachFixtureFile(sql, orgId, invoiceId) {
+  const key = path.posix.join(String(orgId), `${invoiceId}.pdf`);
+  await mkdir(path.join(invoiceStorageRoot(), String(orgId)), { recursive: true });
+  await writeFile(path.join(invoiceStorageRoot(), key), FIXTURE_PDF);
+  await sql.execute("UPDATE invoice SET file_path = ?, file_sha256 = ?, file_size_bytes = ? WHERE id = ?", [
+    key,
+    createHash("sha256").update(FIXTURE_PDF).digest("hex"),
+    FIXTURE_PDF.length,
+    invoiceId,
+  ]);
+}
 
 try {
   // ---- sign in ------------------------------------------------------------
@@ -397,7 +445,9 @@ try {
    * looking wrong.
    */
   const row = page.locator("tbody tr", { hasText: created });
-  await row.getByRole("button", { name: /^edit$/i }).click();
+  // The button's accessible name is "Edit <location name>" (aria-label names the
+  // row it acts on), so match the verb, not the whole name.
+  await row.getByRole("button", { name: /^edit\b/i }).click();
   const nameField = page.locator('input[placeholder="e.g., Patio Bar"]');
   const editingWhich = await nameField.inputValue();
   record(
@@ -424,8 +474,11 @@ try {
 
   // ---- slice 3: retire, and the picker stops offering it ------------------
   const retireRow = page.locator("tbody tr", { hasText: renamed });
-  await retireRow.getByRole("button", { name: /^retire$/i }).click();
-  await retireRow.getByRole("button", { name: /confirm retire/i }).click();
+  // "Retire <name>" — `\b` keeps this from matching the "Retired" status text.
+  await retireRow.getByRole("button", { name: /^retire\b/i }).click();
+  // Armed state swaps in "Confirm retiring <name>" (visible text "Confirm
+  // retire?"). Match the aria-label's stem: "retiring" does not contain "retire".
+  await retireRow.getByRole("button", { name: /^confirm retiring\b/i }).click();
   await page.locator("tbody tr", { hasText: renamed }).getByText("Retired").waitFor({ timeout: 15000 });
   record("a retired location stays listed and is marked Retired", true, renamed);
 
@@ -453,7 +506,7 @@ try {
     skipped.push("open item 27 — /office/vendors Edit button: needs at least one vendor row");
   } else {
     const firstVendorName = (await vendorRows.first().locator("td").first().innerText()).trim();
-    await vendorRows.first().getByRole("button", { name: /^edit$/i }).click();
+    await vendorRows.first().getByRole("button", { name: /^edit\b/i }).click();
     const vendorNameField = page.locator("#name");
     const editingVendor = await vendorNameField.inputValue();
     record(
@@ -538,13 +591,22 @@ try {
   // `product_par` has zero rows today (AGENTS.md open question 2 / the
   // no-par-no-bar rule) — every on-hand cell on this page must render its
   // unit count alone, with no Meter bar (`role="presentation"`) under it.
+  //
+  // The on-hand cell has two non-bar states: a unit count (when the product is
+  // on a closed count) and "no closed count" (when it is on none — every row,
+  // in a database that has never closed a count). Either one proves the table
+  // rendered on-hand cells at all; zero bars is the assertion.
   const rowsWithUnitCount = await page.locator("table tbody tr").filter({ hasText: /\bunit\b/ }).count();
+  const rowsWithNoCount = await page.locator("table tbody tr").filter({ hasText: /no closed count/i }).count();
   const meterBarsInTable = await page.locator('table [role="presentation"]').count();
   record(
     "a product with no par level renders NO stock bar",
-    rowsWithUnitCount > 0 && meterBarsInTable === 0,
-    `${rowsWithUnitCount} rows show a unit count, ${meterBarsInTable} meter bars rendered`,
+    rowsWithUnitCount + rowsWithNoCount > 0 && meterBarsInTable === 0,
+    `${rowsWithUnitCount} rows show a unit count, ${rowsWithNoCount} show "no closed count", ${meterBarsInTable} meter bars rendered`,
   );
+  if (rowsWithUnitCount === 0) {
+    skipped.push("catalog stock bar for a COUNTED product without par — needs a closed count (every on-hand cell here reads \"no closed count\")");
+  }
 
   // ---- sorting: aria-sort updates on the th, and the rows actually reorder
   //
@@ -555,20 +617,34 @@ try {
   // this class is not.
   const onHandHeader = page.locator('th[aria-sort]', { hasText: /on hand/i });
   const ariaSortBefore = await onHandHeader.getAttribute("aria-sort");
-  const firstProductBefore = await page.locator("table tbody tr").first().locator("span.truncate").first().innerText();
   await onHandHeader.getByRole("button").click();
   await page.waitForTimeout(300);
   const ariaSortAfter = await onHandHeader.getAttribute("aria-sort");
-  const firstProductAfter = await page.locator("table tbody tr").first().locator("span.truncate").first().innerText();
   record(
     "clicking a sortable column header updates aria-sort on that th",
     ariaSortBefore === "none" && ariaSortAfter !== "none" && ariaSortAfter !== ariaSortBefore,
     `before=${ariaSortBefore} after=${ariaSortAfter}`,
   );
+
+  // Row reordering is asserted on the Product column, not On hand: with no
+  // closed count every On hand cell is the same "no closed count", so sorting
+  // by it is all ties and legitimately leaves the first row where it was. A
+  // string column sorts ascending on its first click, descending on its
+  // second, so two clicks give two distinct orders to compare.
+  const productHeader = page.locator('th[aria-sort]', { hasText: /^\s*product/i });
+  const firstRowName = () => page.locator("table tbody tr").first().locator("span.truncate").first().innerText();
+  await productHeader.getByRole("button").click();
+  await page.waitForTimeout(300);
+  const firstProductBefore = await firstRowName();
+  const sortBefore = await productHeader.getAttribute("aria-sort");
+  await productHeader.getByRole("button").click();
+  await page.waitForTimeout(300);
+  const firstProductAfter = await firstRowName();
+  const sortAfter = await productHeader.getAttribute("aria-sort");
   record(
     "sorting actually reorders the rows, not just the header state",
-    firstProductBefore !== firstProductAfter,
-    `first row before="${firstProductBefore}" after="${firstProductAfter}"`,
+    sortBefore !== sortAfter && firstProductBefore !== firstProductAfter,
+    `Product ${sortBefore} -> ${sortAfter}: first row before="${firstProductBefore}" after="${firstProductAfter}"`,
   );
 
   // ---- pagination: renders, and Next actually advances ---------------------
@@ -992,6 +1068,7 @@ try {
         [slice3OrgId, slice3VendorId, "a".repeat(64), today, `VERIFY-SLICE3-A-${Date.now()}`, retentionUntil],
       );
       slice3UnmatchedInvoiceId = invoiceAInsert.insertId;
+      await attachFixtureFile(sql, slice3OrgId, slice3UnmatchedInvoiceId);
 
       await sql.execute(
         `INSERT INTO invoice_line
@@ -1073,6 +1150,7 @@ try {
         [slice3OrgId, slice3VendorId, "b".repeat(64), today, `VERIFY-SLICE3-B-${Date.now()}`, retentionUntil],
       );
       slice3PrematchedInvoiceId = invoiceBInsert.insertId;
+      await attachFixtureFile(sql, slice3OrgId, slice3PrematchedInvoiceId);
 
       await sql.execute(
         `INSERT INTO invoice_line
@@ -1293,8 +1371,7 @@ try {
     await sql.execute("DELETE FROM extraction_job WHERE invoice_id = ?", [invoiceIdToCleanup]);
     await sql.execute("DELETE FROM invoice WHERE id = ?", [invoiceIdToCleanup]);
     if (invoiceRow?.filePath) {
-      const root = path.resolve((process.env.INVOICE_STORAGE_DIR ?? "").trim() || "./var/invoices");
-      await unlink(path.resolve(root, invoiceRow.filePath)).catch(() => {});
+      await unlink(path.resolve(invoiceStorageRoot(), invoiceRow.filePath)).catch(() => {});
     }
     record(
       "throwaway verification invoice removed",
@@ -1318,9 +1395,11 @@ try {
     }
     for (const id of [slice3UnmatchedInvoiceId, slice3PrematchedInvoiceId]) {
       if (!id) continue;
+      const [[stored]] = await sql.query("SELECT file_path AS filePath FROM invoice WHERE id = ?", [id]);
       await sql.execute("DELETE FROM invoice_line WHERE invoice_id = ?", [id]);
       await sql.execute("DELETE FROM extraction_job WHERE invoice_id = ?", [id]);
       await sql.execute("DELETE FROM invoice WHERE id = ?", [id]);
+      if (stored?.filePath) await unlink(path.resolve(invoiceStorageRoot(), stored.filePath)).catch(() => {});
     }
     let removedVendor = false;
     if (slice3CreatedVendor && slice3VendorId) {
@@ -1347,6 +1426,9 @@ record(
   consoleErrors.length === 0,
   consoleErrors.slice(0, 3).join(" | ") || "none",
 );
+if (consoleErrors.length) {
+  console.log(`  failed responses seen (${failedResponses.length}): ${[...new Set(failedResponses)].join(", ") || "none"}`);
+}
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);

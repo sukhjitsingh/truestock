@@ -227,11 +227,22 @@ export async function GET(
     const contentType = contentTypeForStoredPath(invoice.filePath);
     const filename = `invoice-${invoice.id}${path.extname(invoice.filePath)}`;
 
+    // `inline`, not `attachment`: this route is embedded directly by
+    // `InvoiceReviewForm`'s "Source Document Preview" <iframe> (Slice 2),
+    // and also linked as "View file"/"Open file" from the invoices list and
+    // review page — nothing here is labeled "Download", and there's a
+    // separate, dedicated download surface for that (Slice 5's audit-packet
+    // zip export, app/api/audit-packets/[id]/route.ts). `attachment` forced
+    // every GET to save-as instead of render, which made the review page's
+    // own iframe preview download the file the instant the page loaded —
+    // reported as "clicking Review downloads the file and navigates at the
+    // same time", but the download was actually triggered by the
+    // destination page's iframe, not by the Review link itself.
     return new Response(new Uint8Array(bytes), {
       status: 200,
       headers: {
         "Content-Type": contentType,
-        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Content-Disposition": `inline; filename="${filename}"`,
         "Content-Length": String(bytes.byteLength),
       },
     });
