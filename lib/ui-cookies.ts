@@ -6,7 +6,7 @@
  * `const` exported from a `"use client"` module is NOT the value when a server
  * component imports it: Next replaces the module with a client-reference proxy,
  * so every export arrives as an opaque object. `cookies().get(RAIL_COOKIE)`
- * then looks up a proxy instead of `"ts-rail-expanded"` and returns `undefined`
+ * then looks up a proxy instead of `"truestock_rail"` and returns `undefined`
  * on every request.
  *
  * That failure is silent and looks exactly like "the cookie isn't being set":
@@ -19,4 +19,4 @@
  */
 
 /** Whether the back-office rail is expanded. `"1"` or `"0"`. */
-export const RAIL_COOKIE = "ts-rail-expanded";
+export const RAIL_COOKIE = "truestock_rail";
