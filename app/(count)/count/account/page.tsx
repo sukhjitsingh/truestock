@@ -81,7 +81,7 @@ export default async function AccountPage() {
         {/* Organization / Tenant Boundary Context */}
         <div className="mt-4 flex items-center gap-2.5 border-t border-border/80 pt-3 text-caption text-muted-foreground">
           <Building2 className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <span className="truncate">The Brass Door Bar &amp; Grill</span>
+          <span className="truncate">{user.organizationName}</span>
         </div>
       </div>
 

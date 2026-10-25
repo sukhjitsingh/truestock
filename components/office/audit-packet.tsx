@@ -243,7 +243,7 @@ export function AuditPacket() {
                 className="inline-flex min-h-tap-min items-center gap-2 rounded-md bg-primary px-5 text-label uppercase text-primary-foreground font-semibold shadow-xs hover:bg-primary/90"
               >
                 <Download className="size-4" aria-hidden="true" />
-                Download Signed ZIP
+                Download ZIP
               </a>
             </div>
           </div>
@@ -282,7 +282,9 @@ export function AuditPacket() {
         <h2 className="text-label uppercase text-muted-foreground font-semibold">Create audit packet</h2>
       </div>
       <p className="text-row-subtitle text-muted-foreground">
-        Select a date range to export all supplier invoices and count snapshot records along with a cryptographically signed SHA-256 manifest archive.
+        Pick a date range to export every invoice and count in it, plus a SHA-256 manifest, as a
+        ZIP. Building it happens in the background; a download link is emailed to you and appears
+        here once it&apos;s ready.
       </p>
 
       <div className="grid gap-4 sm:grid-cols-2">

@@ -49,6 +49,7 @@ export function ProgressCard({ totals }: { totals: CountTotals }) {
               className="h-full rounded-full bg-accent transition-all duration-300"
               style={{ width: `${pricedPercent}%` }}
               role="progressbar"
+              aria-label="Valuation coverage"
               aria-valuenow={pricedPercent}
               aria-valuemin={0}
               aria-valuemax={100}

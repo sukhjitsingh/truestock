@@ -170,9 +170,7 @@ export default async function InvoicesPage() {
                     </TableCell>
                     <TableCell>
                       <StatusPill tone={invoiceStatusTone(invoice.status)}>
-                        {invoice.status === "approved"
-                          ? "✓ Verified (100% Math Match)"
-                          : invoiceStatusLabel(invoice.status)}
+                        {invoiceStatusLabel(invoice.status)}
                       </StatusPill>
                     </TableCell>
                     <TableCell className="text-muted-foreground">

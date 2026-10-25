@@ -72,7 +72,7 @@ export default async function CountSummaryPage({
           <Stat
             label="Snapshot Valuation"
             value={<Money value={summary.totalValue} className="text-numeral-md font-bold text-card-foreground" />}
-            subtext="costed at count close"
+            subtext="costed when each line was first counted"
           />
         ) : null}
       </div>
