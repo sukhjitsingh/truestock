@@ -91,12 +91,12 @@ export default async function CountHomePage() {
 
       {/* Active Session Hero Section */}
       <section className="mt-section-gap">
-        <div className="mb-3 flex items-baseline justify-between">
+        <div className="mb-3 flex items-center justify-between">
           <p className="text-label uppercase text-muted-foreground font-semibold">Active Session</p>
           {activeCount ? (
             <Link
               href={`/count/${activeCount.id}`}
-              className="text-caption text-accent hover:underline"
+              className="-my-2 inline-flex min-h-tap-min items-center text-caption text-accent hover:underline"
             >
               Session Details →
             </Link>

@@ -87,7 +87,7 @@ export function EnrollForm({
       <button
         type="button"
         onClick={onCancel}
-        className="mb-4 flex items-center gap-1 text-caption text-muted-foreground"
+        className="mb-2 flex min-h-tap-min items-center gap-1 text-caption text-muted-foreground"
       >
         <ChevronLeft className="size-4" aria-hidden="true" /> Back
       </button>

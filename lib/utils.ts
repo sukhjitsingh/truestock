@@ -1,9 +1,48 @@
 import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { extendTailwindMerge, twMerge } from "tailwind-merge";
 
 /** shadcn's standard class combiner: conditional classes, last-wins conflicts. */
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+/**
+ * The custom `--text-*` font-size tokens in app/globals.css (`text-label`,
+ * `text-caption`, …). tests/cn-font-size.test.ts pins this list to the CSS so
+ * a new token cannot be added there and forgotten here.
+ *
+ * Why it exists: tailwind-merge's default config does not know these names, so
+ * it files `text-label` under TEXT COLOUR. Merged with `text-primary-foreground`
+ * the two "conflict" and the later one wins — the button's label colour is
+ * silently dropped and the text inherits `currentColor` (dark on a near-white
+ * primary button in dark mode: invisible).
+ */
+export const FONT_SIZE_TOKENS = [
+  "header-title",
+  "screen-title",
+  "label",
+  "row-title",
+  "row-subtitle",
+  "body",
+  "caption",
+  "numeral-lg",
+  "numeral-md",
+  "numeral-sm",
+] as const;
+
+const twMergeSizeAware = extendTailwindMerge({
+  extend: { classGroups: { "font-size": [{ text: [...FONT_SIZE_TOKENS] }] } },
+});
+
+/**
+ * `cn` that knows the custom font-size tokens are sizes, not colours. Used by
+ * `Button`, whose call sites pass `text-label uppercase` on top of a variant's
+ * `text-<colour>`. The global `cn` is deliberately left alone: other call sites
+ * currently lose a class the same way, and changing them re-renders those
+ * components, which needs its own visual pass (docs/open-items.md #40).
+ */
+export function cnSized(...inputs: ClassValue[]) {
+  return twMergeSizeAware(clsx(inputs));
 }
 
 /**

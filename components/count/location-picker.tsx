@@ -27,7 +27,7 @@ export function LocationPicker({
     <div className="px-bar-pad pb-8 pt-4">
       <Link
         href={`/count/${countId}`}
-        className="mb-4 inline-flex items-center gap-1 text-caption text-muted-foreground transition-colors hover:text-foreground active:scale-95"
+        className="mb-2 inline-flex min-h-tap-min items-center gap-1 text-caption text-muted-foreground transition-colors hover:text-foreground active:scale-95"
       >
         <ChevronLeft className="size-4" aria-hidden="true" /> Back to Count #{countId}
       </Link>
