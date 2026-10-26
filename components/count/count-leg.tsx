@@ -33,6 +33,7 @@ import { afterSave, saveStillApplies } from "@/lib/entry-drafts";
 import { EnrollForm } from "@/components/count/enroll-form";
 import { LocationPicker } from "@/components/count/location-picker";
 import { StrayBottleModal } from "@/components/count/stray-bottle-modal";
+import { useHideTabBar } from "@/components/count/tab-bar";
 
 interface LocalLine extends CountLineCardData {
   lineId: number | null;
@@ -113,6 +114,12 @@ export function CountLeg({
     startLocationId != null ? { kind: "counting" } : { kind: "pick-location" },
   );
   const [activeLocationId, setActiveLocationId] = useState<number | null>(startLocationId);
+
+  // The bottom tab bar's links bypass requestLeave's discard guard, so with an
+  // entry or enroll draft on screen one stray tap on Catalog or Account threw it
+  // away silently. Entry and enroll leave through their own Back/Cancel, which
+  // do go through the guard; picking and counting have no draft and keep the bar.
+  useHideTabBar(phase.kind === "entry" || phase.kind === "enroll");
 
   // Unsaved-input tracking for the entry screen. Refs, not state: nothing
   // renders from them, and the save continuations below must read the value AT
