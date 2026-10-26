@@ -1813,3 +1813,128 @@ the per-organization concurrency guard (`audit_packet_rejects_concurrent_build`,
 `audit_packet_allows_concurrent_build_once_prior_is_resolved`,
 `audit_packet_concurrent_build_guard_is_per_organization`). Neither (a) nor (b)
 above has a test, because neither has a fix yet to test.
+
+---
+
+## 40. Post-merge QA of `feat/phase-2.5-invoice-automation`: what was found and not fixed, and what was never verified
+
+**Trigger: the first real-phone count, or the next change that touches a count
+screen, a shared `cn()` call, or the invoice upload path — whichever comes
+first.**
+
+Opened 2026-10-25, after the two redesign/backend PRs merged into
+`feat/phase-2.5-invoice-automation` and a second QA pass ran against the merged
+tree. The defects that pass confirmed were fixed with tests in
+`fix/phase-2.5-post-merge-qa`; this item records what was *deliberately left*
+and what *no browser or device ever exercised*, so a clean harness run is not
+mistaken for coverage it does not have.
+
+**Known gaps, not fixed (each is a judgement, not an oversight):**
+
+1. **`cn()` drops a custom font-size token next to a text colour.** Default
+   `tailwind-merge` files an unknown `text-<name>` under text *colour*, so
+   `text-label` + `text-primary-foreground` conflict and the later one wins —
+   the `Button` labels rendered without their size. Fixed for `Button` only
+   (`cnSized` in `lib/utils.ts`, pinned by `tests/cn-font-size.test.ts`, which
+   also fails if a `--text-*` token is added to `globals.css` without being
+   listed). About 21 other `cn()` call sites combine a size token with a colour
+   and are exposed to the same collision; the Add/Set tabs in
+   `components/count/quantity-entry.tsx` lose `text-label` today. A global fix
+   changes how every screen renders and needs a visual pass first.
+2. **The scan deep link carries `productId` but nothing reads it.** An Edit link
+   lands in the right leg and does not open the product
+   (`ScanParams.productId` is parsed and validated, unconsumed).
+3. **A level picked in `FillEntry` but not yet added is dropped by that editor's
+   own Save**, and likewise a typed-but-unadded `QuantityEntry` Add/Set input.
+   Cross-panel switching and Back are guarded (`lib/entry-drafts.ts`); the
+   same-editor Save is not.
+4. **No `popstate` / `beforeunload` guard** on the scan screen, so the browser
+   Back button or a tab close can still drop an unsaved draft.
+5. **Finish section has no confirmation.** Deliberate under the "no modal on
+   count controls" rule in AGENTS.md, but a mis-tap there is not undoable from
+   the leg.
+6. **The hidden mobile tab bar stays in the tab order**; **the scanner overlay is
+   not a `dialog`** (no focus trap, no `aria-modal`); **the invoice review rail
+   narrows the preview** on mid-width screens.
+7. **Photo invoices: no magic-byte sniffing** (the stored path extension is the
+   only file-type record), **no downscale step and no pixel-dimension check**
+   (the API limit is 8000×8000 px), and the 7.5 MB cap
+   (`MAX_VISION_IMAGE_BYTES`) is sized for the Anthropic API's 10 MB base64
+   limit, not Bedrock's 5 MB. The extraction system prompt still says "attached
+   PDF" (`PROMPT_VERSION` unchanged on purpose — changing it re-baselines
+   extraction). Photo extraction has only been run against a **stubbed** Vision
+   response; HEIC is refused rather than converted.
+8. **`challenger-*` tests assert copies of the logic they check**, not the
+   shipped function, so they can pass while the code regresses.
+9. **`withTimeout` around OCR cannot cancel native work**; a timeout abandons the
+   promise, it does not stop the CPU.
+10. **The invoices list is capped at 50** while its caption says "N total".
+    `contentTypeForStoredPath` in the file route is case-sensitive and ignores
+    `.jpeg`, unlike `contentTypeForPath`.
+11. **Harness safety guard accepts any loopback database** that matches
+    `VERIFY_ALLOW_DB` exactly; it could additionally require a `*_test` or
+    throwaway name. `verify-ui-redesign.mjs` makes unauthenticated GETs
+    unguarded. Neither harness may be imported by a test (`main` runs on import).
+12. **The save button's wording differs from the AGENTS.md "quantity SET shows
+    its before/after" example.** It reads `SAVE (3 EA)` / `12 ea → 15 ea` and
+    `SAVE CORRECTION (3 EA)` / `was 12 ea · −9`, not `ADD 3 EA / 12 → 15` and
+    `SET TO 3 EA / was 12 ea · −9`. The before, the after and the delta are all
+    still shown live, which is what the rule is for; only the verb differs, and
+    AGENTS.md was not changed to match.
+13. **The bottom tab bar (Catalog, Reports, Account) and the browser Back button
+    leave a screen with a pending draft silently.** The draft guard covers only
+    the in-screen Back and Cancel controls (item 4 is the same gap seen from the
+    other side).
+14. **The quantity stepper's decrease is not disabled at 0**; it floors at 0, so
+    a tap there does nothing and says nothing.
+15. **The oversize-photo refusal is server-side only.** The upload form checks
+    the content type before sending but not the 7.5 MB cap, so a 12 MB photo
+    uploads in full before the refusal comes back.
+16. **A tenth picked but not yet added counts as an unsaved draft.** By design
+    (it is unsaved), but it means Back asks "Discard unsaved entry?" for a tap
+    that looks like nothing.
+17. **`invoice_file_write_once_survives_a_concurrent_put` failed once** in one
+    full-suite run (`tests/invoice-write-path.test.ts`), while the app was
+    restarting beside it, and passed alone (46/46) and on the next full run
+    (808/808). The failure output was not captured. The test is written to be
+    deterministic (it holds B's body stream open), so this is **not understood**,
+    only not reproduced. If it recurs, capture the assertion text before
+    rerunning.
+
+**Fixed in `fix/phase-2.5-post-merge-qa` (each with a test, then re-checked in a
+real browser on the rebuilt bundle at 390×844 and 360×740):**
+
+- The scanner polyfill never decoded under the CSP (wasm now self-hosted).
+- `Button` labels rendered without their size (`cnSized`, item 1 above).
+- The dark-theme destructive button was white on `#f87171`, 2.77:1; it is now
+  `#08090a` on it, 7.2:1 (`tests/theme-contrast.test.ts` reads the real tokens).
+- Three controls under the 44 px floor: "+ New bottle", "Session Details →", the
+  catalog scan button.
+- The oversize-photo message at 7,500,001 bytes said "7.5 MB … over 7.5 MB"; it
+  now rounds up ("7.6 MB").
+- The SET-mode save button's label and figure broke apart at 360 px; each part
+  now wraps as a unit.
+- A photographed invoice could be uploaded but not extracted: it went through
+  pdf-inspector and reached Claude as a PDF `document` block, and HEIC was
+  advertised although Claude cannot read it. Photos now skip the PDF stages and
+  go to Vision as `image` blocks (`buildSourceBlock`); HEIC and photos over
+  7.5 MB are refused at upload and re-checked against the real bytes in the
+  pipeline. Verified with a stubbed Vision response only (item 7).
+
+**Never verified (absence of a failure here is not evidence):**
+
+- A **real camera** on real hardware: all scanner evidence is a fake-camera feed
+  in desktop Chrome. The wasm is self-hosted (`/vendor/zxing_reader.wasm`,
+  copied by `scripts/copy-zxing-wasm.mjs` on `predev`/`prebuild`) because the
+  `barcode-detector` default fetches it from a CDN that the CSP's
+  `connect-src 'self'` blocks silently — the camera opens and nothing decodes.
+  Whether the user's phone uses the native `BarcodeDetector` or the polyfill is
+  not known until it is tried.
+- **iOS Safari**, **safe-area insets**, **landscape**, an on-screen keyboard
+  covering the fixed action bar, and hardware keyboard navigation.
+- Open item 26 (dev-only origin banner), the catalog stock bar for a *counted*
+  product with no par, and slice 6 copy/print.
+
+The count/UI claims above were checked in a desktop Chrome with a phone
+viewport and touch emulation, not on a phone. `docs/phone-count-test.md` is the
+checklist for the part that only a phone can answer.

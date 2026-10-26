@@ -93,7 +93,7 @@ To run against the database without the app container, copy `.env.example` to
 
 ```bash
 bun run test:docker      # integration tests against real MariaDB
-bun run verify:browser   # drives a real Chrome against the running dev server
+VERIFY_ALLOW_DB=127.0.0.1:3307/truestock bun run verify:browser   # drives a real Chrome against the running dev server
 ```
 
 **Both are required — neither substitutes for the other.** This project has three
@@ -107,6 +107,18 @@ and `CHECK_STAFF_*` for the role-gating checks — from the gitignored
 history) and drives the Chrome already installed on the machine — Playwright's own
 browser is deliberately not downloaded. It restores every value it overwrites and
 deletes every row it creates.
+
+**It refuses to run unless you name the database you mean.** `DATABASE_URL` and
+`BASE_URL` must both be loopback (`127.0.0.1`, `localhost` or `::1` — a docker
+service name like `db` does not count), and `VERIFY_ALLOW_DB` must be set, per
+run, to exactly `<host>:<port>/<database>` of that `DATABASE_URL` (the example
+above matches the compose stack's published port; the worktree test stack
+publishes `3310`, so there it is `127.0.0.1:3310/truestock`). The harness inserts
+rows, edits product costs and deletes its own fixtures, and a stale
+`DATABASE_URL` in the shell must not be able to aim any of that at real data. The
+refusal prints the exact value to export. It is deliberately not baked into the
+`verify:browser` script. `scripts/verify-ui-redesign.mjs` carries the same guard
+on its authenticated section.
 
 **A check it could not run is printed as SKIPPED and listed under NOT VERIFIED —
 never as a pass.** Two are permanently skipped against the current dev data
