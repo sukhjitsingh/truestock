@@ -281,6 +281,7 @@ export function CountLeg({
       label: string,
       payload: Record<string, unknown>,
       optimistic: (prev: Map<string, LocalLine>) => Map<string, LocalLine>,
+      holdBusyOnOk = false,
     ) => {
       const id = newWriteId();
       setError(null);
@@ -340,7 +341,7 @@ export function CountLeg({
         // counts starts causing double ones.
         await markAttempt(id, "Offline — will retry");
         await refreshPending();
-        setBusy(false);
+        if (!holdBusyOnOk) setBusy(false);
         return true;
       }
 
@@ -394,7 +395,14 @@ export function CountLeg({
       }
 
       await refreshPending();
-      setBusy(false);
+      // A caller that is about to leave or remount the entry screen asks to
+      // keep `busy` through a success and clears it itself (`finishSave`), in
+      // the same batch as that transition. Clearing it here re-enabled Save for
+      // a render while the editor was still mounted on the freshly updated
+      // line — "10 ea → 20 ea" on a button that had just saved the 10 — and a
+      // second tap in that window added the bottles twice. A refusal always
+      // releases here: the screen stays, and the counter needs to retry.
+      if (!(holdBusyOnOk && result.ok)) setBusy(false);
       return result.ok;
     },
     [countId, refreshPending, canSeeCost],
@@ -631,6 +639,19 @@ export function CountLeg({
     setDiscardPrompt(null);
   }
 
+  /**
+   * Close out a save started with `runWrite(..., holdBusyOnOk = true)`: run the
+   * leave/remount, then release `busy` in the same batch so Save is never
+   * enabled against an editor that has already saved.
+   */
+  function finishSave(ok: boolean, saved: "fill" | "qty", startedSession: number) {
+    try {
+      if (ok) afterEntrySave(saved, startedSession);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // ---- location picker -----------------------------------------------------
 
   if (phase.kind === "pick-location") {
@@ -754,8 +775,9 @@ export function CountLeg({
                       newPartialFills: plan.added,
                     },
                     (prev) => applyIncrement(prev, product, location, 0, 0, plan.added),
+                    true,
                   );
-                  if (ok) afterEntrySave("fill", startedSession);
+                  finishSave(ok, "fill", startedSession);
                   return;
                 }
 
@@ -775,8 +797,9 @@ export function CountLeg({
                   writeLabel(product, location),
                   { countLineId: existing.lineId, partialFills: plan.fills },
                   (prev) => applyFillCorrection(prev, product, location, plan.fills),
+                  true,
                 );
-                if (ok) afterEntrySave("fill", startedSession);
+                finishSave(ok, "fill", startedSession);
               }}
               onDirtyChange={onFillDirty}
               onCancel={() => requestLeave("fill")}
@@ -835,6 +858,7 @@ export function CountLeg({
                           sealedEachQty: submission.eaches,
                         },
                         (prev) => applySet(prev, product, location, submission),
+                        true,
                       )
                     : await runWrite(
                         "increment",
@@ -857,8 +881,9 @@ export function CountLeg({
                             submission.eaches,
                             [],
                           ),
+                        true,
                       );
-                if (ok) afterEntrySave("qty", startedSession);
+                finishSave(ok, "qty", startedSession);
               }}
               onDirtyChange={onQtyDirty}
               onCancel={() => requestLeave("qty")}
