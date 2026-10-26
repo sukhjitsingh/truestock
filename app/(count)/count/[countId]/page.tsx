@@ -10,6 +10,7 @@ import { ProgressCard } from "@/components/count/progress-card";
 import { StatusTimeline } from "@/components/count/status-timeline";
 import { CountLineCard } from "@/components/count/count-line-card";
 import { SessionActions } from "@/components/count/session-actions";
+import { RefreshOnOpen } from "@/components/count/refresh-on-open";
 import { formatDate } from "@/lib/utils";
 import { isCountWritable } from "@/lib/count-status";
 import { describeValuationCoverage } from "@/lib/valuation-coverage";
@@ -38,6 +39,7 @@ export default async function CountSessionPage({
 
   return (
     <div className="pb-action-bar">
+      {writable ? <RefreshOnOpen /> : null}
       <DetailHeader
         title={`Count #${count.id}`}
         leading={
