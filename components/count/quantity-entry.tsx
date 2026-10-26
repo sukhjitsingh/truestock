@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn, formatUnits } from "@/lib/utils";
 import { isCountedByCase } from "@/lib/pack-level";
+import { hasUnsavedQuantity } from "@/lib/entry-drafts";
+import { describeAddedUnits, describeUnitDelta } from "@/lib/quantity-summary";
 import { Button } from "@/components/ui/button";
 
 export type QuantityMode = "add" | "set";
@@ -33,6 +35,11 @@ export interface QuantityEntryProps {
     mode: "add" | "set";
   }) => Promise<void> | void;
   onSubmit?: (submission: QuantitySubmission) => Promise<void> | void;
+  /**
+   * Reports whether anything typed here is still unsaved, so the entry screen
+   * can refuse to unmount this editor (and discard it) behind the user's back.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
   onCancel: () => void;
 }
 
@@ -66,14 +73,55 @@ export function QuantityEntry({
   pending = false,
   onCommitQuantity,
   onSubmit,
+  onDirtyChange,
   onCancel,
 }: QuantityEntryProps) {
   const initialCases = propCurrentCases ?? existingCaseQty ?? 0;
   const initialEaches = propCurrentEaches ?? existingEachQty ?? 0;
 
   const [mode, setMode] = useState<QuantityMode>("add");
-  const [caseInput, setCaseInput] = useState<number>(0);
-  const [eachInput, setEachInput] = useState<number>(0);
+  // Each mode keeps its OWN inputs. Toggling Add -> Set -> Add used to zero the
+  // numbers typed in the first mode, so one stray tap on the tab bar threw away
+  // a half-entered quantity with nothing on screen saying so.
+  const [addInputs, setAddInputs] = useState({ cases: 0, eaches: 0 });
+  // `null` = untouched: SET starts from the line's recorded numbers and follows
+  // them until the counter types, rather than snapshotting them at toggle time.
+  const [setInputs, setSetInputs] = useState<{ cases: number | null; eaches: number | null }>({
+    cases: null,
+    eaches: null,
+  });
+
+  const caseInput = mode === "add" ? addInputs.cases : (setInputs.cases ?? initialCases);
+  const eachInput = mode === "add" ? addInputs.eaches : (setInputs.eaches ?? initialEaches);
+  const updateCases = (n: number) =>
+    mode === "add"
+      ? setAddInputs((p) => ({ ...p, cases: n }))
+      : setSetInputs((p) => ({ ...p, cases: n }));
+  const updateEaches = (n: number) =>
+    mode === "add"
+      ? setAddInputs((p) => ({ ...p, eaches: n }))
+      : setSetInputs((p) => ({ ...p, eaches: n }));
+
+  // Dirty means EITHER mode holds input — including the one not on screen,
+  // because it comes back when the tab is toggled.
+  const dirty =
+    hasUnsavedQuantity({
+      mode: "add",
+      cases: addInputs.cases,
+      eaches: addInputs.eaches,
+      initialCases,
+      initialEaches,
+    }) ||
+    hasUnsavedQuantity({
+      mode: "set",
+      cases: setInputs.cases ?? initialCases,
+      eaches: setInputs.eaches ?? initialEaches,
+      initialCases,
+      initialEaches,
+    });
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   const countsByCase = isCountedByCase({ category, unitType });
 
@@ -118,18 +166,7 @@ export function QuantityEntry({
   const isPriced = canSeeCost && numericUnitCost != null;
   const totalValue = isPriced && numericUnitCost != null && nextUnits != null ? nextUnits * numericUnitCost : null;
 
-  const handleModeChange = (nextMode: QuantityMode) => {
-    setMode(nextMode);
-    if (nextMode === "set") {
-      // In SET mode, initialize with the current recorded numbers
-      setCaseInput(initialCases);
-      setEachInput(initialEaches);
-    } else {
-      // In ADD mode, initialize with 0
-      setCaseInput(0);
-      setEachInput(0);
-    }
-  };
+  const handleModeChange = (nextMode: QuantityMode) => setMode(nextMode);
 
   const handleCommit = async () => {
     if (onSubmit) {
@@ -174,7 +211,7 @@ export function QuantityEntry({
             aria-selected={mode === "set"}
             onClick={() => handleModeChange("set")}
             className={cn(
-              "flex min-h-tap-primary items-center justify-center rounded-sm text-label font-bold uppercase tracking-wider transition-colors",
+              "flex min-h-tap-primary items-center justify-center rounded-sm px-2 text-center text-label font-bold uppercase tracking-wider transition-colors",
               mode === "set"
                 ? "bg-accent text-accent-foreground shadow-sm"
                 : "bg-transparent text-muted-foreground hover:text-foreground",
@@ -204,20 +241,22 @@ export function QuantityEntry({
         )}
       </div>
 
-      {/* Steppers Grid (Cases & Eaches) */}
-      <div className={cn("grid gap-3", countsByCase ? "grid-cols-2" : "grid-cols-1")}>
+      {/* Steppers Grid (Cases & Eaches). Stacked on phones: side by side, each
+          card is ~175px wide and the two 56px buttons leave the number input a
+          sliver too narrow to read or tap. */}
+      <div className={cn("grid gap-3", countsByCase ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1")}>
         {countsByCase ? (
           <StepperCard
             label="Cases"
             value={caseInput}
-            onChange={(v) => setCaseInput(clampInt(v))}
+            onChange={(v) => updateCases(clampInt(v))}
             hint={caseSize != null ? `× ${caseSize} per case` : "No case size on file"}
           />
         ) : null}
         <StepperCard
           label="Eaches"
           value={eachInput}
-          onChange={(v) => setEachInput(clampInt(v))}
+          onChange={(v) => updateEaches(clampInt(v))}
           hint={countsByCase ? "Loose bottles, not part of a case" : "Sealed bottles / units"}
         />
       </div>
@@ -230,13 +269,8 @@ export function QuantityEntry({
           </span>
           <span className="text-numeral-sm font-semibold tabular-nums text-foreground">
             {mode === "add"
-              ? // Cases of an unknown size are an unknown number of units, not 1
-                // each. Zero cases is unambiguously zero (same rule as
-                // `unitsKnown` above and `computeLineUnits`).
-                caseSize != null || cases === 0
-                ? `${cases * (caseSize ?? 0) + eaches} units`
-                : "units unknown — no case size"
-              :`${(unitDelta ?? 0) >= 0 ? "+" : ""}${unitDelta ?? 0} units`}
+              ? describeAddedUnits({ cases, eaches, caseSize })
+              : describeUnitDelta(unitDelta)}
           </span>
         </div>
         <div className="mt-1 flex items-baseline justify-between">
@@ -272,9 +306,12 @@ export function QuantityEntry({
             totalValue != null ? "gap-0.5 py-1.5" : "",
           )}
         >
-          <span className="flex items-baseline gap-1">
-            <span className="text-label uppercase">{mode === "add" ? "Save" : "Save correction"}</span>
-            <span className="text-numeral-sm uppercase tabular-nums">
+          {/* Each part wraps as a unit: in the narrow half-width button "SAVE
+              CORRECTION" and its "(11 EA)" otherwise broke mid-phrase and left
+              the figure floating beside the label. */}
+          <span className="flex flex-wrap items-baseline justify-center gap-x-1 text-center">
+            <span className="whitespace-nowrap text-label uppercase">{mode === "add" ? "Save" : "Save correction"}</span>
+            <span className="whitespace-nowrap text-numeral-sm uppercase tabular-nums">
               {mode === "add" ? `(${describe(cases, eaches)})` : `(${describeAfter(cases, eaches)})`}
             </span>
           </span>

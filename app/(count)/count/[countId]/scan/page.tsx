@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/current-user";
 import { getCountAction } from "@/app/actions/counts";
 import { listLocationsAction } from "@/app/actions/catalog";
 import { CountLeg } from "@/components/count/count-leg";
+import { parseScanParams } from "@/lib/scan-params";
 
 /**
  * The counting leg. Everything interactive lives in `CountLeg`; this page's
@@ -11,8 +12,10 @@ import { CountLeg } from "@/components/count/count-leg";
  */
 export default async function ScanPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ countId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const user = await requireUser();
   const countId = Number((await params).countId);
@@ -43,12 +46,22 @@ export default async function ScanPage({
     redirect(`/count/${countId}`);
   }
 
+  // A deep link (the Edit arrow on a counted line) may name the leg to open.
+  // Validated against the ACTIVE locations loaded above, never trusted from the
+  // URL: a retired or foreign id must land on the picker, not start a leg that
+  // writes into it. Anything invalid falls back to the picker silently.
+  const { locationId } = parseScanParams(
+    await searchParams,
+    locations.data.map((l) => l.id),
+  );
+
   return (
     <CountLeg
       countId={countId}
       locations={locations.data}
       initialLines={detail.data.lines}
       canSeeCost={user.role === "owner"}
+      initialLocationId={locationId}
     />
   );
 }

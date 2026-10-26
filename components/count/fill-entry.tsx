@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { cn, formatUnits } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { VialDisplay } from "@/components/count/vial-display";
 import { fillsEqual } from "@/lib/fill-save";
+import { hasUnsavedFillDraft, pendingDraftValue } from "@/lib/entry-drafts";
 
 const TENTHS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
 
@@ -26,6 +27,12 @@ export interface FillEntryProps {
   /** Backwards-compatible aliases */
   onSubmit?: (newFills: number[]) => Promise<void> | void;
   onCorrect?: (allFills: number[]) => Promise<void> | void;
+  /**
+   * Reports whether anything here is still unsaved (a level picked but not
+   * added, or bottles staged but not saved), so the entry screen can refuse to
+   * unmount this editor and discard it behind the user's back.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
   onCancel: () => void;
 }
 
@@ -51,6 +58,7 @@ export function FillEntry({
   onSaveFills,
   onSubmit,
   onCorrect,
+  onDirtyChange,
   onCancel,
 }: FillEntryProps) {
   // Staged fills array representing all open containers on this line
@@ -138,6 +146,11 @@ export function FillEntry({
   // offer a Save that re-sends them.
   const changed = !fillsEqual(existingFills, fills);
 
+  const dirty = hasUnsavedFillDraft(pendingDraftValue(draftValue, activeIndex, fills), changed);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+
   return (
     <div className="flex flex-col gap-5">
       {/* Editor Section */}
@@ -155,7 +168,7 @@ export function FillEntry({
                 setActiveIndex(null);
                 setDraftValue(null);
               }}
-              className="text-caption font-medium text-accent underline"
+              className="-my-2 inline-flex min-h-tap-min items-center px-1 text-caption font-medium text-accent underline"
             >
               + New bottle
             </button>
