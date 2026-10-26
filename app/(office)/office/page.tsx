@@ -5,10 +5,11 @@ import { lastClosedCountAction, reorderListAction } from "@/app/actions/reports"
 import { catalogHealthAction } from "@/app/actions/catalog";
 import { PageHeader } from "@/components/office/page-header";
 import { Card } from "@/components/ui/card";
-import { Money } from "@/components/ui/money";
+import { CoveredMoney } from "@/components/ui/money";
 import { StatusPill, countStatusTone, countStatusLabel } from "@/components/ui/status-pill";
 import { formatDate } from "@/lib/utils";
 import { isCountWritable } from "@/lib/count-status";
+import { describeValuationCoverage } from "@/lib/valuation-coverage";
 
 export const metadata = { title: "Dashboard · Truestock" };
 
@@ -141,12 +142,20 @@ export default async function OfficeDashboardPage() {
                   {lastClosed.closedByName ? <> by {lastClosed.closedByName}</> : null}
                 </p>
                 {/* Owner only — lastClosed.totalValue arrives undefined for a
-                    manager (invariant 8), and Money renders nothing for
-                    undefined rather than $0.00 (design-system.md §8). */}
-                <Money
-                  value={lastClosed.totalValue != null ? Number(lastClosed.totalValue) : undefined}
-                  className="mt-1 block text-numeral-sm tabular-nums font-semibold text-muted-foreground"
-                />
+                    manager (invariant 8), and CoveredMoney renders nothing for
+                    undefined rather than $0.00 (design-system.md §8). The
+                    coverage caveat keeps a stored $0.00 from reading as "worth
+                    nothing" when it means "no costs on file". */}
+                <div className="mt-1">
+                  <CoveredMoney
+                    value={lastClosed.totalValue != null ? Number(lastClosed.totalValue) : undefined}
+                    coverage={describeValuationCoverage(
+                      lastClosed.valuationCoverage ?? { pricedLineCount: 0, excludedLineCount: 0 },
+                    )}
+                    align="start"
+                    className="font-semibold text-muted-foreground"
+                  />
+                </div>
               </>
             )}
           </div>

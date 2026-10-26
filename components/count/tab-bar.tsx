@@ -1,10 +1,25 @@
 "use client";
 
+import { useLayoutEffect, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ClipboardList, Search, BarChart3, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/lib/authz";
+import { hideTabBar, isTabBarHidden, subscribeTabBarHidden } from "@/lib/tab-bar-visibility";
+
+/**
+ * Hide the tab bar for as long as `hidden` is true and this component is
+ * mounted. Used by the entry and enroll screens, where a tab tap would bypass
+ * the discard guard (lib/tab-bar-visibility.ts). Layout effect, so the bar is
+ * gone before the entry screen paints rather than flashing for a frame.
+ */
+export function useHideTabBar(hidden: boolean): void {
+  useLayoutEffect(() => {
+    if (!hidden) return;
+    return hideTabBar();
+  }, [hidden]);
+}
 
 /**
  * Mobile Bottom Tab Bar (docs/design-system.md §9)
@@ -16,6 +31,10 @@ import type { Role } from "@/lib/authz";
  */
 export function CountTabBar({ role }: { role: Role }) {
   const pathname = usePathname();
+  // Server snapshot is `false`: the leg never starts in entry/enroll, so the
+  // server-rendered bar and the first client render agree.
+  const hidden = useSyncExternalStore(subscribeTabBarHidden, isTabBarHidden, () => false);
+  if (hidden) return null;
 
   const tabs = [
     { href: "/count", label: "Count", icon: ClipboardList },

@@ -6,7 +6,12 @@ import { cn, formatUnits } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { VialDisplay } from "@/components/count/vial-display";
 import { fillsEqual } from "@/lib/fill-save";
-import { hasUnsavedFillDraft, pendingDraftValue } from "@/lib/entry-drafts";
+import {
+  fillSaveLabel,
+  fillsToSave,
+  hasUnsavedFillDraft,
+  pendingDraftValue,
+} from "@/lib/entry-drafts";
 
 const TENTHS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
 
@@ -83,7 +88,12 @@ export function FillEntry({
         ? Number(unitCost)
         : null;
   const isPriced = canSeeCost && numericUnitCost != null;
-  const lineValue = isPriced && numericUnitCost != null ? totalUnits * numericUnitCost : null;
+  // What Save will actually send: the staged bottles plus any level that was
+  // picked but not added yet. Value, label and the write all read this one list,
+  // so the button can never promise one thing and save another.
+  const toSave = fillsToSave(draftValue, activeIndex, fills);
+  const saveUnits = toSave.reduce((sum, f) => sum + f, 0);
+  const lineValue = isPriced && numericUnitCost != null ? saveUnits * numericUnitCost : null;
 
   const handleSetDraft = (v: number) => {
     const clamped = Math.max(0, Math.min(1, Math.round(v * 10) / 10));
@@ -132,19 +142,22 @@ export function FillEntry({
 
   const handleCommitSave = async () => {
     if (onSaveFills) {
-      await onSaveFills(fills);
+      await onSaveFills(toSave);
     } else if (onCorrect) {
-      await onCorrect(fills);
+      await onCorrect(toSave);
     } else if (onSubmit) {
-      await onSubmit(fills);
+      await onSubmit(toSave);
     }
   };
 
   const percent = draftValue == null ? null : Math.round(draftValue * 100);
-  // Nothing to save until the staged list differs from what is already on the
-  // line. Seeded with the existing fills, an untouched editor would otherwise
-  // offer a Save that re-sends them.
+  // Staged bottles differ from what is already on the line — the leave guard's
+  // half of "unsaved". The pending draft is the other half.
   const changed = !fillsEqual(existingFills, fills);
+  // Nothing to save until what Save would send differs from the line. Seeded
+  // with the existing fills, an untouched editor would otherwise offer a Save
+  // that re-sends them; and a draft with nothing staged is still a save.
+  const canSave = !fillsEqual(existingFills, toSave);
 
   const dirty = hasUnsavedFillDraft(pendingDraftValue(draftValue, activeIndex, fills), changed);
   useEffect(() => {
@@ -386,14 +399,16 @@ export function FillEntry({
 
         <button
           type="button"
-          disabled={pending || !changed}
+          disabled={pending || !canSave}
           onClick={() => void handleCommitSave()}
           className={cn(
             "flex min-h-tap-primary flex-[1.5] flex-col items-center justify-center rounded-md bg-primary px-3 text-primary-foreground shadow-sm transition-opacity disabled:opacity-50",
             lineValue != null ? "gap-0.5 py-1.5" : "",
           )}
         >
-          <span className="text-label uppercase">Save fill levels</span>
+          <span className="text-label uppercase">
+            {fillSaveLabel(draftValue, activeIndex, fills)}
+          </span>
           {lineValue != null ? (
             <span className="text-numeral-sm tabular-nums text-primary-foreground">
               ${lineValue.toFixed(2)}

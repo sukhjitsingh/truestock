@@ -12,6 +12,7 @@ import { CountLineCard } from "@/components/count/count-line-card";
 import { SessionActions } from "@/components/count/session-actions";
 import { formatDate } from "@/lib/utils";
 import { isCountWritable } from "@/lib/count-status";
+import { describeValuationCoverage } from "@/lib/valuation-coverage";
 
 export default async function CountSessionPage({
   params,
@@ -134,6 +135,7 @@ export default async function CountSessionPage({
         status={count.status}
         role={user.role}
         totalValue={totals.data.totalValue}
+        coverage={describeValuationCoverage(totals.data)}
       />
     </div>
   );

@@ -10,8 +10,10 @@ import { listLocationsAction } from "@/app/actions/catalog";
 import { Card, CardStack } from "@/components/ui/card";
 import { StatusPill, countStatusTone, countStatusLabel } from "@/components/ui/status-pill";
 import { StartCountButton } from "@/components/count/start-count-button";
-import { formatDate, formatUnits, formatMoney } from "@/lib/utils";
+import { CoveredMoney } from "@/components/ui/money";
+import { formatDate, formatUnits } from "@/lib/utils";
 import { isCountWritable } from "@/lib/count-status";
+import { describeValuationCoverage } from "@/lib/valuation-coverage";
 
 export const metadata = { title: "Floor Count · Truestock" };
 
@@ -147,9 +149,11 @@ export default async function CountHomePage() {
             {user.role === "owner" && totals?.ok && totals.data.totalValue != null ? (
               <div className="mb-2 flex items-baseline justify-between text-caption">
                 <span className="text-muted-foreground">Current Valuation:</span>
-                <span className="font-semibold tabular-nums text-card-foreground">
-                  {formatMoney(totals.data.totalValue)}
-                </span>
+                <CoveredMoney
+                  value={totals.data.totalValue}
+                  coverage={describeValuationCoverage(totals.data)}
+                  className="text-caption font-semibold text-card-foreground"
+                />
               </div>
             ) : null}
 

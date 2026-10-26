@@ -120,6 +120,11 @@ export function EnrollForm({
   );
 }
 
+/** `750ml · Tito's` / `Keg · Coors` — what tells two similar rows apart. */
+function productDetail(p: ProductSummary): string {
+  return `${p.unitType === "keg" ? "Keg" : `${p.sizeMl}ml`}${p.brand ? ` · ${p.brand}` : ""}`;
+}
+
 /**
  * The common path: bind this barcode to a product that already exists.
  *
@@ -191,42 +196,60 @@ function LinkExisting({
     onLinked(result.data);
   }
 
-  // A product that can be scanned as a bottle OR as a case gets the question
-  // asked before anything is written. Everything else links on the first tap.
+  // Tapping a result only SELECTS it; nothing is written until "Link and count".
+  // A tap on the wrong row used to attach the barcode on the spot — a wrong UPC
+  // that every later scan of the bottle then resolved to, silently and for good
+  // (phone test 2026-10-25, A22). The product is named here with its size, since
+  // a 750 ml and a 1.75 L handle of the same spirit are two rows a tap apart.
+  // A product that can be scanned as a bottle OR as a case also gets that
+  // question; for everything else `each` is the only answer and is not asked.
   if (chosen) {
+    const asksPackLevel = isCountedByCase(chosen);
     return (
       <div className="mt-section-gap">
         <p className="text-row-title text-foreground">{chosen.name}</p>
         <p className="mt-1 text-row-subtitle text-muted-foreground">
-          Is this barcode on the bottle, or on the case?
+          {productDetail(chosen)}
+        </p>
+        <p className="mt-3 text-row-subtitle text-foreground">
+          {asksPackLevel ? (
+            "Is this barcode on the bottle, or on the case?"
+          ) : (
+            <>
+              Attach barcode <span className="tabular-nums">{barcode}</span> to this product?
+            </>
+          )}
         </p>
         <p className="mt-2 text-caption text-muted-foreground">
-          They carry different codes. Getting it wrong makes every later scan of this
-          one count as the wrong quantity, and nothing will look broken.
+          {asksPackLevel
+            ? "They carry different codes. Getting it wrong makes every later scan of this one count as the wrong quantity, and nothing will look broken."
+            : "Every later scan of this code will count as this product. Wrong one? Go back and pick again."}
         </p>
 
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          {(
-            [
-              { level: "each" as const, label: "Single bottle" },
-              { level: "case" as const, label: "Case carton" },
-            ]
-          ).map((option) => (
-            <button
-              key={option.level}
-              type="button"
-              onClick={() => setPackLevel(option.level)}
-              className={cn(
-                "min-h-tap-primary rounded-md border text-label uppercase",
-                packLevel === option.level
-                  ? "border-accent bg-accent text-accent-foreground"
-                  : "border-input bg-card text-foreground",
-              )}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+        {asksPackLevel ? (
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            {(
+              [
+                { level: "each" as const, label: "Single bottle" },
+                { level: "case" as const, label: "Case carton" },
+              ]
+            ).map((option) => (
+              <button
+                key={option.level}
+                type="button"
+                onClick={() => setPackLevel(option.level)}
+                className={cn(
+                  "min-h-tap-primary rounded-md border text-label uppercase",
+                  packLevel === option.level
+                    ? "border-accent bg-accent text-accent-foreground"
+                    : "border-input bg-card text-foreground",
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         {error ? (
           <p
@@ -289,19 +312,14 @@ function LinkExisting({
               type="button"
               disabled={pending}
               onClick={() => {
-                if (isCountedByCase(p)) {
-                  setPackLevel("each");
-                  setChosen(p);
-                  return;
-                }
-                void link(p, "each");
+                setPackLevel("each");
+                setChosen(p);
               }}
               className="flex min-h-tap-primary flex-col justify-center rounded-lg border border-border bg-card p-card-pad text-left disabled:opacity-50 active:bg-muted"
             >
               <span className="block text-row-title text-card-foreground">{p.name}</span>
               <span className="block text-row-subtitle text-muted-foreground">
-                {p.unitType === "keg" ? "Keg" : `${p.sizeMl}ml`}
-                {p.brand ? ` · ${p.brand}` : ""}
+                {productDetail(p)}
               </span>
             </button>
           ))}

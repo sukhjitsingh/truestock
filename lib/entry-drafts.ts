@@ -44,6 +44,51 @@ export function pendingDraftValue(
 }
 
 /**
+ * The bottle list one "Save fill levels" tap must send: the staged bottles WITH
+ * the pending draft applied.
+ *
+ * Saving only the staged list silently dropped a level that was picked but not
+ * yet added — the phone test of 2026-10-25 saved one bottle, not the two the
+ * counter had entered, and nothing on screen said so. The leave guard already
+ * counted that draft as unsaved work; Save now honours it too. A draft for a NEW
+ * bottle is appended; a draft that moved an existing bottle's loaded level
+ * replaces that bottle. The input is never mutated.
+ */
+export function fillsToSave(
+  draftValue: number | null,
+  activeIndex: number | null,
+  fills: readonly number[],
+): number[] {
+  const pending = pendingDraftValue(draftValue, activeIndex, fills);
+  if (pending == null) return [...fills];
+  if (activeIndex == null || activeIndex < 0 || activeIndex >= fills.length) {
+    return [...fills, pending];
+  }
+  return fills.map((f, i) => (i === activeIndex ? pending : f));
+}
+
+/**
+ * The Save button's label, stating what it will do with the pending draft.
+ *
+ * Same idea as the quantity editor's live before/after caption: the consequence
+ * is on the button itself, so there is nothing to confirm in a dialog and nothing
+ * left to guess. With no draft it is the plain label.
+ */
+export function fillSaveLabel(
+  draftValue: number | null,
+  activeIndex: number | null,
+  fills: readonly number[],
+): string {
+  const pending = pendingDraftValue(draftValue, activeIndex, fills);
+  if (pending == null) return "Save fill levels";
+  const percent = Math.round(pending * 100);
+  if (activeIndex == null || activeIndex < 0 || activeIndex >= fills.length) {
+    return `Add ${percent}% and save`;
+  }
+  return `Set bottle #${activeIndex + 1} to ${percent}% and save`;
+}
+
+/**
  * Has the sealed-quantity editor got typed input that no Save has written?
  *
  * ADD mode starts from zero, so any non-zero input is unsaved. SET mode starts

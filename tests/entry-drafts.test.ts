@@ -5,6 +5,8 @@
  */
 import { describe, test, expect } from "bun:test";
 import {
+  fillSaveLabel,
+  fillsToSave,
   hasUnsavedFillDraft,
   hasUnsavedQuantity,
   pendingDraftValue,
@@ -171,5 +173,67 @@ describe("canSubmitCount", () => {
       expect(r.message).toContain("Keep counting");
       expect(r.message).toContain("sync indicator");
     }
+  });
+});
+
+describe("fillsToSave — Save must not drop a level that was picked but not added", () => {
+  // The 2026-10-25 phone test: one bottle was staged (30%), another level was
+  // picked, "+ Add bottle to line" was left untapped and Save fill levels saved
+  // only the 30%. The counter's second bottle vanished with nothing on screen.
+  test("a picked level for a new bottle is appended to the staged list", () => {
+    expect(fillsToSave(0.8, null, [0.3])).toEqual([0.3, 0.8]);
+  });
+
+  test("Empty (0) is a real level and is appended, not skipped as falsy", () => {
+    expect(fillsToSave(0, null, [0.3])).toEqual([0.3, 0]);
+  });
+
+  test("a level picked with nothing staged still saves one bottle", () => {
+    expect(fillsToSave(0.5, null, [])).toEqual([0.5]);
+  });
+
+  test("no draft saves exactly the staged list", () => {
+    expect(fillsToSave(null, null, [0.3, 0.8])).toEqual([0.3, 0.8]);
+  });
+
+  test("a loaded chip that was not moved is not a draft, so nothing extra is added", () => {
+    expect(fillsToSave(0.3, 1, [0.8, 0.3])).toEqual([0.8, 0.3]);
+  });
+
+  test("moving a loaded chip's level replaces THAT bottle, not appends", () => {
+    expect(fillsToSave(0.6, 1, [0.8, 0.3])).toEqual([0.8, 0.6]);
+  });
+
+  test("an index past the list falls back to appending rather than writing a hole", () => {
+    expect(fillsToSave(0.6, 5, [0.8])).toEqual([0.8, 0.6]);
+  });
+
+  test("never mutates its input", () => {
+    const staged = [0.3, 0.8];
+    fillsToSave(0.6, 1, staged);
+    fillsToSave(0.1, null, staged);
+    expect(staged).toEqual([0.3, 0.8]);
+  });
+});
+
+describe("fillSaveLabel — the button states what it will save", () => {
+  test("no draft is the plain label", () => {
+    expect(fillSaveLabel(null, null, [0.3])).toBe("Save fill levels");
+  });
+
+  test("a loaded chip that was not moved is the plain label", () => {
+    expect(fillSaveLabel(0.3, 0, [0.3])).toBe("Save fill levels");
+  });
+
+  test("a new-bottle draft says it will be added", () => {
+    expect(fillSaveLabel(0.8, null, [0.3])).toBe("Add 80% and save");
+  });
+
+  test("Empty reads as 0%, not as the plain label", () => {
+    expect(fillSaveLabel(0, null, [])).toBe("Add 0% and save");
+  });
+
+  test("an edited chip names the bottle it will change", () => {
+    expect(fillSaveLabel(0.6, 1, [0.8, 0.3])).toBe("Set bottle #2 to 60% and save");
   });
 });
