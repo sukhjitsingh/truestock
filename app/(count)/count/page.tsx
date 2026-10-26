@@ -10,6 +10,7 @@ import { listLocationsAction } from "@/app/actions/catalog";
 import { Card, CardStack } from "@/components/ui/card";
 import { StatusPill, countStatusTone, countStatusLabel } from "@/components/ui/status-pill";
 import { StartCountButton } from "@/components/count/start-count-button";
+import { RefreshOnOpen } from "@/components/count/refresh-on-open";
 import { CoveredMoney } from "@/components/ui/money";
 import { formatDate, formatUnits } from "@/lib/utils";
 import { isCountWritable } from "@/lib/count-status";
@@ -57,6 +58,9 @@ export default async function CountHomePage() {
 
   return (
     <div className="px-bar-pad pb-8 pt-4">
+      {/* Also mounted with no count: a restored "Start a count" would otherwise
+          let a second tap open a second draft (nothing limits open counts). */}
+      {!activeCount || isCountWritable(activeCount.status) ? <RefreshOnOpen /> : null}
       {/* Top Header Bar */}
       <header className="flex items-center justify-between gap-2 border-b border-border/60 pb-3.5">
         <div className="flex items-center gap-2">

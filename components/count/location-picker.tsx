@@ -27,6 +27,9 @@ export function LocationPicker({
     <div className="px-bar-pad pb-8 pt-4">
       <Link
         href={`/count/${countId}`}
+        // The hub shows this count's totals. A prefetch taken now, while the
+        // picker is up, would be a picture of the count before the leg's writes.
+        prefetch={false}
         className="mb-2 inline-flex min-h-tap-min items-center gap-1 text-caption text-muted-foreground transition-colors hover:text-foreground active:scale-95"
       >
         <ChevronLeft className="size-4" aria-hidden="true" /> Back to Count #{countId}

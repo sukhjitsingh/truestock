@@ -62,3 +62,6 @@ tests/*.pdf
 
 # codegraph
 .codegraph/
+
+# phone:observe session logs and screenshots — can show on-screen typed text
+.phone-sessions/
