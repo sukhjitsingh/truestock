@@ -731,6 +731,7 @@ export function computeCounts(events) {
     httpErrors: 0,
     actions: 0,
     actionsFailed: 0,
+    actionsAborted: 0,
     actionsSlow: 0,
     rscNavigation: 0,
     rscPrefetch: 0,
@@ -754,8 +755,16 @@ export function computeCounts(events) {
       case "requestfailed":
         // A request the browser cancelled itself is counted apart: it is normal
         // churn, and burying real failures under it would make the headline useless.
-        // An aborted server action is the exception — the user's save never landed.
-        if (ev.next === "action") {
+        // That holds for server actions too. On a real phone every one of six
+        // aborted action POSTs was benign: the redirect after START A COUNT, picker
+        // searches superseded by the next keystroke, and SAVE FILL LEVELS, whose
+        // POST was dropped while the next screen already read "Synced" and the line
+        // was in the database. A save that is truly lost fails some other way
+        // (ERR_CONNECTION_*, ERR_INTERNET_DISCONNECTED), which is still "failed".
+        if (ev.next === "action" && ev.aborted) {
+          c.actions++;
+          c.actionsAborted++;
+        } else if (ev.next === "action") {
           c.actions++;
           c.actionsFailed++;
           c.requestsFailed++;
@@ -847,6 +856,35 @@ export function selectTimeline(events, limit = 200) {
   return { rows: chosen.map((x) => x.ev), omitted: events.length - limit };
 }
 
+/**
+ * Console lines that repeat verbatim (a dev server's HMR socket retrying once a
+ * second logged 1,300 of them in a 27-minute walk) become one row at the first
+ * occurrence, carrying `repeats` and `lastT`. They fill the timeline otherwise
+ * and push the lines that matter out of its row budget. The raw events stay in
+ * events.jsonl untouched; only the summary view is collapsed.
+ */
+export function collapseRepeatedConsole(events) {
+  const first = new Map();
+  const out = [];
+  for (const ev of events) {
+    if (ev.kind !== "console") {
+      out.push(ev);
+      continue;
+    }
+    const key = `${ev.pageId ?? 0}|${ev.level}|${ev.text}`;
+    const seen = first.get(key);
+    if (!seen) {
+      const row = { ...ev, repeats: 1, lastT: ev.t };
+      first.set(key, row);
+      out.push(row);
+    } else {
+      seen.repeats++;
+      seen.lastT = ev.t;
+    }
+  }
+  return out;
+}
+
 function mdCell(s) {
   return String(s).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
@@ -888,7 +926,10 @@ export function buildSummary(meta, events, { timelineLimit = 200 } = {}) {
   );
   L.push(`- Responses >= 400: **${counts.httpErrors}**`);
   L.push(
-    `- Server actions: **${counts.actions}** — ${counts.actionsFailed} failed, ${counts.actionsSlow} slower than 1500 ms`,
+    `- Server actions: **${counts.actions}** — ${counts.actionsFailed} failed, ${counts.actionsSlow} slower than 1500 ms` +
+      (counts.actionsAborted
+        ? `, ${counts.actionsAborted} aborted by the browser (a redirect or a superseded search; check the next screen if a save looks missing)`
+        : ""),
   );
   L.push(
     `- RSC fetches: **${counts.rscNavigation}** navigation, ${counts.rscPrefetch} prefetch` +
@@ -900,14 +941,15 @@ export function buildSummary(meta, events, { timelineLimit = 200 } = {}) {
   L.push(`- Snapshots: ${counts.snapshots} (${counts.shots} screenshots)`);
   L.push("");
 
-  const { rows, omitted } = selectTimeline(events, timelineLimit);
+  const { rows, omitted } = selectTimeline(collapseRepeatedConsole(events), timelineLimit);
   L.push("## Timeline", "");
   L.push("| t | time | kind | what |", "|---:|---|---|---|");
   for (const ev of rows) {
+    const again = ev.repeats > 1 ? ` ×${ev.repeats}, last at ${(ev.lastT / 1000).toFixed(1)}s` : "";
     L.push(
       `| ${(ev.t / 1000).toFixed(1)}s | ${clock(ev.iso)} | ${mdCell(ev.kind === "interaction" ? ev.type : ev.kind)}${
         ev.pageId !== undefined && ev.pageId > 0 ? ` (tab ${ev.pageId})` : ""
-      } | ${mdCell(describeEvent(ev))} |`,
+      } | ${mdCell(describeEvent(ev) + again)} |`,
     );
   }
   if (omitted > 0) {
@@ -942,7 +984,9 @@ export function headlineCounts(events) {
   return [
     `errors: ${c.pageErrors} page, ${c.consoleErrors} console.error`,
     `failed requests: ${c.requestsFailed} · responses >=400: ${c.httpErrors}`,
-    `server actions: ${c.actions} (${c.actionsFailed} failed, ${c.actionsSlow} slow >1500ms)`,
+    `server actions: ${c.actions} (${c.actionsFailed} failed, ${c.actionsSlow} slow >1500ms${
+      c.actionsAborted ? `, ${c.actionsAborted} aborted` : ""
+    })`,
     `rsc: ${c.rscNavigation} navigation, ${c.rscPrefetch} prefetch`,
     `screenshots: ${c.shots}`,
   ];

@@ -16,6 +16,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildRequestEvent,
   buildSummary,
+  collapseRepeatedConsole,
   checkOutDir,
   classifyNextRequest,
   classifyRequestScope,
@@ -449,16 +450,52 @@ describe("summary and timeline", () => {
     const c = computeCounts(events);
     expect(c.pageErrors).toBe(1);
     expect(c.consoleErrors).toBe(1);
-    expect(c.requestsFailed).toBe(2); // connection reset + the aborted server action
+    expect(c.requestsFailed).toBe(1); // the connection reset; the 500 is a response, counted in httpErrors
     expect(c.requestsAborted).toBe(1); // the prefetch-style abort is churn
     expect(c.actions).toBe(3);
-    expect(c.actionsFailed).toBe(2); // the 500 and the aborted one
+    expect(c.actionsFailed).toBe(1); // only the 500; an aborted action is not a failed save
+    expect(c.actionsAborted).toBe(1);
     expect(c.actionsSlow).toBe(1);
     expect(c.rscPrefetch).toBe(1);
     expect(c.rscNavigation).toBe(1);
     expect(c.httpErrors).toBe(2); // 404 + the action 500
     expect(c.clicks).toBe(1);
     expect(c.shots).toBe(1);
+  });
+
+  test("a server action that dies on the network is still a failed save; one the browser aborted is not", () => {
+    const c = computeCounts([
+      ev(1, { kind: "requestfailed", method: "POST", path: "/count/4", errorText: "net::ERR_CONNECTION_RESET", next: "action" }),
+      ev(2, { kind: "requestfailed", method: "POST", path: "/count/4", errorText: "net::ERR_INTERNET_DISCONNECTED", next: "action" }),
+      ev(3, { kind: "requestfailed", method: "POST", path: "/count/4", errorText: "net::ERR_ABORTED", aborted: true, next: "action" }),
+    ]);
+    expect(c.actions).toBe(3);
+    expect(c.actionsFailed).toBe(2);
+    expect(c.actionsAborted).toBe(1);
+    expect(c.requestsFailed).toBe(2);
+    const md = buildSummary({ origin: ORIGIN, startedAt: iso(0), endedAt: iso(5000) }, [
+      ev(3, { kind: "requestfailed", method: "POST", path: "/count/4", errorText: "net::ERR_ABORTED", aborted: true, next: "action" }),
+    ]);
+    expect(md).toMatch(/Server actions: \*\*1\*\* — 0 failed.*1 aborted by the browser/);
+  });
+
+  test("repeated console lines collapse to one timeline row with a count; the raw events are untouched", () => {
+    const hmr = (t: number) => ev(t, { kind: "console", level: "warning", text: "WebSocket connection to /_next/hmr failed", pageId: 0 });
+    const raw = [
+      ev(0, { kind: "session", phase: "start", origin: ORIGIN }),
+      hmr(1000),
+      ev(1500, { kind: "console", level: "error", text: "different", pageId: 0 }),
+      hmr(2000),
+      hmr(3000),
+    ];
+    const rows = collapseRepeatedConsole(raw);
+    expect(rows).toHaveLength(3);
+    expect(rows[1]).toMatchObject({ repeats: 3, lastT: 3000, t: 1000 });
+    expect(rows[2]).toMatchObject({ text: "different", repeats: 1 });
+    expect(raw).toHaveLength(5);
+    const md = buildSummary({ origin: ORIGIN, startedAt: iso(0), endedAt: iso(5000) }, raw);
+    expect(md).toMatch(/×3, last at 3\.0s/);
+    expect(md.match(/WebSocket connection to/g)).toHaveLength(1);
   });
 
   test("live lines name the button the user meant, not the span inside it", () => {
@@ -508,7 +545,7 @@ describe("summary and timeline", () => {
   test("headline counts mention errors, actions, rsc and screenshots", () => {
     const h = headlineCounts(events).join("\n");
     expect(h).toMatch(/errors: 1 page, 1 console/);
-    expect(h).toMatch(/server actions: 3 \(2 failed, 1 slow/);
+    expect(h).toMatch(/server actions: 3 \(1 failed, 1 slow >1500ms, 1 aborted\)/);
     expect(h).toMatch(/rsc: 1 navigation, 1 prefetch/);
     expect(h).toMatch(/screenshots: 1/);
   });
