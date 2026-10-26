@@ -52,7 +52,10 @@
 
   --success: #16a34a;
   --success-bg: #dcfce7;
-  --warning: #d97706;
+  /* amber-700, not amber-600 (#d97706): that is 3.19:1 on white and ~2.8:1 on
+     --warning-bg, which fails AA for the caption-sized `text-warning` used on
+     every light surface. #b45309 is 5.0:1 on white, ~4.5:1 on --warning-bg. */
+  --warning: #b45309;
   --warning-bg: #fef3c7;
   --negative: #e11d48;
   --negative-bg: #ffe4e6;
@@ -237,9 +240,10 @@
   --spacing-section-gap: 1.5rem; /* 24px — gap between page sections */
   --spacing-tap-min: 2.75rem; /* 44px — absolute floor for any tappable target */
   --spacing-tap-primary: 3.5rem; /* 56px — floor for the primary count loop */
-  --spacing-action-bar: 6rem; /* 96px — bottom clearance a scrolling region must
-    reserve so the fixed action bar never covers its last row. 56px button +
-    2×16px bar padding + 8px breathing room. Use as `pb-action-bar` on the
+  --spacing-action-bar: 7rem; /* 112px — bottom clearance a scrolling region must
+    reserve so the fixed action bar never covers its last row. The tallest
+    button is the 68px three-line Close count (figure + "N of M lines costed"),
+    + 2×16px bar padding + 12px breathing room. Use as `pb-action-bar` on the
     scroll container; never eyeball a pb-* value per screen, or the last row
     ends up half-hidden on exactly one of them. */
 
@@ -393,7 +397,7 @@
 .size-tap-primary { width: 3.5rem; height: 3.5rem; }
 .h-row-office { height: 3.5625rem; }
 .min-h-row-office { min-height: 3.5625rem; }
-.pb-action-bar { padding-bottom: 6rem; }
+.pb-action-bar { padding-bottom: 7rem; }
 .pt-safe-top { padding-top: max(0px, env(safe-area-inset-top)); }
 .pb-safe-bottom { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
 

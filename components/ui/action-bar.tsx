@@ -65,7 +65,7 @@ export function ActionBarPrimary({
       className={cn(
         "min-h-tap-primary flex-1 rounded-md bg-primary text-primary-foreground disabled:opacity-50",
         hasValue
-          ? "flex flex-col items-center justify-center gap-0.5"
+          ? "flex flex-col items-center justify-center gap-0.5 py-2"
           : "flex items-center justify-center",
         className,
       )}
