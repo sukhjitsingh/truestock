@@ -552,15 +552,25 @@ try {
   record("a retired location stays listed and is marked Retired", true, renamed);
 
   // The point of Decision 5: this happens with no scan-page code changed.
-  const scanPageTouched = execSync("git diff main...HEAD --name-only", { cwd: process.cwd() })
-    .toString()
-    .split("\n")
-    .some((f) => f.includes("count/[countId]/scan/page.tsx"));
-  record(
-    "the scan page was not modified to make retirement work (Decision 5)",
-    !scanPageTouched,
-    scanPageTouched ? "scan/page.tsx IS in the diff" : "scan/page.tsx untouched in main...HEAD",
-  );
+  // This is a statement about one change set (the slice-3 locations work), so it
+  // needs that change set's base ref. Diffing against `main` made it a landmine:
+  // any later, legitimate edit to the scan page (the phone-round-2 refresh fix
+  // was one) turned it into a false FAIL. Opt in with VERIFY_DECISION5_BASE=<ref>.
+  const decision5Base = process.env.VERIFY_DECISION5_BASE;
+  if (decision5Base) {
+    const scanPageTouched = execSync(`git diff ${decision5Base}...HEAD --name-only`, { cwd: process.cwd() })
+      .toString()
+      .split("\n")
+      .some((f) => f.includes("count/[countId]/scan/page.tsx"));
+    record(
+      "the scan page was not modified to make retirement work (Decision 5)",
+      !scanPageTouched,
+      scanPageTouched ? `scan/page.tsx IS in ${decision5Base}...HEAD` : `scan/page.tsx untouched in ${decision5Base}...HEAD`,
+    );
+  } else {
+    skip("the scan page was not modified to make retirement work (Decision 5)", "set VERIFY_DECISION5_BASE=<ref> to check a change set");
+    skipped.push("Decision 5 — scan page untouched by the locations change: needs VERIFY_DECISION5_BASE=<base ref of that change set>");
+  }
 
   // ---- open item 27: /office/vendors has the same Edit affordance ---------
   // The identical row-click pattern lived here first — locations-table.tsx was

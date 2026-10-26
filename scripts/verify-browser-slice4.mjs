@@ -88,6 +88,9 @@ const sql = await mysql.createConnection(process.env.DATABASE_URL);
 let createdProductId = null;
 let reviewedInvoiceId = null;
 let needsReviewInvoiceId = null;
+// Declared out here, not inside the try: the cleanup in `finally` needs it, and
+// a block-scoped const there is a ReferenceError that skips the cleanup.
+let orgId = null;
 
 try {
   console.log(`\ntarget: ${BASE}\n`);
@@ -121,7 +124,7 @@ try {
     [EMAIL],
   );
   if (!ownerRow) throw new Error(`no user row for ${EMAIL} — sign-in above should have failed already`);
-  const orgId = ownerRow.organizationId;
+  orgId = ownerRow.organizationId;
   const ownerId = ownerRow.id;
 
   const [productInsert] = await sql.execute(
@@ -340,7 +343,7 @@ try {
   // product was created by this run, not a real catalog item), so there is
   // nothing to restore for it.
   try {
-    if (needsReviewInvoiceId) {
+    if (needsReviewInvoiceId && orgId !== null) {
       await sql.execute("DELETE FROM invoice_line WHERE invoice_id = ? AND organization_id = ?", [
         needsReviewInvoiceId,
         orgId,
@@ -354,6 +357,8 @@ try {
     console.log(`removed: throwaway needs_review invoice #${needsReviewInvoiceId} and its line.`);
   } catch (cleanupErr) {
     console.error("CLEANUP FAILED — manual cleanup needed:", cleanupErr);
+    // A run that leaks fixtures into the database is not a clean pass.
+    record("scratch fixtures cleaned up", false, String(cleanupErr));
   }
   await sql.end();
   await browser.close();
