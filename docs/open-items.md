@@ -1986,7 +1986,9 @@ about that change, so each regression test was run against its reverted fix:
   expected to show exactly those two.
 
 **Known defects the suite found (none fixed; each encoded as a test that is green
-today and goes red when the defect is fixed):**
+today and goes red when the defect is fixed).** The full write-up (where each lives,
+impact, suggested fix, the test to flip) is in [`docs/known-defects.md`](known-defects.md);
+this list is the short form:
 
 1. **A deactivated product is still countable** (`tests/known-defects.test.ts`).
    First write, increment and scan-by-barcode all succeed against an
