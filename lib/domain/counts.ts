@@ -73,7 +73,7 @@
  * write path funnels through `assertCountWritable` below rather than
  * re-implementing the check.
  */
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/mysql-core";
 import { db } from "@/db";
 import { count, countLine, countLineWrite, location, product, user } from "@/db/schema";
@@ -1242,6 +1242,72 @@ export interface CountListRow extends CountSummaryRow {
    * that isn't closed yet, since the column is only written at close.
    */
   totalValue?: number | null;
+  /**
+   * Owner only, closed counts only — how many of the lines behind `totalValue`
+   * carry a cost. `count.total_value` is stored without it, so a closed row
+   * alone cannot say whether `$0.00` means "worth nothing" or "no costs on
+   * file". Recomputed from the per-line snapshots, which are immutable once the
+   * count is closed (invariant 2), so it never drifts from the stored total.
+   */
+  valuationCoverage?: CountCoverage;
+}
+
+export interface CountCoverage {
+  pricedLineCount: number;
+  excludedLineCount: number;
+}
+
+/**
+ * Priced / excluded line counts for a set of counts, from each line's own
+ * snapshot columns — the same `summarizeValuation` the live screen and
+ * `closeCount` use, so a count's coverage here cannot disagree with its total.
+ *
+ * Tenant-scoped on `count_line.organization_id`, so a foreign count id in
+ * `countIds` simply has no rows and comes back as 0/0 rather than confirming it
+ * exists (invariant 9). Counts with no lines are present in the result as 0/0.
+ * Callers are responsible for the role gate: this returns quantities, but they
+ * only mean anything beside a dollar total, which is owner-only.
+ */
+export async function getCountCoverages(
+  actor: Actor,
+  countIds: number[],
+): Promise<Map<number, CountCoverage>> {
+  const coverages = new Map<number, CountCoverage>();
+  if (countIds.length === 0) {
+    return coverages;
+  }
+
+  const rows = await db
+    .select({
+      countId: countLine.countId,
+      sealedCaseQty: countLine.sealedCaseQty,
+      sealedEachQty: countLine.sealedEachQty,
+      partialFills: countLine.partialFills,
+      unitCostAtCount: countLine.unitCostAtCount,
+      caseSizeAtCount: countLine.caseSizeAtCount,
+    })
+    .from(countLine)
+    .where(
+      and(
+        eq(countLine.organizationId, actor.organizationId),
+        inArray(countLine.countId, countIds),
+      ),
+    );
+
+  const linesByCount = new Map<number, ValuationLine[]>();
+  for (const row of rows) {
+    const lines = linesByCount.get(row.countId) ?? [];
+    lines.push(row);
+    linesByCount.set(row.countId, lines);
+  }
+
+  for (const countId of countIds) {
+    const { pricedLineCount, excludedLineCount } = summarizeValuation(
+      linesByCount.get(countId) ?? [],
+    );
+    coverages.set(countId, { pricedLineCount, excludedLineCount });
+  }
+  return coverages;
 }
 
 /**
@@ -1281,6 +1347,15 @@ export async function listCounts(actor: Actor, limit = 50): Promise<CountListRow
 
   const showCost = canSeeCost(actor.role);
 
+  // Only the rows that carry a stored total need a caveat on it, and only a
+  // viewer who sees the total needs the caveat — so a manager costs no extra read.
+  const coverages = showCost
+    ? await getCountCoverages(
+        actor,
+        rows.filter((r) => r.totalValue != null).map((r) => r.id),
+      )
+    : new Map<number, CountCoverage>();
+
   return rows.map((r) => {
     const row: CountListRow = {
       id: r.id,
@@ -1294,6 +1369,10 @@ export async function listCounts(actor: Actor, limit = 50): Promise<CountListRow
     };
     if (showCost) {
       row.totalValue = r.totalValue == null ? null : Number(r.totalValue);
+      const coverage = coverages.get(r.id);
+      if (coverage) {
+        row.valuationCoverage = coverage;
+      }
     }
     return row;
   });

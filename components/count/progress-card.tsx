@@ -1,5 +1,7 @@
-import { formatUnits, formatMoney } from "@/lib/utils";
+import { formatUnits } from "@/lib/utils";
 import type { CountTotals } from "@/lib/domain/counts";
+import { CoveredMoney } from "@/components/ui/money";
+import { describeValuationCoverage } from "@/lib/valuation-coverage";
 
 /**
  * Live progress for a count in flight (`ProgressCard`, Target 10).
@@ -10,6 +12,7 @@ import type { CountTotals } from "@/lib/domain/counts";
 export function ProgressCard({ totals }: { totals: CountTotals }) {
   const totalTracked = totals.pricedLineCount + totals.excludedLineCount;
   const pricedPercent = totalTracked > 0 ? Math.round((totals.pricedLineCount / totalTracked) * 100) : 0;
+  const coverage = describeValuationCoverage(totals);
 
   return (
     <div className="glass-card p-card-pad">
@@ -31,9 +34,11 @@ export function ProgressCard({ totals }: { totals: CountTotals }) {
       {totals.totalValue != null ? (
         <div className="mt-3.5 flex items-baseline justify-between border-t border-border/80 pt-3.5">
           <span className="text-caption text-muted-foreground">Total valuation</span>
-          <span className="text-numeral-md font-bold tabular-nums text-card-foreground">
-            {formatMoney(totals.totalValue)}
-          </span>
+          <CoveredMoney
+            value={totals.totalValue}
+            coverage={coverage}
+            className="text-numeral-md font-bold text-card-foreground"
+          />
         </div>
       ) : null}
 

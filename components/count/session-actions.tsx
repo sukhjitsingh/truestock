@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import type { Role } from "@/lib/authz";
 import { pendingCount } from "@/lib/count-queue";
 import { canSubmitCount } from "@/lib/entry-drafts";
+import type { ValuationCoverage } from "@/lib/valuation-coverage";
 
 /**
  * Writes still queued on this device for the count, read fresh at click time.
@@ -51,12 +52,15 @@ export function SessionActions({
   status,
   role,
   totalValue,
+  coverage,
 }: {
   countId: number;
   status: string;
   role: Role;
   /** Owner only, already gated server-side. Drives the two-line button. */
   totalValue?: number;
+  /** How much of `totalValue` is backed by a cost — caveats the Close button. */
+  coverage?: ValuationCoverage;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -165,6 +169,7 @@ export function SessionActions({
       <ActionBarPrimary
         label={pending ? "Closing…" : "Close count"}
         value={totalValue}
+        coverage={coverage}
         disabled={pending}
         onClick={() => run(() => closeCountAction({ countId }))}
       />

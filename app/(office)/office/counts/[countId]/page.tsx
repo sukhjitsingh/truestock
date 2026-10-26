@@ -16,6 +16,7 @@ import {
 import { EmptyState } from "@/components/ui/empty-state";
 import { formatUnits, formatDate } from "@/lib/utils";
 import type { SummaryGroup } from "@/lib/domain/reports";
+import { describeValuationCoverage } from "@/lib/valuation-coverage";
 
 export const metadata = { title: "Count summary · Truestock" };
 
@@ -71,7 +72,15 @@ export default async function CountSummaryPage({
         {summary.totalValue != null ? (
           <Stat
             label="Snapshot Valuation"
-            value={<Money value={summary.totalValue} className="text-numeral-md font-bold text-card-foreground" />}
+            value={
+              // The banner below carries the wording; with no costed line the
+              // figure itself is a dash, not a $0.00 that reads as "worth nothing".
+              describeValuationCoverage(summary).suppressFigure ? (
+                <span className="text-numeral-md font-bold text-card-foreground">—</span>
+              ) : (
+                <Money value={summary.totalValue} className="text-numeral-md font-bold text-card-foreground" />
+              )
+            }
             subtext="costed when each line was first counted"
           />
         ) : null}

@@ -3,7 +3,7 @@ import { requireOfficeUser } from "@/lib/current-user";
 import { listCountsAction } from "@/app/actions/counts";
 import { PageHeader } from "@/components/office/page-header";
 import { StatusPill, countStatusTone, countStatusLabel } from "@/components/ui/status-pill";
-import { Money } from "@/components/ui/money";
+import { CoveredMoney } from "@/components/ui/money";
 import { NullValue } from "@/components/ui/null-value";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
@@ -17,6 +17,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { formatDateTime } from "@/lib/utils";
+import { describeValuationCoverage } from "@/lib/valuation-coverage";
 
 export const metadata = { title: "Counts · Truestock" };
 
@@ -112,7 +113,13 @@ export default async function CountsListPage() {
                         {count.totalValue == null ? (
                           <NullValue reason="not-entered" />
                         ) : (
-                          <Money value={count.totalValue} className="font-semibold tabular-nums text-card-foreground" />
+                          <CoveredMoney
+                            value={count.totalValue}
+                            coverage={describeValuationCoverage(
+                              count.valuationCoverage ?? { pricedLineCount: 0, excludedLineCount: 0 },
+                            )}
+                            className="font-semibold text-card-foreground"
+                          />
                         )}
                       </TableCell>
                     ) : null}
