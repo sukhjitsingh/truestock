@@ -421,6 +421,8 @@ function CreateNew({
     if (!isPresetSizeMl(Number(sizeMl), ctx)) setSizeMl(String(defaultSizeMlFor(ctx)));
   }
 
+  const nameMissing = name.trim().length === 0;
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setPending(true);
@@ -484,7 +486,18 @@ function CreateNew({
         className="mt-section-gap flex flex-col gap-4"
         noValidate
       >
-        <Field label="Name" htmlFor="p-name" error={fieldErrors.name}>
+        {/*
+          The placeholder is an "e.g." and italic: a bare product name in muted
+          grey read as a pre-filled value on the phone test of 2026-10-25, which
+          left a disabled Save with no visible cause. While the field is empty
+          the hint names the reason Save is off.
+        */}
+        <Field
+          label="Name"
+          htmlFor="p-name"
+          error={fieldErrors.name}
+          hint={nameMissing ? "Enter a name to save" : undefined}
+        >
           <Input
             id="p-name"
             value={name}
@@ -492,7 +505,11 @@ function CreateNew({
             autoFocus
             autoCapitalize="words"
             required
-            placeholder="Tito's Handmade Vodka"
+            aria-describedby={
+              fieldErrors.name ? "p-name-error" : nameMissing ? "p-name-hint" : undefined
+            }
+            placeholder="e.g. Tito's Handmade Vodka"
+            className="placeholder:italic"
           />
         </Field>
 
@@ -556,7 +573,7 @@ function CreateNew({
           <Button variant="outline" size="primary" className="flex-1" onClick={onBackToSearch}>
             Back to search
           </Button>
-          <Button type="submit" size="primary" className="flex-[1.4]" disabled={pending || !name}>
+          <Button type="submit" size="primary" className="flex-[1.4]" disabled={pending || nameMissing}>
             {pending ? "Saving…" : "Save and count"}
           </Button>
         </div>
