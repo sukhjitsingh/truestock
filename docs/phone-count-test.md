@@ -136,11 +136,19 @@ ignored. It is a listener, not a controller.
   to an issue.
 - The app's own `console.*` text is recorded with URLs scrubbed, so an app that
   logs a typed value would put it in the log.
-- **Built and proven against a simulated phone, not yet a real one.** It prints
-  the DevTools sockets it finds on the device. If it picks the wrong browser,
-  or finds none (a non-Chrome browser may name its socket differently), choose
-  one with `--socket <name>`. `--cdp http://127.0.0.1:<port>` skips adb
-  entirely, for a forward you set up yourself.
+- **Attach and capture proven on a real phone** (Pixel 10 Pro XL, Brave 155 over
+  USB, 2026-10-26): it found the tab, read the title and viewport, and took a
+  screenshot of the signed-in Dashboard. A full counting walk is still the part
+  not yet observed live. Brave uses Chrome's `chrome_devtools_remote` socket.
+  The browser must be **open** — its socket disappears when it is swiped away.
+  It prints the DevTools sockets it finds on the device. Sockets named
+  `stetho_<package>_…` belong to apps (Google Messages exposes one), not
+  browsers, and are never picked automatically. If it picks the wrong browser,
+  or finds none, choose one with `--socket <name>`. `--cdp http://127.0.0.1:<port>`
+  skips adb entirely, for a forward you set up yourself.
+- Piping its output (`… | head`) ends the session cleanly ("output closed")
+  and releases the adb forward. Do not rely on that to stop it — Ctrl+C is the
+  normal way, and writes `summary.md`.
 - Several devices attached → `--serial <id>`. `--help` lists every option.
 
 ---

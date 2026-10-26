@@ -394,6 +394,27 @@ describe("DevTools socket discovery", () => {
     expect(pickSocket(["brave_devtools_remote", "webview_devtools_remote_9"], undefined)).toMatchObject({ socket: "brave_devtools_remote" });
   });
 
+  test("never auto-attaches to an app's Stetho debug hook (seen on a real Pixel: Google Messages)", () => {
+    const messaging = [
+      "stetho_com.google.android.apps.messaging_devtools_remote",
+      "stetho_com.google.android.apps.messaging:rcs_devtools_remote",
+    ];
+    expect(parseDevtoolsSockets(messaging.map((n) => `0000000000000000: 00000002 00000000 00010000 0001 01 1 @${n}`).join("\n"))).toEqual(
+      messaging.filter((n) => !n.includes(":")),
+    );
+    const only = pickSocket([messaging[0]], undefined) as { error: string };
+    expect(only.error).toMatch(/No browser is exposing/);
+    expect(only.error).toMatch(/not a browser/);
+    // a real browser beside it is still chosen, and the app socket is just "other"
+    expect(pickSocket([messaging[0], "chrome_devtools_remote"], undefined)).toMatchObject({
+      socket: "chrome_devtools_remote",
+      others: [messaging[0]],
+    });
+    expect(pickSocket([messaging[0], "terrace_devtools_remote"], undefined)).toMatchObject({ socket: "terrace_devtools_remote" });
+    // only an explicit --socket can select one
+    expect(pickSocket([messaging[0]], messaging[0])).toMatchObject({ socket: messaging[0] });
+  });
+
   test("no sockets, an unknown --socket, and an ambiguous set are errors that say what to do", () => {
     expect((pickSocket([], undefined) as { error: string }).error).toMatch(/tab open/);
     expect((pickSocket(["chrome_devtools_remote"], "nope") as { error: string }).error).toMatch(/not found/);

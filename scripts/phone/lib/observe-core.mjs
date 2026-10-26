@@ -272,11 +272,23 @@ export function isWebviewSocket(name) {
 }
 
 /**
+ * Facebook Stetho, a debug hook some apps ship, publishes
+ * `stetho_<package>_devtools_remote`. Seen on a real Pixel for Google Messages
+ * (`stetho_com.google.android.apps.messaging_devtools_remote`). It is an app, not
+ * a browser, so it must never be picked automatically.
+ */
+export function isAppDebugSocket(name) {
+  return /^stetho_/.test(name);
+}
+
+/**
  * Choose which browser socket to forward. `wanted` is --socket (with or without
  * the '@'). Returns { socket, others } or { error }.
  *   - default: chrome_devtools_remote if present;
- *   - otherwise the single non-WebView socket (e.g. a Brave/Edge variant);
- *   - otherwise an error listing the choices.
+ *   - otherwise the single socket that is neither a WebView nor an app's debug
+ *     hook (e.g. a Samsung/Edge variant);
+ *   - otherwise an error listing the choices. Only an explicit --socket can
+ *     select a WebView or an app socket.
  */
 export function pickSocket(sockets, wanted) {
   if (sockets.length === 0) {
@@ -297,14 +309,24 @@ export function pickSocket(sockets, wanted) {
   if (sockets.includes("chrome_devtools_remote")) {
     return { socket: "chrome_devtools_remote", others: sockets.filter((s) => s !== "chrome_devtools_remote") };
   }
-  const browsers = sockets.filter((s) => !isWebviewSocket(s));
+  const browsers = sockets.filter((s) => !isWebviewSocket(s) && !isAppDebugSocket(s));
   if (browsers.length === 1) {
     return { socket: browsers[0], others: sockets.filter((s) => s !== browsers[0]) };
+  }
+  const label = (s) =>
+    isWebviewSocket(s) ? "   (a WebView inside some app)" : isAppDebugSocket(s) ? "   (an app's debug hook, not a browser)" : "";
+  if (browsers.length === 0) {
+    return {
+      error:
+        "No browser is exposing a DevTools socket — only apps' sockets are open, and those are never attached to\n" +
+        "automatically. Open Chrome/Brave on the phone with a tab on the site, then re-run. Sockets present:\n" +
+        sockets.map((s) => `  ${s}${label(s)}`).join("\n"),
+    };
   }
   return {
     error:
       `Several DevTools sockets and none is chrome_devtools_remote — choose one with --socket NAME:\n` +
-      sockets.map((s) => `  ${s}${isWebviewSocket(s) ? "   (a WebView inside some app)" : ""}`).join("\n"),
+      sockets.map((s) => `  ${s}${label(s)}`).join("\n"),
   };
 }
 

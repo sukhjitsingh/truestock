@@ -570,6 +570,12 @@ async function finish(reason) {
   if (finishing) return;
   finishing = true;
   clearInterval(heartbeat);
+  // Never let a wedged await (dead adb, stuck CDP) keep the process — and the adb
+  // forward it made — alive. The slowest honest path below is ~6.5 s.
+  setTimeout(() => {
+    removeForwardSync();
+    process.exit(1);
+  }, 15000).unref();
   const connected = browser?.isConnected?.() ?? false;
   if (connected) {
     // One last look at every page still on the origin.
@@ -607,6 +613,16 @@ process.on("SIGINT", () => {
 process.on("SIGTERM", () => finish("terminated"));
 process.on("SIGHUP", () => finish("terminal closed"));
 process.on("exit", removeForwardSync);
+// A closed pipe (`... | head`, a terminal that went away) must end the session
+// cleanly. With no 'error' listener the EPIPE is an uncaught exception, whose
+// handler below writes to the same dead pipe, which raises another one — a hot
+// loop that starves the event loop, so finish() never reaches process.exit or
+// removeForwardSync and the process (and its adb forward) outlive the session.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (e) => {
+    if (e?.code === "EPIPE") finish("output closed");
+  });
+}
 process.on("uncaughtException", (e) => {
   console.error(`observer error: ${e?.stack ?? e}`);
   finish("observer error");
