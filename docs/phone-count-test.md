@@ -97,6 +97,54 @@ hands out a new lease — it regenerates the cert and reprints both URLs.
 
 ---
 
+## Observed session — no screen recording
+
+Optional. Instead of a screen recording, let the laptop watch the phone's
+browser and write a short text log. A recording is 100 MB nobody can search; the
+log is a few KB plus some screenshots, and it holds the things this protocol
+keeps hunting for — a request that failed, a button that was dead, a console
+error, a screen that stopped changing.
+
+**One-time on the phone:** Developer options → **USB debugging** (or **Wireless
+debugging**), then accept the "Allow debugging?" prompt. Needs `adb` on the
+laptop (Android platform-tools). Open the app in Chrome — the https URL from
+section 0 — and leave that tab open.
+
+```bash
+adb devices                                               # the phone says "device"
+bun run phone:observe -- --origin https://192.168.x.x:3443
+```
+
+Test as normal. **Ctrl+C when you are done**, then read
+`.phone-sessions/session-<date>/summary.md` — a counts table, anything notable,
+and a timeline. Full detail is in `events.jsonl` beside it; screenshots are in
+`shots/`.
+
+| Recorded | Never recorded |
+|---|---|
+| Page navigations, taps (by button label), console errors, failed requests, server-action and RSC calls with status and timing, a screenshot after each screen settles | Typed values — only *that* a field changed and its length. Password fields are not even that. Request or response bodies, cookies, auth headers, query strings, other tabs |
+
+It is **read-only**: it never taps, types, navigates or reloads, and only a tab
+whose origin is *exactly* `--origin` is watched — everything else is counted and
+ignored. It is a listener, not a controller.
+
+- **Screenshots can show what was typed** into a visible non-password field (a
+  search box, a quantity). None is taken while a password field has focus or
+  once the tab has left `--origin` (the log notes a `screenshot-skipped`). The
+  folder is gitignored, and `--out` is refused anywhere inside the repo except
+  `.phone-sessions/`; still, look through `shots/` before attaching a session
+  to an issue.
+- The app's own `console.*` text is recorded with URLs scrubbed, so an app that
+  logs a typed value would put it in the log.
+- **Built and proven against a simulated phone, not yet a real one.** It prints
+  the DevTools sockets it finds on the device. If it picks the wrong browser,
+  or finds none (a non-Chrome browser may name its socket differently), choose
+  one with `--socket <name>`. `--cdp http://127.0.0.1:<port>` skips adb
+  entirely, for a forward you set up yourself.
+- Several devices attached → `--serial <id>`. `--help` lists every option.
+
+---
+
 ## 1. Preflight — on the phone, before walking anywhere
 
 Open **`/count/preflight`** and read it. This is the step that turns "walk to
