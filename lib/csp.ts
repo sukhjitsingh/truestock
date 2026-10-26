@@ -31,8 +31,11 @@ export function buildCsp(nonce: string, pathname: string): string {
   return [
     "default-src 'self'",
     // 'wasm-unsafe-eval' is for the barcode scanner: `barcode-detector`'s
-    // ZXing-WASM polyfill calls WebAssembly.instantiate on a same-origin
-    // .wasm module wherever the native BarcodeDetector is missing. It does
+    // ZXing-WASM polyfill calls WebAssembly.instantiate on a .wasm module
+    // wherever the native BarcodeDetector is missing. That module is
+    // self-hosted at /vendor/zxing_reader.wasm (lib/scanner-assets.ts) — the
+    // library's default is a jsDelivr URL, which connect-src 'self' below
+    // blocks, so the scanner would open the camera and never decode. It does
     // not permit eval()/new Function() — that needs the far broader
     // 'unsafe-eval', which stays out of production entirely.
     //

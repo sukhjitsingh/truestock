@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Zap, ZapOff } from "lucide-react";
 import { createRescanGuard, offerFrame } from "@/lib/rescan-guard";
+import { locateScannerFile } from "@/lib/scanner-assets";
 
 /**
  * Live barcode scanning via the native `BarcodeDetector`, falling back to the
@@ -120,6 +121,10 @@ export function BarcodeScanner({
           detector = new native({ formats });
         } else {
           const mod = await import("barcode-detector/pure");
+          // The library's default fetches its .wasm from a CDN, which the CSP
+          // (connect-src 'self') blocks — the camera runs and nothing decodes.
+          // Load it from this origin instead (lib/scanner-assets.ts).
+          mod.setZXingModuleOverrides({ locateFile: locateScannerFile });
           detector = new mod.BarcodeDetector({ formats }) as DetectorLike;
         }
 
