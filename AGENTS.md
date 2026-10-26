@@ -187,7 +187,7 @@ catalog cannot drift apart silently again.
    `active` on every request and refuses an inactive account, so this is defence in
    depth: it closes the window where a session row minted before deactivation is still
    a valid Better Auth credential. Enforced in `lib/domain/users.ts` and covered by
-   `tests/user-management.test.ts` against a real MariaDB (mutation-checked: removing
+   `tests/user-write-path.test.ts` against a real MariaDB (mutation-checked: removing
    the session delete fails exactly the revocation test). The mirror of invariant 6 —
    users, like products, are deactivated, never hard-deleted; history references them.
 

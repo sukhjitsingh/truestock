@@ -30,6 +30,7 @@ yarn-error.log*
 # env files
 .env*
 !.env.example
+!.env.e2e.example
 
 # typescript
 *.tsbuildinfo
@@ -65,3 +66,12 @@ tests/*.pdf
 
 # phone:observe session logs and screenshots — can show on-screen typed text
 .phone-sessions/
+
+# Playwright e2e suite (e2e/README.md): signed-in cookie jars for the three test
+# roles, and per-run output. The auth files are live session cookies; traces and
+# screenshots can show typed text. /.env.e2e is already covered by `.env*` above,
+# listed explicitly so nobody "tidies" the pattern and loses it.
+/e2e/.auth/
+/test-results/
+/playwright-report/
+/.env.e2e

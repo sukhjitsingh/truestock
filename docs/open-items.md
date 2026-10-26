@@ -1938,3 +1938,117 @@ real browser on the rebuilt bundle at 390×844 and 360×740):**
 The count/UI claims above were checked in a desktop Chrome with a phone
 viewport and touch emulation, not on a phone. `docs/phone-count-test.md` is the
 checklist for the part that only a phone can answer.
+
+---
+
+## 41. The automated test foundation: what it proves, what it does not, and the defects it found
+
+**Trigger: fixing any defect in "Known defects" below (its `test.failing` test or
+its e2e KNOWN DEFECT probe will start failing — flip it to a plain test, that is the signal),
+or the next change to the count write path or a count screen, whichever comes
+first.**
+
+Opened 2026-10-26 on `test/playwright-foundation`. The branch adds a Playwright
+e2e suite (`e2e/`, 62 runs across a phone and a desktop project, against a
+production build) and nine business-logic files in `tests/` (187 pass, 5 todo,
+against a real MariaDB). It changes no application code. `e2e/README.md` says how
+to run it; this item records how far to trust it.
+
+**Mutation results — which tests were shown to fail when the code they guard
+breaks.** A green test whose guarded change was never reverted proves nothing
+about that change, so each regression test was run against its reverted fix:
+
+| Guarded change | Result |
+|---|---|
+| 7 backend mutations: `lib/authz.ts` inactive-account check removed; `deriveUnitCost` pack size multiplied instead of divided; `counts.ts` closed-status guard; `reports.ts` cost gate forced open; `setUserActive` update moved out of its transaction; `setUserActive` session delete skipped; `valuation.ts` case size ignored | all 7 caught, each by the test file written for it |
+| Phone fix 3 (enroll form: reason text, `aria-describedby`, `e.g.` placeholder, italic) | all 4 mutations caught |
+| Phone fix 1: `RefreshOnOpen` made inert, production build | caught by 3 of 4 specs |
+| Phone fix 1: `prefetch={false}` deleted (alone, and together with `RefreshOnOpen` inert) | **no spec fails** |
+| Phone fix 2: `busy` cleared on success again | **no spec fails** |
+
+**Not verified, and why:**
+
+- **Phone fix 2 (Save re-enables after a successful save).** `e2e/specs/phone-round2.e2e.ts`
+  pins the contract, but reverting the fix does not fail it. The bug was a render
+  landing between two microtasks on a real phone; headless Chromium did not
+  reproduce that interleaving. The phone is the only evidence. Next thing to try:
+  production build with CPU throttling (CDP `Emulation.setCPUThrottlingRate`).
+- **`prefetch={false}` on the picker's Back link.** The reasoning in the code
+  comment may be right, but no test reproduced a stale page without it. Do not
+  cite the in-app-links spec as evidence for it.
+- The older harness checks this branch could not exercise still stand: the vendors
+  Edit button, the catalog stock bar for a counted product with no par, slice 6
+  copy/print, the dev-only origin banner, and `verify-browser.mjs` Decision 5
+  (opt-in via `VERIFY_DECISION5_BASE`; reported NOT VERIFIED otherwise).
+- `tests/extraction-pipeline.test.ts` and `tests/invoice-photo-extraction.test.ts`
+  fail on import on an Intel Mac (`@firecrawl/pdf-inspector` has no darwin-x64
+  binding). They pass in Docker (`bun run test:docker`); the host-side run is
+  expected to show exactly those two.
+
+**Known defects the suite found (none fixed; each encoded as a test that is green
+today and goes red when the defect is fixed).** The full write-up (where each lives,
+impact, suggested fix, the test to flip) is in [`docs/known-defects.md`](known-defects.md);
+this list is the short form:
+
+1. **A deactivated product is still countable** (`tests/known-defects.test.ts`).
+   First write, increment and scan-by-barcode all succeed against an
+   `active = false` product. This is invariant 6 on the write path;
+   `resolveBarcodeForCount` does not join `product`. The location equivalent was
+   fixed 2026-08-12.
+2. **`deriveUnitCost` accepts a zero or negative net** (`lib/domain/cost-derivation.ts`:
+   `-60.00` becomes `-6.0000`; `0.00`, `""` and `" "` become `0.0000`), and
+   `approveInvoice` posts that as a product cost plus a history row.
+3. **`productUpdateSchema.wasteFactor` accepts values of 1 or more** (`.max(9.999)`),
+   which divides by zero or goes negative in the draft gross-up (invariant 10).
+4. **Judgement call:** `createProduct` has no waste-factor input, so a keg enrolled
+   through scan-to-enroll gets `0.000`, not the `0.100` the catalog gives draft.
+5. **The last-owner guard in `setUserActive` races.** `countActiveOwners` runs
+   before `db.transaction`, so two owners deactivating each other at once leave
+   zero active owners (reproduced on the first try and on 8 reruns).
+   `setUserRole` has the same shape and is untested.
+6. **The owner's inline cost cell never shows "Saved"** (`office-catalog.e2e.ts`,
+   KNOWN DEFECT probe, which proves the save reached the database and then asserts
+   "Saved" never appears). The value persists; only the confirmation is lost.
+
+**Smaller surprises worth knowing:** a non-numeric session user id surfaces as a
+`DrizzleQueryError`, not an `AuthzError` (still fail-closed; see
+`tests/authz-fail-closed.test.ts`). `AGENTS.md` cites
+`tests/user-management.test.ts`, which did not exist — corrected on this branch to
+`tests/user-write-path.test.ts`.
+
+**Running the suite: bun's 5 s timeout and a database that sometimes stalls.**
+Found 2026-10-26 while validating this branch; it is why `scripts/run-tests.sh`
+and `test:docker` pass `--timeout 30000`.
+
+- bun 1.4.0's default is 5 s per test **and per hook**, and the DB-backed files run
+  `resetDatabase()` (about 20 TRUNCATEs) in a `beforeEach`. The Docker MariaDB
+  intermittently stalls a single statement for several seconds: measured an INSERT
+  at 3.0 s and TRUNCATEs at 2.3 s and 4.6 s, with nothing locked in the
+  processlist, DNS under 5 ms, and no leaked connection in the new tests. The
+  cause of the stalls is not established; a host disk at 96% full is a plausible,
+  unproven contributor.
+- A timed-out hook is **not aborted**. The next test starts while the previous
+  `resetDatabase()` is still truncating, so the failure that gets reported is a
+  foreign-key or `Duplicate entry` error two tests later. It reads like a real
+  defect and is not one. If a run shows those errors, look for `timed out` first.
+- Before the flag, 2 of 5 full Docker runs failed this way (0–3 failures, a
+  different file each time). The committed suite carries the same exposure; the new
+  files add roughly 190 DB-heavy tests, so it shows more often. With the flag, 3 of
+  3 consecutive full runs of `scripts/run-tests.sh` in Docker were green: 1086 pass,
+  5 todo, 0 fail. Three runs shows the flake is gone far less than it shows the
+  flag works; rerun it a few times after any change to `resetDatabase()`.
+- Only the CLI flag works. `timeout` under `[test]` in `bunfig.toml` is ignored by
+  bun 1.4.0, and `setDefaultTimeout()` called from a `preload` or from a helper
+  every test file imports reaches only the first file loaded (measured with a
+  three-file probe). A bare `bun test` still gets the 5 s default, as does the
+  `docker compose … bun test` line in `docker-compose.worktree-test.yml`; use
+  `bun run test` / `bun run test:docker`, or add the flag.
+- One pre-existing test failed once at 306 ms during a loaded Docker run:
+  `concurrent upserts of the same alias key — the lock-conflict retry fix > 3
+  simultaneous submitInvoiceReview calls …`. It is a genuine concurrency test, so a
+  flake there may be a real retry-budget question rather than a timeout. Not
+  reproduced since; not investigated.
+- The Docker VM goes read-only when the host disk fills (see the
+  `docker-vm-readonly-when-host-disk-full` memory). At the time of writing the host
+  was at 96% with about 11.9 GB of reclaimable Docker build cache. Nothing was
+  pruned; that is the owner's call.
