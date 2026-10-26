@@ -29,6 +29,7 @@ import { BarcodeScanner } from "@/components/count/barcode-scanner";
 import { QuantityEntry, type QuantitySubmission } from "@/components/count/quantity-entry";
 import { FillEntry } from "@/components/count/fill-entry";
 import { planFillSave } from "@/lib/fill-save";
+import { afterSave, saveStillApplies } from "@/lib/entry-drafts";
 import { EnrollForm } from "@/components/count/enroll-form";
 import { LocationPicker } from "@/components/count/location-picker";
 import { StrayBottleModal } from "@/components/count/stray-bottle-modal";
@@ -46,6 +47,11 @@ type Phase =
   | { kind: "counting" }
   | { kind: "entry"; product: ProductSummary; locationId: number; isStray: boolean }
   | { kind: "enroll"; barcode: string };
+
+/** Which half of the entry screen just saved while the other half still holds unsaved input. */
+type EntryNotice = "fill-saved" | "qty-saved" | null;
+/** Where the "Discard unsaved entry?" row is shown — next to the control that was tapped. */
+type DiscardPrompt = "top" | "fill" | "qty" | null;
 
 interface RapidEvent {
   key: string;
@@ -85,14 +91,64 @@ export function CountLeg({
   locations,
   initialLines,
   canSeeCost,
+  initialLocationId = null,
 }: {
   countId: number;
   locations: LocationSummary[];
   initialLines: CountLineDetail[];
   canSeeCost: boolean;
+  /**
+   * Deep link from a count line's Edit arrow: start already inside that leg, as
+   * if it had been picked. The scan page validates it against the active
+   * locations; it is re-checked here so a bad value can only ever mean the
+   * picker, never a leg on a location this screen doesn't hold.
+   */
+  initialLocationId?: number | null;
 }) {
-  const [phase, setPhase] = useState<Phase>({ kind: "pick-location" });
-  const [activeLocationId, setActiveLocationId] = useState<number | null>(null);
+  const startLocationId =
+    initialLocationId != null && locations.some((l) => l.id === initialLocationId)
+      ? initialLocationId
+      : null;
+  const [phase, setPhaseRaw] = useState<Phase>(() =>
+    startLocationId != null ? { kind: "counting" } : { kind: "pick-location" },
+  );
+  const [activeLocationId, setActiveLocationId] = useState<number | null>(startLocationId);
+
+  // Unsaved-input tracking for the entry screen. Refs, not state: nothing
+  // renders from them, and the save continuations below must read the value AT
+  // THE MOMENT THE SAVE RESOLVES — a closure would hold whatever it was at the
+  // tap, and the other editor is not locked while a save is in flight.
+  const fillDirtyRef = useRef(false);
+  const qtyDirtyRef = useRef(false);
+  // Bumped on every phase change. A save captures it before its first await and
+  // skips its post-save bookkeeping if it has moved (see saveStillApplies).
+  const entrySessionRef = useRef(0);
+  // Bumped to remount ONE editor to a clean state after it saves, while leaving
+  // the other (dirty) one mounted. Remounting re-seeds from the line.
+  const [fillKey, setFillKey] = useState(0);
+  const [qtyKey, setQtyKey] = useState(0);
+  const [entryNotice, setEntryNotice] = useState<EntryNotice>(null);
+  const [discardPrompt, setDiscardPrompt] = useState<DiscardPrompt>(null);
+
+  // Every phase change clears the entry screen's bookkeeping, so a flag or
+  // notice from one product's entry can never leak into the next one.
+  const setPhase = useCallback((next: Phase) => {
+    entrySessionRef.current += 1;
+    fillDirtyRef.current = false;
+    qtyDirtyRef.current = false;
+    setEntryNotice(null);
+    setDiscardPrompt(null);
+    setPhaseRaw(next);
+  }, []);
+  const onFillDirty = useCallback((dirty: boolean) => {
+    fillDirtyRef.current = dirty;
+    // "Your open-bottle entry hasn't been saved" is moot once it is clean.
+    if (!dirty) setEntryNotice((n) => (n === "qty-saved" ? null : n));
+  }, []);
+  const onQtyDirty = useCallback((dirty: boolean) => {
+    qtyDirtyRef.current = dirty;
+    if (!dirty) setEntryNotice((n) => (n === "fill-saved" ? null : n));
+  }, []);
   const [lines, setLines] = useState<Map<string, LocalLine>>(() => {
     const map = new Map<string, LocalLine>();
     for (const l of initialLines) {
@@ -525,6 +581,49 @@ export function CountLeg({
     }
   }
 
+  // ---- entry screen: leaving without losing input ---------------------------
+
+  const leaveEntry = () => setPhase({ kind: "counting" });
+
+  /**
+   * Back / Cancel. A clean entry screen leaves at once; one holding unsaved
+   * input asks first — inline, not a modal (a dialog on a control used this
+   * often is clicked through blind), and next to the control that was tapped.
+   */
+  function requestLeave(from: Exclude<DiscardPrompt, null>) {
+    if (fillDirtyRef.current || qtyDirtyRef.current) {
+      setDiscardPrompt(from);
+      return;
+    }
+    leaveEntry();
+  }
+
+  /**
+   * Call after a save SUCCEEDED. The entry screen mounts the open-bottle and
+   * sealed editors together, each with its own Save; leaving unmounts both, so
+   * a save from one used to silently discard whatever was typed in the other.
+   * If the other holds unsaved input, stay: remount only the half that saved
+   * (it re-seeds from the already-updated line) and say what is still pending.
+   * The other half's draft is never written on its behalf.
+   *
+   * `startedSession` is `entrySessionRef.current` as read BEFORE the save's
+   * first await. If the counter left this entry meanwhile (Back → Discard, then
+   * scanned something else) the write has landed but the screen is no longer
+   * the one it was for, and the dirty refs now describe a different entry.
+   */
+  function afterEntrySave(saved: "fill" | "qty", startedSession: number) {
+    if (!saveStillApplies(startedSession, entrySessionRef.current)) return;
+    const otherDirty = saved === "fill" ? qtyDirtyRef.current : fillDirtyRef.current;
+    if (afterSave({ otherDirty }) === "leave") {
+      leaveEntry();
+      return;
+    }
+    if (saved === "fill") setFillKey((k) => k + 1);
+    else setQtyKey((k) => k + 1);
+    setEntryNotice(saved === "fill" ? "fill-saved" : "qty-saved");
+    setDiscardPrompt(null);
+  }
+
   // ---- location picker -----------------------------------------------------
 
   if (phase.kind === "pick-location") {
@@ -564,18 +663,24 @@ export function CountLeg({
     const { product, locationId, isStray } = phase;
     const location = locations.find((l) => l.id === locationId)!;
     const existing = lines.get(lineKey(product.id, locationId));
-    const done = () => setPhase({ kind: "counting" });
     const showFill = location.countMode === "tenths";
+    // Keyed on the line too, so a different product's entry can never inherit
+    // this one's typed state even if React reuses the component position.
+    const entryKey = `${product.id}:${locationId}`;
 
     return (
       <div className="px-bar-pad pb-8 pt-6">
-        <button
-          type="button"
-          onClick={done}
-          className="mb-4 flex items-center gap-1 text-caption text-muted-foreground hover:text-foreground"
-        >
-          <ChevronLeft className="size-4" aria-hidden="true" /> Back to {location.name}
-        </button>
+        {discardPrompt === "top" ? (
+          <DiscardRow className="mb-4" onKeep={() => setDiscardPrompt(null)} onDiscard={leaveEntry} />
+        ) : (
+          <button
+            type="button"
+            onClick={() => requestLeave("top")}
+            className="mb-2 flex min-h-tap-min items-center gap-1 text-caption text-muted-foreground hover:text-foreground"
+          >
+            <ChevronLeft className="size-4" aria-hidden="true" /> Back to {location.name}
+          </button>
+        )}
 
         <h1 className="text-header-title text-foreground">{product.name}</h1>
         <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -598,6 +703,7 @@ export function CountLeg({
         <div className="mt-section-gap">
           {showFill ? (
             <FillEntry
+              key={`fill:${entryKey}:${fillKey}`}
               productId={product.id}
               productName={product.name}
               sizeMl={product.sizeMl}
@@ -609,6 +715,7 @@ export function CountLeg({
               unitCost={product.currentUnitCost}
               pending={busy}
               onSaveFills={async (allFills) => {
+                const startedSession = entrySessionRef.current;
                 // FillEntry hands back the WHOLE open-bottle list, seeded from
                 // the line's existing fills. Sending that array through the
                 // ledgered `increment` would append it onto itself and
@@ -617,7 +724,9 @@ export function CountLeg({
                 const plan = planFillSave(existing?.partialFills ?? [], allFills);
 
                 if (plan.kind === "none") {
-                  done();
+                  // Nothing was written, so don't claim a save; just don't
+                  // strand the counter (or eat the other editor's input).
+                  if (afterSave({ otherDirty: qtyDirtyRef.current }) === "leave") leaveEntry();
                   return;
                 }
 
@@ -639,7 +748,7 @@ export function CountLeg({
                     },
                     (prev) => applyIncrement(prev, product, location, 0, 0, plan.added),
                   );
-                  if (ok) done();
+                  if (ok) afterEntrySave("fill", startedSession);
                   return;
                 }
 
@@ -660,10 +769,23 @@ export function CountLeg({
                   { countLineId: existing.lineId, partialFills: plan.fills },
                   (prev) => applyFillCorrection(prev, product, location, plan.fills),
                 );
-                if (ok) done();
+                if (ok) afterEntrySave("fill", startedSession);
               }}
-              onCancel={done}
+              onDirtyChange={onFillDirty}
+              onCancel={() => requestLeave("fill")}
             />
+          ) : null}
+
+          {entryNotice === "fill-saved" ? (
+            <p
+              role="status"
+              className="mt-3 rounded-md bg-warning-bg px-3 py-2 text-caption font-medium text-warning"
+            >
+              Saved. Your sealed-bottle entry below hasn&rsquo;t been saved yet.
+            </p>
+          ) : null}
+          {discardPrompt === "fill" ? (
+            <DiscardRow className="mt-3" onKeep={() => setDiscardPrompt(null)} onDiscard={leaveEntry} />
           ) : null}
 
           {/*
@@ -680,6 +802,7 @@ export function CountLeg({
               </p>
             ) : null}
             <QuantityEntry
+              key={`qty:${entryKey}:${qtyKey}`}
               productId={product.id}
               productName={product.name}
               currentCases={existing?.sealedCaseQty ?? 0}
@@ -692,6 +815,7 @@ export function CountLeg({
               unitCost={product.currentUnitCost}
               pending={busy}
               onSubmit={async (submission: QuantitySubmission) => {
+                const startedSession = entrySessionRef.current;
                 const ok =
                   submission.mode === "set" && existing?.lineId != null
                     ? await runWrite(
@@ -727,10 +851,22 @@ export function CountLeg({
                             [],
                           ),
                       );
-                if (ok) done();
+                if (ok) afterEntrySave("qty", startedSession);
               }}
-              onCancel={done}
+              onDirtyChange={onQtyDirty}
+              onCancel={() => requestLeave("qty")}
             />
+            {entryNotice === "qty-saved" ? (
+              <p
+                role="status"
+                className="mt-3 rounded-md bg-warning-bg px-3 py-2 text-caption font-medium text-warning"
+              >
+                Saved. Your open-bottle entry above hasn&rsquo;t been saved yet.
+              </p>
+            ) : null}
+            {discardPrompt === "qty" ? (
+              <DiscardRow className="mt-3" onKeep={() => setDiscardPrompt(null)} onDiscard={leaveEntry} />
+            ) : null}
           </div>
         </div>
       </div>
@@ -1069,6 +1205,45 @@ function computeUnits(
 ): number | null {
   if (cases > 0 && caseSize == null) return null;
   return cases * (caseSize ?? 0) + eaches + fills.reduce((s, f) => s + f, 0);
+}
+
+/**
+ * Inline "throw away what I typed?" row — deliberately NOT a modal. The safe
+ * answer (Keep editing) takes focus so a stray tap or Enter doesn't discard,
+ * and Discard sits where Cancel does so the thumb path stays the same.
+ */
+function DiscardRow({
+  className,
+  onKeep,
+  onDiscard,
+}: {
+  className?: string;
+  onKeep: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Discard unsaved entry?"
+      className={cn("rounded-md border border-negative bg-negative-bg p-3", className)}
+    >
+      <p className="text-caption font-semibold text-negative">Discard unsaved entry?</p>
+      <div className="mt-2 flex gap-3">
+        <Button variant="destructive" size="primary" className="flex-1" onClick={onDiscard}>
+          Discard
+        </Button>
+        <Button
+          variant="primary"
+          size="primary"
+          className="flex-[1.5]"
+          autoFocus
+          onClick={onKeep}
+        >
+          Keep editing
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 function SyncIndicator({ pending }: { pending: number }) {

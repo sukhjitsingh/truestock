@@ -8,7 +8,10 @@
  */
 import { z } from "zod";
 import { invoiceStatusEnum, invoiceSourceEnum } from "@/db/enums";
-import { ACCEPTED_INVOICE_CONTENT_TYPES } from "@/lib/storage/invoice-content-types";
+import {
+  ACCEPTED_INVOICE_CONTENT_TYPES,
+  visionImageSizeProblem,
+} from "@/lib/storage/invoice-content-types";
 
 export const invoiceStatusSchema = z.enum(invoiceStatusEnum);
 export const invoiceSourceSchema = z.enum(invoiceSourceEnum);
@@ -35,13 +38,22 @@ const sha256HexSchema = z
  */
 const MAX_INVOICE_BYTES = 25 * 1024 * 1024;
 
-export const uploadInvoiceSchema = z.object({
-  vendorId: z.number().int().positive().optional(),
-  source: invoiceSourceSchema,
-  contentType: contentTypeSchema,
-  fileSha256: sha256HexSchema,
-  fileSizeBytes: z.number().int().positive().max(MAX_INVOICE_BYTES),
-});
+export const uploadInvoiceSchema = z
+  .object({
+    vendorId: z.number().int().positive().optional(),
+    source: invoiceSourceSchema,
+    contentType: contentTypeSchema,
+    fileSha256: sha256HexSchema,
+    fileSizeBytes: z.number().int().positive().max(MAX_INVOICE_BYTES),
+  })
+  // A photo has a tighter ceiling than the 25 MB general one: Claude Vision
+  // rejects an image over ~7.5 MB, and the job would otherwise fail after the
+  // upload "succeeded". The declared size is client input, so the pipeline
+  // re-checks the real bytes — this is the early, friendly half.
+  .superRefine((value, ctx) => {
+    const problem = visionImageSizeProblem(value.contentType, value.fileSizeBytes);
+    if (problem) ctx.addIssue({ code: "custom", path: ["fileSizeBytes"], message: problem });
+  });
 export type UploadInvoiceInput = z.infer<typeof uploadInvoiceSchema>;
 
 export const confirmUploadSchema = z.object({

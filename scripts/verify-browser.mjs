@@ -30,6 +30,25 @@
  * Against a local dev database only — it signs in, changes a role, and
  * creates/renames/retires its own throwaway locations. Everything it mutates
  * it either created itself or restores; see restoreLog at the end of the run.
+ *
+ * ## It refuses to run unless you name the database you mean
+ *
+ * `DATABASE_URL` and `BASE_URL` must both be loopback (127.0.0.1, localhost or
+ * ::1 — not a docker service name, not a remote host), and `VERIFY_ALLOW_DB`
+ * must be set to exactly `<host>:<port>/<database>` of that `DATABASE_URL`:
+ *
+ *   VERIFY_ALLOW_DB=127.0.0.1:3310/truestock bun run verify:browser
+ *
+ * It is per run on purpose and is NOT in the `verify:browser` script: a stale
+ * `DATABASE_URL` in the shell (or an env file for the wrong database) must not
+ * be able to point this script's inserts, cost edits and deletes at real data.
+ * The refusal message prints the exact value to export. See
+ * scripts/lib/assert-local-target.mjs.
+ *
+ * Cleanup deletes only rows this run created, by id and organization: its own
+ * locations, its own seeded invoices, its own vendor_alias (and the vendor only
+ * if the run made it). Product costs are put back by id from a snapshot taken
+ * before the first edit. Nothing is matched by name pattern.
  */
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -37,6 +56,7 @@ import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import mysql from "mysql2/promise";
 import { chromium } from "playwright";
+import { assertLocalTarget } from "./lib/assert-local-target.mjs";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const EMAIL = process.env.CHECK_EMAIL;
@@ -58,6 +78,17 @@ if (!EMAIL || !PASSWORD) {
       "Then:\n" +
       "  CHECK_EMAIL=you@bar.local CHECK_PASSWORD='...' node scripts/verify-browser.mjs",
   );
+  process.exit(2);
+}
+
+// Before the browser launches and before the database is opened: this script
+// inserts, edits and deletes rows, so it must know it is aimed at a local
+// database the operator named for this run. See the header and
+// scripts/lib/assert-local-target.mjs.
+try {
+  assertLocalTarget(process.env.DATABASE_URL, BASE);
+} catch (err) {
+  console.error(err.message);
   process.exit(2);
 }
 
@@ -185,6 +216,39 @@ await page.addInitScript(() => {
  */
 const sql = await mysql.createConnection(process.env.DATABASE_URL);
 
+/**
+ * The organization this run acts in: the signed-in account's own. Every
+ * cleanup statement below is scoped to it as well as to an id this run
+ * recorded, so a stray id can never reach another tenant's row.
+ *
+ * Resolved up front and fatal if missing — the sign-in below could not succeed
+ * for an account that is not in this database anyway, and a cleanup pass that
+ * cannot scope itself must not run unscoped.
+ */
+const [[runUserRow]] = await sql.query("SELECT organization_id AS organizationId FROM user WHERE email = ?", [EMAIL]);
+const runOrgId = runUserRow?.organizationId ?? null;
+if (!runOrgId) {
+  console.error(
+    `${EMAIL} has no user row in the database DATABASE_URL points at, so there is no organization to scope the ` +
+      "run's cleanup to. Check that DATABASE_URL is the database the app under test uses.",
+  );
+  await sql.end();
+  await browser.close();
+  process.exit(2);
+}
+
+// Set by the locations section below. `locationStamp` makes the two throwaway
+// names unique to this run; `createdLocationIds` is what cleanup deletes — by
+// id and organization, never by name pattern. Recorded as soon as the row
+// exists, and re-resolved from the exact stamped names at cleanup in case the
+// run died between the click and the lookup.
+let locationStamp = null;
+const createdLocationIds = new Set();
+async function trackLocationByName(name) {
+  const [rows] = await sql.query("SELECT id FROM location WHERE organization_id = ? AND name = ?", [runOrgId, name]);
+  for (const row of rows) createdLocationIds.add(row.id);
+}
+
 // Set by the Phase 2.5 invoices section below; read by the cleanup pass at
 // the end of the run so the fixture this script creates doesn't accumulate
 // in the dev archive on every re-run, mirroring the throwaway-locations
@@ -199,6 +263,11 @@ let slice3UnmatchedInvoiceId = null;
 let slice3PrematchedInvoiceId = null;
 let slice3VendorId = null;
 let slice3CreatedVendor = false;
+// The vendor_item_code this run minted (`VERIFY-<ms>`), the only thing that
+// identifies the vendor_alias row the Approve click creates. When the run
+// reuses a pre-existing vendor, cleanup deletes aliases by this code and no
+// other: that vendor's real aliases are not this run's to remove.
+let slice3VendorItemCode = null;
 
 /**
  * Smallest well-formed one-page PDF. The slice 3 invoices are seeded with SQL
@@ -223,12 +292,10 @@ async function attachFixtureFile(sql, orgId, invoiceId) {
   const key = path.posix.join(String(orgId), `${invoiceId}.pdf`);
   await mkdir(path.join(invoiceStorageRoot(), String(orgId)), { recursive: true });
   await writeFile(path.join(invoiceStorageRoot(), key), FIXTURE_PDF);
-  await sql.execute("UPDATE invoice SET file_path = ?, file_sha256 = ?, file_size_bytes = ? WHERE id = ?", [
-    key,
-    createHash("sha256").update(FIXTURE_PDF).digest("hex"),
-    FIXTURE_PDF.length,
-    invoiceId,
-  ]);
+  await sql.execute(
+    "UPDATE invoice SET file_path = ?, file_sha256 = ?, file_size_bytes = ? WHERE id = ? AND organization_id = ?",
+    [key, createHash("sha256").update(FIXTURE_PDF).digest("hex"), FIXTURE_PDF.length, invoiceId, orgId],
+  );
 }
 
 try {
@@ -407,6 +474,7 @@ try {
 
   // ---- slice 2: create, rename, re-mode ----------------------------------
   const stamp = Date.now();
+  locationStamp = stamp;
   const created = `Verify Bar ${stamp}`;
   const renamed = `Verify Patio ${stamp}`;
 
@@ -426,6 +494,7 @@ try {
   const navsBeforeCreate = documentLoads;
   await page.getByRole("button", { name: /create location/i }).click();
   await page.locator("table tbody").getByText(created, { exact: false }).first().waitFor({ timeout: 15000 });
+  await trackLocationByName(created);
   record(
     "a new location appears without a page navigation",
     documentLoads === navsBeforeCreate,
@@ -543,9 +612,26 @@ try {
 
   const EDITS = Math.min(4, cellCount);
   const navsBeforeEdits = documentLoads;
+  // Snapshot every cost in this organization BEFORE the first edit, straight
+  // from the database (not the formatted value the input displays), keyed by
+  // product id. The cell's aria-label only carries a name, and names repeat
+  // across sizes (a 750 ml and a 1.75 L of the same spirit), so each edited
+  // cell is mapped to every product in this org with that name; restoring an
+  // unedited namesake to its own snapshot value is a no-op.
+  const [costSnapshot] = await sql.query(
+    "SELECT id, name, current_unit_cost AS cost FROM product WHERE organization_id = ?",
+    [runOrgId],
+  );
   for (let i = 0; i < EDITS; i++) {
     const cell = costCells.nth(i);
-    restoreLog.push({ label: await cell.getAttribute("aria-label"), value: await cell.inputValue() });
+    const label = await cell.getAttribute("aria-label");
+    const productName = (label ?? "").replace(/^Unit cost for /, "");
+    const products = costSnapshot.filter((p) => p.name === productName).map(({ id, cost }) => ({ id, cost }));
+    // Refuse to edit what cannot be put back by id.
+    if (products.length === 0) {
+      throw new Error(`no product named "${productName}" in organization ${runOrgId}; refusing to edit a cost I cannot restore`);
+    }
+    restoreLog.push({ label, value: await cell.inputValue(), products });
     await cell.fill(String(11 + i));
     await cell.blur();
     await page.waitForTimeout(700);
@@ -1054,6 +1140,7 @@ try {
       skipped.push("slice 3 matching — no active product found");
     } else {
       const vendorItemCode = `VERIFY-${Date.now()}`;
+      slice3VendorItemCode = vendorItemCode;
       const today = new Date().toISOString().slice(0, 10);
       const retentionUntil = `${Number(today.slice(0, 4)) + 3}${today.slice(4)}`;
 
@@ -1349,27 +1436,60 @@ try {
 // exactly the plausible-but-wrong data AGENTS.md warns about, and it would
 // silently make the valuation non-zero and wrong.
 try {
-  for (const { label, value } of restoreLog) {
-    const name = label.replace(/^Unit cost for /, "");
-    await sql.execute("UPDATE product SET current_unit_cost = ? WHERE name = ?", [value === "" ? null : value, name]);
+  // By id AND organization, from the snapshot taken before the first edit —
+  // never by name, which is neither unique (750 ml and 1.75 L of one spirit)
+  // nor tenant-scoped.
+  let restoredCostRows = 0;
+  for (const { products } of restoreLog) {
+    for (const { id, cost } of products) {
+      const [restored] = await sql.execute(
+        "UPDATE product SET current_unit_cost = ? WHERE id = ? AND organization_id = ?",
+        [cost, id, runOrgId],
+      );
+      restoredCostRows += restored.affectedRows;
+    }
   }
-  record("edited product costs restored to their original values", true, `${restoreLog.length} products`);
+  record(
+    "edited product costs restored to their original values",
+    true,
+    `${restoreLog.length} edited cells, ${restoredCostRows} product rows restored by id`,
+  );
 
   // The throwaway locations this run created are removed by the harness — this
   // is a fixture teardown, not the application deleting a location. Invariant 6
   // still holds: the app only ever retired it, which is what was verified above.
-  const [res] = await sql.execute("DELETE FROM location WHERE name LIKE 'Verify Bar %' OR name LIKE 'Verify Patio %'");
-  record("throwaway verification locations removed", true, `${res.affectedRows} rows`);
+  // Only ids this run recorded, only in the organization it ran in. The exact
+  // stamped names are re-resolved first so a run that died between the Create
+  // click and the id lookup does not leak its row; the stamp is unique to this
+  // run, so that lookup cannot match anything that was not made by it.
+  if (locationStamp) {
+    await trackLocationByName(`Verify Bar ${locationStamp}`);
+    await trackLocationByName(`Verify Patio ${locationStamp}`);
+  }
+  let removedLocations = 0;
+  for (const id of createdLocationIds) {
+    const [removed] = await sql.execute("DELETE FROM location WHERE id = ? AND organization_id = ?", [id, runOrgId]);
+    removedLocations += removed.affectedRows;
+  }
+  record(
+    "throwaway verification locations removed",
+    removedLocations === createdLocationIds.size,
+    `${removedLocations} of ${createdLocationIds.size} recorded rows`,
+  );
 
   // The Slice 1 fixture invoice — deleted here by the harness (not by any
   // app code; invoices have no delete affordance and shouldn't) so repeated
   // runs don't accumulate rows and files in the dev archive.
   if (invoiceIdToCleanup) {
-    const [[invoiceRow]] = await sql.query("SELECT file_path AS filePath FROM invoice WHERE id = ?", [
+    const [[invoiceRow]] = await sql.query(
+      "SELECT file_path AS filePath FROM invoice WHERE id = ? AND organization_id = ?",
+      [invoiceIdToCleanup, runOrgId],
+    );
+    await sql.execute("DELETE FROM extraction_job WHERE invoice_id = ? AND organization_id = ?", [
       invoiceIdToCleanup,
+      runOrgId,
     ]);
-    await sql.execute("DELETE FROM extraction_job WHERE invoice_id = ?", [invoiceIdToCleanup]);
-    await sql.execute("DELETE FROM invoice WHERE id = ?", [invoiceIdToCleanup]);
+    await sql.execute("DELETE FROM invoice WHERE id = ? AND organization_id = ?", [invoiceIdToCleanup, runOrgId]);
     if (invoiceRow?.filePath) {
       await unlink(path.resolve(invoiceStorageRoot(), invoiceRow.filePath)).catch(() => {});
     }
@@ -1386,24 +1506,38 @@ try {
   // Slice 1 cleanup above: no app code deletes any of these, so nothing here
   // exercises a real deletion path — it is fixture teardown, not a feature.
   if (slice3UnmatchedInvoiceId || slice3PrematchedInvoiceId) {
+    // Never a row this run did not create. A vendor the run made holds only
+    // aliases the run made, so all of them go with it. A pre-existing vendor
+    // keeps its real aliases: only the one carrying the item code this run
+    // minted is removed.
     let removedAliasRows = 0;
-    if (slice3VendorId) {
-      const [aliasDelete] = await sql.execute("DELETE FROM vendor_alias WHERE vendor_id = ?", [
+    if (slice3VendorId && slice3CreatedVendor) {
+      const [aliasDelete] = await sql.execute("DELETE FROM vendor_alias WHERE organization_id = ? AND vendor_id = ?", [
+        runOrgId,
         slice3VendorId,
       ]);
+      removedAliasRows = aliasDelete.affectedRows;
+    } else if (slice3VendorId && slice3VendorItemCode) {
+      const [aliasDelete] = await sql.execute(
+        "DELETE FROM vendor_alias WHERE organization_id = ? AND vendor_id = ? AND vendor_item_code = ?",
+        [runOrgId, slice3VendorId, slice3VendorItemCode],
+      );
       removedAliasRows = aliasDelete.affectedRows;
     }
     for (const id of [slice3UnmatchedInvoiceId, slice3PrematchedInvoiceId]) {
       if (!id) continue;
-      const [[stored]] = await sql.query("SELECT file_path AS filePath FROM invoice WHERE id = ?", [id]);
-      await sql.execute("DELETE FROM invoice_line WHERE invoice_id = ?", [id]);
-      await sql.execute("DELETE FROM extraction_job WHERE invoice_id = ?", [id]);
-      await sql.execute("DELETE FROM invoice WHERE id = ?", [id]);
+      const [[stored]] = await sql.query(
+        "SELECT file_path AS filePath FROM invoice WHERE id = ? AND organization_id = ?",
+        [id, runOrgId],
+      );
+      await sql.execute("DELETE FROM invoice_line WHERE invoice_id = ? AND organization_id = ?", [id, runOrgId]);
+      await sql.execute("DELETE FROM extraction_job WHERE invoice_id = ? AND organization_id = ?", [id, runOrgId]);
+      await sql.execute("DELETE FROM invoice WHERE id = ? AND organization_id = ?", [id, runOrgId]);
       if (stored?.filePath) await unlink(path.resolve(invoiceStorageRoot(), stored.filePath)).catch(() => {});
     }
     let removedVendor = false;
     if (slice3CreatedVendor && slice3VendorId) {
-      await sql.execute("DELETE FROM vendor WHERE id = ?", [slice3VendorId]);
+      await sql.execute("DELETE FROM vendor WHERE id = ? AND organization_id = ?", [slice3VendorId, runOrgId]);
       removedVendor = true;
     }
     record(

@@ -33,6 +33,7 @@
  */
 import { chromium } from "playwright";
 import mysql from "mysql2/promise";
+import { assertLocalTarget } from "./lib/assert-local-target.mjs";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const EMAIL = process.env.CHECK_EMAIL;
@@ -42,6 +43,16 @@ if (!EMAIL || !PASSWORD || !process.env.DATABASE_URL) {
   console.error(
     "CHECK_EMAIL, CHECK_PASSWORD and DATABASE_URL must be set (see .env.local).",
   );
+  process.exit(2);
+}
+
+// This script INSERTs and DELETEs against whatever DATABASE_URL names, so it
+// refuses anything but a loopback target the operator named explicitly with
+// VERIFY_ALLOW_DB — see scripts/lib/assert-local-target.mjs.
+try {
+  assertLocalTarget(process.env.DATABASE_URL, BASE);
+} catch (err) {
+  console.error(err.message);
   process.exit(2);
 }
 
@@ -330,8 +341,11 @@ try {
   // nothing to restore for it.
   try {
     if (needsReviewInvoiceId) {
-      await sql.execute("DELETE FROM invoice_line WHERE invoice_id = ?", [needsReviewInvoiceId]);
-      await sql.execute("DELETE FROM invoice WHERE id = ?", [needsReviewInvoiceId]);
+      await sql.execute("DELETE FROM invoice_line WHERE invoice_id = ? AND organization_id = ?", [
+        needsReviewInvoiceId,
+        orgId,
+      ]);
+      await sql.execute("DELETE FROM invoice WHERE id = ? AND organization_id = ?", [needsReviewInvoiceId, orgId]);
     }
     console.log(
       `\nleft in place as evidence: product #${createdProductId} (current_unit_cost now set), ` +

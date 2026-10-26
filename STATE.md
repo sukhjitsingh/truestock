@@ -337,6 +337,37 @@ Written, reviewed, typechecked — never observed working.
 
 ## Recent history
 
+- **2026-10-25** — **PRs #28 (Phase 2.5 backend follow-ons) and #29 (UI/UX
+  redesign v2) merged into `feat/phase-2.5-invoice-automation`; a post-merge QA
+  pass on the merged tree found and fixed seven defects, none of which a status
+  code or a green test run had caught.** The fixes ride in
+  `fix/phase-2.5-post-merge-qa` and are listed in `docs/open-items.md` #40: the
+  barcode-scanner polyfill never decoded because zxing-wasm's default CDN URL is
+  blocked by the CSP's `connect-src 'self'` (the camera opened and nothing was
+  ever detected — the wasm is now self-hosted at `/vendor/zxing_reader.wasm`);
+  `Button` labels lost their font size to `tailwind-merge` filing `text-label`
+  under text colour (`cnSized`); the dark-theme destructive button was white on
+  `#f87171`, 2.77:1, now 7.2:1; three controls sat under the 44 px floor; the
+  oversize-photo message contradicted itself at 7,500,001 bytes; the SET-mode
+  save button broke its label from its figure at 360 px; and a *photographed*
+  invoice could be uploaded but not extracted — it went through pdf-inspector
+  and to Claude as a PDF `document` block, and HEIC was still advertised though
+  Claude cannot read it. Photos now go to Vision as `image` blocks; HEIC and
+  photos over 7.5 MB are refused at upload with a message that says why.
+  **Proven:** typecheck
+  clean, lint 0 errors / 31 warnings, 808/808 unit tests, both guarded browser
+  harnesses (66/66 and 72/72) and a targeted re-check of the fixes on the rebuilt
+  production bundle at 390×844 and 360×740, with no CSP violations or console
+  errors — all in a desktop Chrome with phone viewport, touch emulation and a
+  *fake camera feed*. **Not proven:** anything on a real phone — the real camera
+  and whether it uses the native `BarcodeDetector` or the polyfill, iOS Safari,
+  safe-area insets, landscape, the on-screen keyboard over the fixed action bar —
+  and photo extraction against a *live* Vision response (only a stub has run).
+  `docs/phone-count-test.md` is the checklist for the part only a phone can
+  answer. One concurrency test (`invoice_file_write_once_survives_a_concurrent_put`)
+  failed once in a single full-suite run and passed on every rerun; recorded as
+  open item #40.17, not understood.
+
 - **2026-08-20** — **Open items #2, #32, #33 closed as Slice 5 prerequisites, then
   Slice 5 (Audit Packet, Phase E) built and verified end to end — Phase 2.5's
   A–E feature set is now fully implemented.** Two PRs, stacked: #25

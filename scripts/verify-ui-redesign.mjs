@@ -34,17 +34,30 @@
  *      routes bounce other roles. Against a local dev database only:
  *
  *        CHECK_EMAIL=... CHECK_PASSWORD=... \
+ *          VERIFY_ALLOW_DB=127.0.0.1:3310/truestock \
  *          node --env-file=.env.local scripts/verify-ui-redesign.mjs
  *
  *      It signs in once and reuses that browser context for everything (the
  *      viewport is switched per page), which keeps it to one /sign-in request
  *      against Better Auth's rate limit. It may leave an open, tagged test
  *      count behind and one test count line; it deletes nothing.
+ *
+ *      It refuses to run the authenticated section (before signing in or
+ *      opening the database) unless DATABASE_URL and BASE_URL are both
+ *      loopback (127.0.0.1, localhost or ::1; a docker service name does not
+ *      count) AND VERIFY_ALLOW_DB is set to exactly `<host>:<port>/<database>`
+ *      of that DATABASE_URL, as in the example above. The opt-in is per run on
+ *      purpose: a stale DATABASE_URL in the shell must not be able to aim this
+ *      script's count writes at real data. The refusal prints the exact value
+ *      to export. See scripts/lib/assert-local-target.mjs. The unauthenticated
+ *      section only issues GETs and an empty form submit, writes nothing, and
+ *      stays available without any of this.
  */
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import mysql from "mysql2/promise";
 import { chromium } from "playwright";
+import { assertLocalTarget } from "./lib/assert-local-target.mjs";
 
 export const BASE = process.env.BASE_URL ?? "http://localhost:3011";
 export const SHOT_DIR = process.env.SHOT_DIR ?? "var/ui-redesign-shots";
@@ -742,11 +755,28 @@ async function countFlow(context, sql, ctx) {
         const after = (await button.innerText()).replace(/\s+/g, " ").trim();
         const wantDelta = new RegExp(`was\\s+${cur}\\s*ea\\s*·\\s*\\+3`, "i");
         await shot(page, "auth-phone-flow-sealed-set").catch(() => {});
-        // Nothing saved: leave without tapping Save correction.
-        await page.getByRole("button", { name: `Back to ${ctx.active.name}` }).click();
+        // Nothing saved: leave without tapping Save correction. The typed value is unsaved, so
+        // Back must ask first (inline row, not a modal) — Keep editing must preserve what was
+        // typed, and only Discard may actually leave.
+        const back = page.getByRole("button", { name: `Back to ${ctx.active.name}` });
+        const prompt = page.getByRole("group", { name: "Discard unsaved entry?" });
+        await back.click();
+        const askedToDiscard = await prompt.isVisible().catch(() => false);
+        let keptValue = false;
+        if (askedToDiscard) {
+          await prompt.getByRole("button", { name: "Keep editing" }).click();
+          keptValue = (await eaches.inputValue()) === String(cur + 3);
+          await back.click();
+          await prompt.getByRole("button", { name: "Discard" }).click();
+        }
+        const left = askedToDiscard
+          ? await tablist.waitFor({ state: "hidden", timeout: 3000 }).then(() => true, () => false)
+          : false;
         return {
-          ok: sealedLabel && before !== after && wantDelta.test(after),
-          detail: `'Sealed bottles here'=${sealedLabel}; button "${before}" -> "${after}"`,
+          ok: sealedLabel && before !== after && wantDelta.test(after) && askedToDiscard && keptValue && left,
+          detail:
+            `'Sealed bottles here'=${sealedLabel}; button "${before}" -> "${after}"; ` +
+            `discard row shown=${askedToDiscard}; typed value kept after Keep editing=${keptValue}; left after Discard=${left}`,
         };
       });
     } else {
@@ -962,6 +992,20 @@ async function authenticated(browser) {
       "authenticated checks have a database to read ground truth from",
       false,
       "DATABASE_URL is not set (run with node --env-file=.env.local); the authenticated checks need it, so none were run",
+    );
+    return;
+  }
+  // Before the sign-in (which writes a session row to the app's database) and
+  // before this script's own connection: both must be aimed at a local target
+  // the operator named for this run.
+  try {
+    assertLocalTarget(process.env.DATABASE_URL, BASE);
+  } catch (e) {
+    console.error(`\n${e.message}\n`);
+    record(
+      "authenticated checks run against an explicitly allowed local target",
+      false,
+      "refused (see the message above); none of the authenticated checks were run",
     );
     return;
   }

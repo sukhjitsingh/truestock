@@ -117,7 +117,12 @@ export default async function CountSessionPage({
               <CountLineCard
                 key={line.id}
                 data={line}
-                href={writable ? `/count/${count.id}/scan` : undefined}
+                // Deep-links into the line's own leg. The scan page re-validates
+                // the id against the active locations; a read-only count gets no
+                // link at all.
+                href={
+                  writable ? `/count/${count.id}/scan?locationId=${line.locationId}` : undefined
+                }
               />
             ))}
           </CardStack>

@@ -127,7 +127,7 @@ export function CountCatalogSearch() {
             type="button"
             onClick={() => setScannerOpen(true)}
             aria-label="Scan barcode to find product"
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg text-accent transition-colors hover:bg-muted active:scale-95"
+            className="-mr-2 flex size-tap-min shrink-0 items-center justify-center rounded-lg text-accent transition-colors hover:bg-muted active:scale-95"
           >
             <ScanLine className="size-5" aria-hidden="true" />
           </button>

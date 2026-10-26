@@ -27,6 +27,12 @@
  * (Slice 4) and "duplicate" needs cross-invoice comparison — neither exists
  * yet, so neither is invented here.
  *
+ * A photographed invoice (JPEG/PNG/WebP) is not a PDF, so none of the
+ * pdf-inspector stages apply to it: `runClaimedJob` skips classify/process/OCR
+ * for one, records it as `pdfType: "image"`, and sends it straight to Claude
+ * Vision as an `image` block (`buildSourceBlock`). The stored file's
+ * extension is the only record of what it is — see `contentTypeForPath`.
+ *
  * Text PDFs deliberately do not depend on Anthropic. pdf-inspector preserves
  * their table layout as Markdown, which this module maps conservatively into
  * review drafts: unknown fields remain null and every row still requires a
@@ -64,6 +70,12 @@ import {
 } from "@/lib/domain/invoice-lines";
 import { matchLinesToProducts } from "@/lib/domain/matching";
 import { resolveStoredPath } from "@/lib/storage/invoice-files";
+import {
+  contentTypeForPath,
+  isVisionImageContentType,
+  visionImageSizeProblem,
+  type VisionImageContentType,
+} from "@/lib/storage/invoice-content-types";
 import { DomainError } from "@/lib/domain/errors";
 
 type PdfType = (typeof pdfTypeEnum)[number];
@@ -835,8 +847,14 @@ export interface ExtractionDoc {
   pdfType: PdfType;
   /** pdf-inspector's markdown, when the classification suggests a usable text layer. */
   markdown: string | null;
-  /** Base64-encoded PDF bytes, sent as the Claude Vision document block. */
+  /**
+   * Base64-encoded bytes of the stored file, sent as the Claude Vision block.
+   * Named for the PDF-only era and kept to avoid churn: it carries photo bytes
+   * too when `mediaType` is an image type.
+   */
   pdfBase64: string;
+  /** What `pdfBase64` actually is. Omitted means `application/pdf`. */
+  mediaType?: "application/pdf" | VisionImageContentType;
 }
 
 export interface ExtractInvoiceResult {
@@ -910,6 +928,23 @@ function getAnthropicClient(): Anthropic {
 }
 
 /**
+ * The block that carries the invoice itself into the Vision request: a
+ * `document` block for a PDF (the default, so every pre-photo caller is
+ * unchanged) or an `image` block for a photograph. They are different block
+ * types in the API — a photo sent as a `document` with
+ * `media_type: "application/pdf"` is not a PDF and cannot be read as one,
+ * which is the failure this exists to prevent. Pure so it is testable without
+ * the SDK or a network call.
+ */
+export function buildSourceBlock(doc: Pick<ExtractionDoc, "pdfBase64" | "mediaType">): Anthropic.ContentBlockParam {
+  const mediaType = doc.mediaType ?? "application/pdf";
+  if (isVisionImageContentType(mediaType)) {
+    return { type: "image", source: { type: "base64", media_type: mediaType, data: doc.pdfBase64 } };
+  }
+  return { type: "document", source: { type: "base64", media_type: "application/pdf", data: doc.pdfBase64 } };
+}
+
+/**
  * The Claude Vision call. `effort` is `low` for a `text` classification
  * (the model mostly confirms what pdf-inspector's markdown already found)
  * and `medium` for anything that needs real reading (`scanned`/`mixed`/
@@ -921,15 +956,10 @@ export async function extractInvoice(doc: ExtractionDoc): Promise<ExtractInvoice
   const client = getAnthropicClient();
   const effort = doc.pdfType === "text" ? "low" : "medium";
   console.log(
-    `[extraction-pipeline] Vision call starting: pdfType=${doc.pdfType}, effort=${effort}, hasMarkdown=${doc.markdown != null}`,
+    `[extraction-pipeline] Vision call starting: pdfType=${doc.pdfType}, mediaType=${doc.mediaType ?? "application/pdf"}, effort=${effort}, hasMarkdown=${doc.markdown != null}`,
   );
 
-  const userContent: Anthropic.ContentBlockParam[] = [
-    {
-      type: "document",
-      source: { type: "base64", media_type: "application/pdf", data: doc.pdfBase64 },
-    },
-  ];
+  const userContent: Anthropic.ContentBlockParam[] = [buildSourceBlock(doc)];
   if (doc.markdown) {
     userContent.push({
       type: "text",
@@ -1317,18 +1347,55 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
   }
   const resolvedPath = resolveStoredPath(invoiceRow.filePath);
 
+  // What the stored file IS decides which stages can touch it: pdf-inspector
+  // reads PDFs only (it throws "Not a PDF" on a photo), and the Claude API
+  // takes a photo as an `image` block, never a `document`. The extension is
+  // the only record — never guess a type for an unknown one, since a wrong
+  // guess reaches Claude Vision as garbage and fails far from its cause. These
+  // throw AFTER the uploaded -> processing CAS above so the catch in
+  // `processExtractionQueue` can terminalize the invoice out of `processing`.
+  const storedContentType = contentTypeForPath(invoiceRow.filePath);
+  if (storedContentType === "image/heic") {
+    throw new Error("HEIC photos aren't supported — re-upload as JPEG or PDF.");
+  }
+  const photoMediaType =
+    storedContentType != null && isVisionImageContentType(storedContentType) ? storedContentType : null;
+  if (storedContentType !== "application/pdf" && photoMediaType == null) {
+    throw new Error(
+      `Invoice ${job.invoiceId}'s stored file is not a recognised type — re-upload it as a PDF, JPEG, PNG, or WebP.`,
+    );
+  }
+
   // Read the file once — the buffer is shared by classify, process, and the
   // Vision base64 encode, matching the library's "single document load" design.
   const readPdfFile = deps.readPdfFile ?? readFile;
   const pdfBytes = await readPdfFile(resolvedPath);
 
-  await setJobPhase(job.id, "classify");
+  // Upload validation checks the DECLARED size; this is the real one. Without
+  // it an oversized photo reaches Claude Vision and comes back as an API error
+  // that names neither the photo nor the limit.
+  if (photoMediaType) {
+    const sizeProblem = visionImageSizeProblem(photoMediaType, pdfBytes.length);
+    if (sizeProblem) throw new Error(sizeProblem);
+  }
+
   const classifyFn = deps.classifyPdf ?? classifyPdf;
   const processPdfFn = deps.processPdf ?? processPdf;
-  const classification = await classifyFn(pdfBytes);
-  console.log(
-    `[extraction-pipeline] job ${job.id}: classified as ${classification.pdfType} (confidence=${classification.confidence.toFixed(2)}, pageCount=${classification.pageCount}, pagesNeedingOcr=${classification.pagesNeedingOcr.length})`,
-  );
+  let classification: ClassifyPdfResult;
+  if (photoMediaType) {
+    // Nothing to classify: a photo is one page and has no text layer, so it
+    // is `image` by definition. `[0]` (0-indexed, like classifyPdf's own) says
+    // its only page needs reading by a vision model — what a one-page
+    // pdf-inspector `image` result would say.
+    classification = { pdfType: "image", pageCount: 1, confidence: 1, pagesNeedingOcr: [0] };
+    console.log(`[extraction-pipeline] job ${job.id}: ${photoMediaType} photo upload — skipping pdf-inspector, recorded as image`);
+  } else {
+    await setJobPhase(job.id, "classify");
+    classification = await classifyFn(pdfBytes);
+    console.log(
+      `[extraction-pipeline] job ${job.id}: classified as ${classification.pdfType} (confidence=${classification.confidence.toFixed(2)}, pageCount=${classification.pageCount}, pagesNeedingOcr=${classification.pagesNeedingOcr.length})`,
+    );
+  }
   // Persist classification immediately rather than only on `done`: it is the
   // evidence that explains why a failed job did or did not require Vision.
   await db
@@ -1388,16 +1455,21 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
     // not fail: before selective OCR existed, every scanned PDF went straight
     // to Vision, so Vision is the known-good fallback. Treat a failed OCR step
     // as "nothing here was confident enough to skip Vision".
+    // A photo never enters this step: it is not a PDF, so pdf-inspector would
+    // throw on it, and with `ocrResult` left null it falls through to Vision
+    // below exactly like a failed OCR would.
     let ocrResult: ProcessPdfWithOcrResult | null = null;
-    try {
-      ocrResult = await processPdfWithOcrFn(pdfBytes);
-      console.log(
-        `[extraction-pipeline] job ${job.id}: selective OCR routed ${ocrResult.pagesRoutedToOcr.length} page(s) to local OCR, ${ocrResult.pagesRecommendingHosted.length} page(s) still recommend a hosted vision model`,
-      );
-    } catch (err) {
-      console.warn(
-        `[extraction-pipeline] job ${job.id}: selective OCR failed (${err instanceof Error ? err.message : String(err)}); falling back to Claude Vision`,
-      );
+    if (!photoMediaType) {
+      try {
+        ocrResult = await processPdfWithOcrFn(pdfBytes);
+        console.log(
+          `[extraction-pipeline] job ${job.id}: selective OCR routed ${ocrResult.pagesRoutedToOcr.length} page(s) to local OCR, ${ocrResult.pagesRecommendingHosted.length} page(s) still recommend a hosted vision model`,
+        );
+      } catch (err) {
+        console.warn(
+          `[extraction-pipeline] job ${job.id}: selective OCR failed (${err instanceof Error ? err.message : String(err)}); falling back to Claude Vision`,
+        );
+      }
     }
 
     // Empty pagesRecommendingHosted means pdf-inspector itself is confident
@@ -1431,6 +1503,8 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
         pdfType: effectivePdfType,
         markdown,
         pdfBase64: pdfBytes.toString("base64"),
+        // Only set for a photo: a PDF's doc stays exactly what it always was.
+        ...(photoMediaType ? { mediaType: photoMediaType } : {}),
       });
       await setJobPhase(job.id, "parse");
       parsed = parseLinesFromVision(extraction.raw);

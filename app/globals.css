@@ -99,7 +99,9 @@
   --accent-foreground: #08090a;
 
   --destructive: #f87171;
-  --destructive-foreground: #ffffff;
+  /* Dark ink, not white: white on this red is 2.77:1 (fails AA), #08090a is
+     ~7.2:1. The count app is always dark, so this is the one that shipped. */
+  --destructive-foreground: #08090a;
 
   --success: #4ade80;
   --success-bg: rgba(74, 222, 128, 0.12);

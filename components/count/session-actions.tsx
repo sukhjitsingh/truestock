@@ -11,6 +11,26 @@ import {
 import { ActionBar, ActionBarPrimary } from "@/components/ui/action-bar";
 import { Button } from "@/components/ui/button";
 import type { Role } from "@/lib/authz";
+import { pendingCount } from "@/lib/count-queue";
+import { canSubmitCount } from "@/lib/entry-drafts";
+
+/**
+ * Writes still queued on this device for the count, read fresh at click time.
+ *
+ * Fails OPEN: if IndexedDB can't be read (private mode, quota, blocked), the
+ * enqueue that would have put something there most likely failed the same way,
+ * and refusing to submit forever on a broken browser store would be its own
+ * lockout. That is a judgement, not a guarantee: a read that fails transiently
+ * while writes ARE queued lets Submit through, and the leg then drops those
+ * writes as refused. The gap is accepted, not absent.
+ */
+async function readPendingWrites(countId: number): Promise<number> {
+  try {
+    return await pendingCount(countId);
+  } catch {
+    return 0;
+  }
+}
 
 /**
  * The count session's primary action — derived from role AND status, never
@@ -74,7 +94,17 @@ export function SessionActions({
         <ActionBarPrimary
           label={pending ? "Submitting…" : "Submit count"}
           disabled={pending}
-          onClick={() => run(() => submitCountAction({ countId }))}
+          onClick={() =>
+            run(async () => {
+              // Submitting freezes the count, and the server then refuses every
+              // write still in the offline queue — which the scan screen drops.
+              // That queue is only drained there, never here, so check it now
+              // rather than trusting anything rendered earlier.
+              const verdict = canSubmitCount(await readPendingWrites(countId));
+              if (!verdict.ok) return { ok: false, error: { message: verdict.message } };
+              return submitCountAction({ countId });
+            })
+          }
         />
       </Bar>
     );
