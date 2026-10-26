@@ -21,7 +21,6 @@ const CONTENT_TYPE_LABEL: Record<string, string> = {
   "application/pdf": "PDF",
   "image/jpeg": "JPEG photo",
   "image/png": "PNG photo",
-  "image/heic": "HEIC photo",
   "image/webp": "WEBP photo",
 };
 
@@ -139,7 +138,11 @@ export function InvoiceUploadForm({ vendors }: { vendors: VendorSummary[] }) {
     if (!ACCEPTED_INVOICE_CONTENT_TYPES.includes(selected.type)) {
       setFile(null);
       setContentType("");
-      setError("That file type isn't supported. Choose a PDF, JPEG, PNG, HEIC, or WEBP file.");
+      setError(
+        selected.type === "image/heic" || selected.type === "image/heif"
+          ? "HEIC photos aren't supported. Choose a JPEG or PNG version of the photo, or a PDF."
+          : "That file type isn't supported. Choose a PDF, JPEG, PNG, or WEBP file.",
+      );
       return;
     }
     setFile(selected);
@@ -273,7 +276,7 @@ export function InvoiceUploadForm({ vendors }: { vendors: VendorSummary[] }) {
         label="Invoice Document"
         htmlFor="invoice-file"
         error={fieldErrors.fileSha256 ?? fieldErrors.fileSizeBytes ?? fieldErrors.contentType}
-        hint="PDF, JPEG, PNG, HEIC, or WEBP — up to 25 MB."
+        hint="PDF up to 25 MB; JPEG, PNG, or WEBP photos up to 7.5 MB."
       >
         <div className="relative rounded-xl border border-dashed border-border/90 bg-secondary/30 p-4 transition-all hover:border-accent/60">
           <input

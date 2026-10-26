@@ -24,7 +24,8 @@ export const metadata = { title: "Invoices · Truestock" };
 /**
  * Invoice archive — Phase 2.5 Slice 1 (upload + archive tracer bullet,
  * docs/plans/phase-2.5-invoice-automation/04-slices.md). Upload lands a row
- * here; extraction (Slice 2+) fills in the rest.
+ * here; extraction (Slice 2+) fills in the rest, and approval (Slice 4) posts
+ * costs.
  *
  * ## Role split is load-bearing, not a display filter [AR-7]
  *
@@ -50,13 +51,14 @@ export const metadata = { title: "Invoices · Truestock" };
  * upload form sits above it) applies just as much to a navigation affordance
  * as an inline edit one.
  *
- * ## Every Slice 1 row is legitimately half-empty
+ * ## A row can be legitimately half-empty
  *
  * `invoice_number`, `invoice_date`, and `retention_until` (computed FROM
  * `invoice_date`, per `lib/domain/invoices.ts:computeRetentionUntil`) are
- * all NULL until an `extraction_job` actually runs — Slice 2, not built
- * yet. Rendering "Not yet extracted" instead of a fabricated or zero value
- * is the same rule this project already enforces for cost data
+ * all NULL until an `extraction_job` has actually populated them — a row
+ * still waiting in the queue shows them blank. Rendering "Not yet extracted"
+ * instead of a fabricated or zero value is the same rule this project already
+ * enforces for cost data
  * (docs/design-system.md §8): a plausible-but-wrong value on screen is
  * worse than an honest placeholder.
  *
@@ -94,8 +96,8 @@ export default async function InvoicesPage() {
         title="Invoices"
         subtitle={
           <p className="text-row-subtitle text-muted-foreground">
-            Supplier invoices, archived from upload. Extraction and cost capture arrive in a later
-            phase — for now this is the durable record that a document was received.
+            Supplier invoices. Each upload is queued for automatic extraction, then an owner reviews
+            and approves it before any of its costs are posted.
           </p>
         }
         action={
@@ -141,7 +143,7 @@ export default async function InvoicesPage() {
               {invoices.length === 0 ? (
                 <tr>
                   <td colSpan={columnCount}>
-                    <EmptyState message="No invoices yet. Upload a photo or PDF of a supplier invoice above — this is where every invoice lands before extraction and archival." />
+                    <EmptyState message="No invoices yet. Upload a photo or PDF of a supplier invoice above." />
                   </td>
                 </tr>
               ) : (

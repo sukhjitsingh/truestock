@@ -97,6 +97,7 @@ import {
   approveInvoiceAction,
 } from "@/app/actions/invoices";
 import type { InvoiceRow } from "@/lib/domain/invoices";
+import { previewKind } from "@/lib/invoice-preview";
 import type { InvoiceLineRow, InvoiceLineUom } from "@/lib/domain/invoice-lines";
 import type { ProductSummary } from "@/lib/domain/catalog";
 import {
@@ -423,6 +424,13 @@ export function InvoiceReviewForm({
   // against a 7-column table for any non-editable status.
   const columnCount = 7;
 
+  // What the stored file actually is decides how the pane shows it (see
+  // `previewKind`): an <iframe> over a photo has no fit-to-width and is clumsy
+  // to pinch on a phone, over a stored .heic it is blank, and with no
+  // `filePath` it frames a route that 404s.
+  const fileUrl = `/api/invoices/${invoice.id}/file`;
+  const kind = previewKind(invoice.filePath);
+
   return (
     <div className="mt-6 flex flex-col gap-6">
       {invoice.status === "reviewed" ? (
@@ -454,22 +462,48 @@ export function InvoiceReviewForm({
                   Source Document Preview
                 </h2>
               </div>
-              <a
-                href={`/api/invoices/${invoice.id}/file`}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-caption text-accent font-semibold hover:underline"
-              >
-                Open file <ExternalLink className="size-3.5" aria-hidden="true" />
-              </a>
+              {kind !== "none" ? (
+                <a
+                  href={fileUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-caption text-accent font-semibold hover:underline"
+                >
+                  Open file <ExternalLink className="size-3.5" aria-hidden="true" />
+                </a>
+              ) : null}
             </div>
-            <div className="mt-3 overflow-hidden rounded-lg border border-border/80 bg-muted/30 w-full h-[650px]">
-              <iframe
-                src={`/api/invoices/${invoice.id}/file`}
-                title={`Source Invoice Document #${invoice.id}`}
-                className="h-full w-full border-0"
-              />
-            </div>
+            {kind === "pdf" ? (
+              <div className="mt-3 overflow-hidden rounded-lg border border-border/80 bg-muted/30 w-full h-[650px]">
+                <iframe
+                  src={fileUrl}
+                  title={`Source Invoice Document #${invoice.id}`}
+                  className="h-full w-full border-0"
+                />
+              </div>
+            ) : kind === "image" ? (
+              // Same fixed-height pane as the PDF, but scrolling: a tall
+              // receipt photo fits the pane width and scrolls inside it
+              // rather than stretching the page. "Open file" is the
+              // full-size, pinch-zoomable view.
+              <div className="mt-3 overflow-auto rounded-lg border border-border/80 bg-muted/30 w-full h-[650px]">
+                {/* A plain <img>: next.config sets `images.unoptimized`, so
+                    next/image would add a wrapper and required dimensions for
+                    no optimisation, on a file whose size we don't know. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={fileUrl}
+                  alt={`Source invoice photo #${invoice.id}`}
+                  className="h-auto w-full object-contain"
+                />
+              </div>
+            ) : (
+              <p className="mt-3 rounded-lg border border-border/80 bg-muted/30 p-4 text-caption text-muted-foreground">
+                {kind === "unsupported"
+                  ? "This file type can't be previewed here."
+                  : "No file is stored for this invoice."}
+              </p>
+            )}
           </div>
         </div>
 
