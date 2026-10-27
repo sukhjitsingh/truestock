@@ -6,7 +6,7 @@
       "name": "truestock",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.117.1",
-        "@firecrawl/pdf-inspector": "1.15.0",
+        "@firecrawl/pdf-inspector": "1.25.2",
         "@hookform/resolvers": "^5.4.2",
         "@tanstack/react-query": "^5.101.4",
         "@tanstack/react-table": "^8.21.3",
@@ -186,19 +186,19 @@
 
     "@eslint/plugin-kit": ["@eslint/plugin-kit@0.4.1", "", { "dependencies": { "@eslint/core": "^0.17.0", "levn": "^0.4.1" } }, "sha512-43/qtrDUokr7LJqoF2c3+RInu/t4zfrpYdoSDfYyhg52rwLV6TnOvdG4fXm7IkSB3wErkcmJS9iEhjVtOSEjjA=="],
 
-    "@firecrawl/pdf-inspector": ["@firecrawl/pdf-inspector@1.15.0", "", { "optionalDependencies": { "@firecrawl/pdf-inspector-darwin-arm64": "1.15.0", "@firecrawl/pdf-inspector-linux-arm64-gnu": "1.15.0", "@firecrawl/pdf-inspector-linux-arm64-musl": "1.15.0", "@firecrawl/pdf-inspector-linux-x64-gnu": "1.15.0", "@firecrawl/pdf-inspector-linux-x64-musl": "1.15.0", "@firecrawl/pdf-inspector-win32-x64-msvc": "1.15.0" }, "bin": { "pdf-inspector": "bin/pdf-inspector.mjs" } }, "sha512-Mcz3sxvlTrBR9PMRAR7NJqz5nhONJy/1KGIdabFzgpDdEXgPvc7Lb6yD9fgLkZ9CxTWSuino2QH5H+JlUR4d5A=="],
+    "@firecrawl/pdf-inspector": ["@firecrawl/pdf-inspector@1.25.2", "", { "optionalDependencies": { "@firecrawl/pdf-inspector-darwin-arm64": "1.25.2", "@firecrawl/pdf-inspector-linux-arm64-gnu": "1.25.2", "@firecrawl/pdf-inspector-linux-arm64-musl": "1.25.2", "@firecrawl/pdf-inspector-linux-x64-gnu": "1.25.2", "@firecrawl/pdf-inspector-linux-x64-musl": "1.25.2", "@firecrawl/pdf-inspector-win32-x64-msvc": "1.25.2" }, "bin": { "pdf-inspector": "bin/pdf-inspector.mjs" } }, "sha512-VqGkaBBDaWMaRYYGFqjcdan87MhIUbUOU3Q8Xfwe85Jg5EfU7jF4v021KPtnH0o9FOmVY41Yemp6mulZTR2Qww=="],
 
-    "@firecrawl/pdf-inspector-darwin-arm64": ["@firecrawl/pdf-inspector-darwin-arm64@1.15.0", "", { "os": "darwin", "cpu": "arm64" }, "sha512-G1E7rTvvQT/m6dfTgTr+0XaPCsqrabp2VVaE/dcfTFayufLv+VI0ciR2pC8zee2wp2bQ/mbMAZ6GEfEPqESxbQ=="],
+    "@firecrawl/pdf-inspector-darwin-arm64": ["@firecrawl/pdf-inspector-darwin-arm64@1.25.2", "", { "os": "darwin", "cpu": "arm64" }, "sha512-L0/7H9b8Wi52SclvfZG9nj9GJAOOCRZV0+qGXq8INBLCwcNTc9n0OPhjN5tRHQ4fHZrtFlY/iEnC6UJkSADkxA=="],
 
-    "@firecrawl/pdf-inspector-linux-arm64-gnu": ["@firecrawl/pdf-inspector-linux-arm64-gnu@1.15.0", "", { "os": "linux", "cpu": "arm64" }, "sha512-xLrPQFYkpG0ZaDiv6+d/ivfGek4aiTbqUcIEkYKC93Y0RjjP9MZY4M+CHzs486uLWVzMyOnxJ65kk76PaJpoEw=="],
+    "@firecrawl/pdf-inspector-linux-arm64-gnu": ["@firecrawl/pdf-inspector-linux-arm64-gnu@1.25.2", "", { "os": "linux", "cpu": "arm64" }, "sha512-hsd28pWZ8UmJCXujaJz0H9xzrqqPpufopcdYGRwbnlR8xzVsqeT82NWRIuuld3CkJQqGFXqPJz0Wkt7AS+jfNw=="],
 
-    "@firecrawl/pdf-inspector-linux-arm64-musl": ["@firecrawl/pdf-inspector-linux-arm64-musl@1.15.0", "", { "os": "linux", "cpu": "arm64" }, "sha512-vDU10xoHcufB9+5vU2v+DWhT7D9BvCRrSFCIfV46jGGu1FI0j5FSV31Hy//zncoAWBsUDdTKTrFXDqxTLfcvzg=="],
+    "@firecrawl/pdf-inspector-linux-arm64-musl": ["@firecrawl/pdf-inspector-linux-arm64-musl@1.25.2", "", { "os": "linux", "cpu": "arm64" }, "sha512-mdBDi1938AHp97c0oArmoOnGWijT5K/RXBa5Pyq0yJdzqx/Jd/P5bAS4O2srm8cspkkV9VhNwRjMrP9527O0/Q=="],
 
-    "@firecrawl/pdf-inspector-linux-x64-gnu": ["@firecrawl/pdf-inspector-linux-x64-gnu@1.15.0", "", { "os": "linux", "cpu": "x64" }, "sha512-xe3wbk6U+EJw2bLSd+6o9usbAlVLUHOQBIAJi0rzjP6u2Tz+g0enpkxnOPDkCcWzY+Qiw4YR4N4UZaEsvlbWiw=="],
+    "@firecrawl/pdf-inspector-linux-x64-gnu": ["@firecrawl/pdf-inspector-linux-x64-gnu@1.25.2", "", { "os": "linux", "cpu": "x64" }, "sha512-5+RA17b9h4EtdKXEqztorwjskXTIEw8DB1Q37Awuri3YoB+MquHjA348DGwf6YcyIKE1oldAHd3K63Z79qATmg=="],
 
-    "@firecrawl/pdf-inspector-linux-x64-musl": ["@firecrawl/pdf-inspector-linux-x64-musl@1.15.0", "", { "os": "linux", "cpu": "x64" }, "sha512-Mni3UCqKmrH/wCKw0g8o+JusL0oX+AxOnBM5jLp3Y1tvU5xPytSH815PcFojcDBtJHkFzDmKsBnYaghPe2OXTw=="],
+    "@firecrawl/pdf-inspector-linux-x64-musl": ["@firecrawl/pdf-inspector-linux-x64-musl@1.25.2", "", { "os": "linux", "cpu": "x64" }, "sha512-md5da0ZDhFhqZY/Zt+dlJS8CxEGNpKRiIeWSvSqzJFzNYV2EkPs+vpAlH0O0bPfN48+RQEESJ4SglfZrUcXVuA=="],
 
-    "@firecrawl/pdf-inspector-win32-x64-msvc": ["@firecrawl/pdf-inspector-win32-x64-msvc@1.15.0", "", { "os": "win32", "cpu": "x64" }, "sha512-EhQC7DdDTirpsjG8PvzLACyEze4Uxdkzrc1vQw0NyTqvejW6d3nFLFd6xu8l/44wiJW8Rez9J6K96ggdBtnXEw=="],
+    "@firecrawl/pdf-inspector-win32-x64-msvc": ["@firecrawl/pdf-inspector-win32-x64-msvc@1.25.2", "", { "os": "win32", "cpu": "x64" }, "sha512-stmH0YjPwWNjlFVLoVc1foZLE9mZAn+By+/EqyZzmpiFBIfY4WP/L02lPF70giboknko75IR2vDjbIeZPb4knw=="],
 
     "@hookform/resolvers": ["@hookform/resolvers@5.4.2", "", { "dependencies": { "@standard-schema/utils": "^0.3.0" }, "peerDependencies": { "@sinclair/typebox": ">=0.25.24", "@standard-schema/spec": "^1.0.0", "@typeschema/main": ">=0.13.7", "@vinejs/vine": "^2.0.0 || ^3.0.0", "ajv": "^8.12.0", "ajv-errors": "^3.0.0", "ajv-formats": "^2.1.1", "arktype": "^2.0.0", "ata-validator": "^0.7.0", "class-transformer": ">=0.4.0", "class-validator": ">=0.12.0", "computed-types": "^1.0.0", "effect": "^3.10.3", "fluentvalidation-ts": "^3.0.0", "fp-ts": "^2.7.0", "io-ts": "^2.0.0", "joi": "^17.0.0", "nope-validator": ">=0.12.0", "react-hook-form": "^7.55.0", "superstruct": ">=0.12.0", "typanion": "^3.3.2", "valibot": "^1.0.0 || ^1.0.0-beta.4 || ^1.0.0-rc", "vest": ">=3.0.0", "yup": "^1.0.0", "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["@sinclair/typebox", "@standard-schema/spec", "@typeschema/main", "@vinejs/vine", "ajv", "ajv-errors", "ajv-formats", "arktype", "ata-validator", "class-transformer", "class-validator", "computed-types", "effect", "fluentvalidation-ts", "fp-ts", "io-ts", "joi", "nope-validator", "superstruct", "typanion", "valibot", "vest", "yup", "zod"] }, "sha512-aPct0xA24dh2qGLHRzBuCqjI3fZf4qiEdgUBTt9z6TVqgpVoP4K7Aq2j17wnY6p/QPD8fQlh5+4Vd3nwSeOn9Q=="],
 
