@@ -5,11 +5,18 @@ Fix 3 is deferred (see Notes).
 
 - Gate 1 — Product: APPROVED 2026-11-05
 - Gate 2 — Architecture: APPROVED 2026-11-05
-- Gate 3 — Program Design: in progress
-- Gate 4 — Slice plan: pending
+- Gate 3 — Program Design: APPROVED 2026-11-05
+- Gate 4 — Slice plan: in progress
 
 ## Slices
-(written at Gate 4)
+- [ ] Slice 1 — tracer: format travels end to end; fake camera reaches the enroll screen
+- [ ] Slice 2 — one size spelling everywhere
+- [ ] Slice 3 — Fix 4: refusal names the size, offers to count the owner
+- [ ] Slice 4 — Fix 2: confirm the size before linking
+- [ ] Slice 5 — Fix 2: "It's a different size"
+- [ ] Slice 6 — Fix 1 red: reproduce the bug in DB tests (evidence recorded, not committed alone)
+- [ ] Slice 7 — Fix 1 green: the normalizer, format stored, mutation-checked
+- [ ] Slice 8 — close-out: full checks, STATE.md, open items
 
 ## Notes for a fresh session
 
