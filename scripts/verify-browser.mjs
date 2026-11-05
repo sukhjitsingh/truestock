@@ -941,6 +941,7 @@ try {
   let scanCountId = null;
   let ownerOrgId = null;
   const fixtureBarcodeIds = [];
+  const createdProductIds = [];
   const camBrowser = await chromium.launch({
     channel: "chrome",
     args: [
@@ -1121,6 +1122,69 @@ try {
           offered && landed,
           !offered ? "button not offered" : landed ? "entry screen for Smirnoff" : "button did not open the entry screen",
         );
+
+        // 6. Fix 2 (slice 5): "It's a different size". Clear the other-phone
+        // fixture so the code is unknown again, scan, pick Jameson, and ask for
+        // a different size. Prefilled name + category, NO size chosen, Save
+        // disabled, and the size just ruled out cannot be picked.
+        for (const id of fixtureBarcodeIds.splice(0)) {
+          await sql.execute("DELETE FROM product_barcode WHERE id = ?", [id]);
+        }
+        const [existingSizes] = await sql.execute(
+          "SELECT size_ml FROM product WHERE organization_id = ? AND name = 'Jameson'",
+          [ownerOrgId],
+        );
+        const taken = new Set(existingSizes.map((r) => Number(r.size_ml)));
+        const newMl = [200, 375, 1000, 1750, 500, 700, 50].find((ml) => !taken.has(ml));
+
+        await cam.getByRole("button", { name: /^Back to / }).first().click();
+        await cam.getByRole("button", { name: "Scan barcode" }).first().click();
+        await cam.getByRole("heading", { name: /which bottle is this/i }).waitFor({ timeout: 20000 });
+        await pickJameson();
+        await cam.getByRole("button", { name: /it.s a different size/i }).click();
+        await cam.getByRole("heading", { name: /add a different size/i }).waitFor({ timeout: 10000 });
+
+        const form = await cam.evaluate(() => {
+          const size = document.querySelector("#p-size");
+          return {
+            name: document.querySelector("#p-name")?.value,
+            category: document.querySelector("#p-category")?.value,
+            size: size?.value,
+            sevenFiftyDisabled: [...(size?.options ?? [])].some((o) => o.value === "750" && o.disabled),
+          };
+        });
+        const saveButton = cam.locator('form button[type="submit"]');
+        const saveDisabledBefore = await saveButton.isDisabled();
+        record(
+          "\"It's a different size\" prefills, preselects no size, and rules out the size just rejected",
+          form.name === "Jameson" && form.category === "Spirits" && form.size === "" &&
+            form.sevenFiftyDisabled && saveDisabledBefore,
+          JSON.stringify({ ...form, saveDisabled: saveDisabledBefore }),
+        );
+
+        if (newMl == null) {
+          record("a different size can be saved and counted", false, "Jameson already exists in every spirits size — no free size to test with");
+        } else {
+          await cam.locator("#p-size").selectOption(String(newMl));
+          const label = (await saveButton.innerText()).replace(/\s+/g, " ").trim();
+          await saveButton.click();
+          const counted = await cam
+            .getByRole("heading", { name: "Jameson", exact: true })
+            .waitFor({ timeout: 10000 })
+            .then(() => true, () => false);
+          const [[made]] = await sql.execute(
+            `SELECT p.id, pb.pack_level FROM product p
+               JOIN product_barcode pb ON pb.product_id = p.id
+              WHERE p.organization_id = ? AND p.name = 'Jameson' AND p.size_ml = ?`,
+            [ownerOrgId, newMl],
+          );
+          if (made) createdProductIds.push(made.id);
+          record(
+            "a different size can be saved and counted",
+            counted && made?.pack_level === "each" && new RegExp(`^save ${newMl < 1000 ? `${newMl} ml` : ""}`, "i").test(label),
+            `button "${label}"; ${made ? `Jameson ${newMl} ml created, barcode as ${made.pack_level}` : "no product created"}; entry screen ${counted ? "shown" : "NOT shown"}`,
+          );
+        }
       }
     }
 
@@ -1131,6 +1195,14 @@ try {
     await camBrowser.close();
     for (const id of fixtureBarcodeIds) {
       await sql.execute("DELETE FROM product_barcode WHERE id = ?", [id]);
+    }
+    // A product this run created through the app is removed as fixture
+    // teardown, the same way the throwaway locations are — the app itself
+    // never hard-deletes a product (invariant 6). Nothing references it: no
+    // count line was written.
+    for (const id of createdProductIds) {
+      await sql.execute("DELETE FROM product_barcode WHERE product_id = ?", [id]);
+      await sql.execute("DELETE FROM product WHERE id = ?", [id]);
     }
     if (scanCountId != null) {
       await sql.execute("DELETE FROM count_line_write WHERE count_line_id IN (SELECT id FROM count_line WHERE count_id = ?)", [scanCountId]);

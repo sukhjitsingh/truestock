@@ -14,7 +14,7 @@ Fix 3 is deferred (see Notes).
 - [x] Slice 2 — one size spelling everywhere
 - [x] Slice 3 — Fix 4: refusal names the size, offers to count the owner
 - [x] Slice 4 — Fix 2: confirm the size before linking
-- [ ] Slice 5 — Fix 2: "It's a different size"
+- [x] Slice 5 — Fix 2: "It's a different size"
 - [ ] Slice 6 — Fix 1 red: reproduce the bug in DB tests (evidence recorded, not committed alone)
 - [ ] Slice 7 — Fix 1 green: the normalizer, format stored, mutation-checked
 - [ ] Slice 8 — close-out: full checks, STATE.md, open items
@@ -199,3 +199,27 @@ screen (screenshot, Corona 355 ml) — not asserted by the harness.
 
 Layout note: the action buttons follow the content instead of being pinned to
 the bottom as in the mockup, keeping them inside thumb reach on short content.
+
+## Slice 5 evidence (2026-11-05)
+
+"It's a different size" on the confirmation opens the create form with the
+picked product's name, category and unit type, **no size chosen**, the
+rejected size disabled ("750 ml — not this one" plus a hint), and Save
+disabled ("Pick a size") until one is chosen; Save then reads "Save 200 ml".
+The bottle/case answer from the confirmation carries into the new barcode.
+Category changes never re-default an unchosen size in this mode. The name box
+does not grab focus when prefilled, so the phone keyboard does not cover the
+size picker. Back returns to the confirmation, not the search.
+
+Browser harness (fake camera, production build): the prefill / no-size /
+disabled-Save / excluded-750 check and the save-and-count check both pass —
+Jameson 200 ml created with the barcode as `each`, entry screen shown, then
+removed as fixture teardown. Harness 52/54 (2 existing data-dependent stock
+checks).
+
+**Found while doing this, queued separately (not fixed here):** the build
+drops the space after a tag or `{value}` in some JSX text runs. Two instances
+in this feature's own lines were fixed with `{" "}` (slices 3 and 5). A
+pre-existing one is live on `/office/reorder`: "closedcount, and there isn't
+one" whenever no count has closed. Suggested as its own task with the
+evidence.

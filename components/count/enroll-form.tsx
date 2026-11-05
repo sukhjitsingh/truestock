@@ -128,28 +128,58 @@ export function EnrollForm({
           product={mode.product}
           onLinked={onResolved}
           onBack={() => setMode({ kind: "search" })}
+          onDifferentSize={(packLevel) =>
+            setMode({ kind: "create", from: { product: mode.product, packLevel } })
+          }
         />
       ) : null}
 
       {mode.kind === "create" ? (
         <>
-          <button
-            type="button"
-            onClick={onCancel}
-            className="mb-4 flex items-center gap-1 text-caption text-muted-foreground"
-          >
-            <ChevronLeft className="size-4" aria-hidden="true" /> Back
-          </button>
-          <h1 className="text-header-title text-foreground">New product</h1>
-          <p className="mt-1 text-row-subtitle text-muted-foreground">
-            Barcode <span className="tabular-nums text-foreground">{barcode}</span>{" "}isn&rsquo;t
-            attached to anything yet. Name it and keep counting — the rest can be filled in later.
-          </p>
+          {mode.from ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setMode({ kind: "confirm", product: mode.from!.product })}
+                className="mb-4 flex items-center gap-1 text-caption text-muted-foreground"
+              >
+                <ChevronLeft className="size-4" aria-hidden="true" /> Back to{" "}
+                {nameWithSize(mode.from.product)}
+              </button>
+              <h1 className="text-header-title text-foreground">Add a different size</h1>
+              <p className="mt-1 text-row-subtitle text-muted-foreground">
+                Barcode <span className="tabular-nums text-foreground">{barcode}</span>{" "}becomes
+                this new size. {nameWithSize(mode.from.product)} is left alone.
+              </p>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onCancel}
+                className="mb-4 flex items-center gap-1 text-caption text-muted-foreground"
+              >
+                <ChevronLeft className="size-4" aria-hidden="true" /> Back
+              </button>
+              <h1 className="text-header-title text-foreground">New product</h1>
+              <p className="mt-1 text-row-subtitle text-muted-foreground">
+                Barcode <span className="tabular-nums text-foreground">{barcode}</span>{" "}isn&rsquo;t
+                attached to anything yet. Name it and keep counting — the rest can be filled in later.
+              </p>
+            </>
+          )}
           <CreateNew
+            // Remount when the source changes so the prefill is applied fresh.
+            key={mode.from ? `from-${mode.from.product.id}` : "new"}
             barcode={barcode}
             format={format}
+            from={mode.from}
             onCreated={onResolved}
-            onBackToSearch={() => setMode({ kind: "search" })}
+            onBackToSearch={() =>
+              mode.from
+                ? setMode({ kind: "confirm", product: mode.from.product })
+                : setMode({ kind: "search" })
+            }
           />
         </>
       ) : null}
@@ -165,7 +195,11 @@ export function EnrollForm({
 type EnrollMode =
   | { kind: "search" }
   | { kind: "confirm"; product: ProductSummary }
-  | { kind: "create" };
+  | { kind: "create"; from?: DifferentSize };
+
+/** "It's a different size": the product the counter nearly linked, and the
+ *  bottle/case answer they had already given on the confirmation. */
+type DifferentSize = { product: ProductSummary; packLevel: "each" | "case" };
 
 /**
  * Who already holds this barcode, if anyone — asked after a link or create was
@@ -315,12 +349,15 @@ function ConfirmLink({
   product,
   onLinked,
   onBack,
+  onDifferentSize,
 }: {
   barcode: string;
   format: string | null;
   product: ProductSummary;
   onLinked: (product: ProductSummary) => void;
   onBack: () => void;
+  /** "It's a different size" — carries the bottle/case answer already given. */
+  onDifferentSize: (packLevel: "each" | "case") => void;
 }) {
   const [packLevel, setPackLevel] = useState<"each" | "case">("each");
   const [pending, setPending] = useState(false);
@@ -445,6 +482,19 @@ function ConfirmLink({
             : `This barcode = ${nameWithSize(product)}`}
         </span>
       </button>
+      {/*
+        The escape for the 200 ml Smirnoff when the catalog only has the 750:
+        a full-width, always-visible button rather than a link, because it is
+        the right answer whenever the size above does not match the label.
+      */}
+      <Button
+        variant="outline"
+        size="primary"
+        className="mt-3 w-full"
+        onClick={() => onDifferentSize(askPackLevel ? packLevel : "each")}
+      >
+        It&rsquo;s a different size
+      </Button>
     </div>
   );
 }
@@ -479,20 +529,35 @@ function ConfirmLink({
 function CreateNew({
   barcode,
   format,
+  from,
   onCreated,
   onBackToSearch,
 }: {
   barcode: string;
   format: string | null;
+  /**
+   * Set by "It's a different size": name, category and unit type come from
+   * the product the counter nearly linked, NO size is preselected, and that
+   * product's size cannot be picked. Preselecting a size here would let a
+   * tap-through save the plausible-but-wrong one — the failure this whole
+   * feature exists to stop.
+   */
+  from?: DifferentSize;
   onCreated: (product: ProductSummary) => void;
   onBackToSearch: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [category, setCategory] = useState<string>(INITIAL_CATEGORY);
-  const [unitType, setUnitType] = useState<"bottle" | "can" | "keg">(INITIAL_UNIT_TYPE);
-  const [sizeMl, setSizeMl] = useState(
-    String(defaultSizeMlFor({ category: INITIAL_CATEGORY, unitType: INITIAL_UNIT_TYPE })),
+  const [name, setName] = useState(from?.product.name ?? "");
+  const [category, setCategory] = useState<string>(from?.product.category ?? INITIAL_CATEGORY);
+  const [unitType, setUnitType] = useState<"bottle" | "can" | "keg">(
+    from?.product.unitType ?? INITIAL_UNIT_TYPE,
   );
+  // "" = no size chosen yet. Only ever the starting value in different-size
+  // mode; a fresh new product still opens on its category's default.
+  const [sizeMl, setSizeMl] = useState(
+    from ? "" : String(defaultSizeMlFor({ category: INITIAL_CATEGORY, unitType: INITIAL_UNIT_TYPE })),
+  );
+  const excludedMl =
+    from && from.product.unitType === unitType ? from.product.sizeMl : null;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nameCollision, setNameCollision] = useState(false);
@@ -523,7 +588,10 @@ function CreateNew({
     };
     if (next.category !== undefined) setCategory(next.category);
     if (next.unitType !== undefined) setUnitType(next.unitType);
-    if (!isPresetSizeMl(Number(sizeMl), ctx)) setSizeMl(String(defaultSizeMlFor(ctx)));
+    // In different-size mode an unchosen size stays unchosen, and a size that
+    // falls off the new list goes back to unchosen rather than to a default.
+    if (sizeMl === "") return;
+    if (!isPresetSizeMl(Number(sizeMl), ctx)) setSizeMl(from ? "" : String(defaultSizeMlFor(ctx)));
   }
 
   async function submit(event: React.FormEvent) {
@@ -545,7 +613,9 @@ function CreateNew({
         // count is overwhelmingly a bottle in someone's hand; a case carton
         // scanned in the storeroom can be re-pointed from the back office,
         // which is a rarer correction than the delay of asking here every time.
-        barcode: { barcode, packLevel: "each", isPrimary: true },
+        // `each` unless the counter answered "case" on the confirmation
+        // before choosing "It's a different size".
+        barcode: { barcode, packLevel: from?.packLevel ?? "each", isPrimary: true },
       });
     } catch {
       // Offline. Creating the product is a WRITE that does not go through the
@@ -596,7 +666,10 @@ function CreateNew({
             id="p-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            autoFocus
+            // Not when the name is prefilled ("It's a different size"): on a
+            // phone, focusing it opens the keyboard over the size picker, which
+            // is the one field that still needs an answer.
+            autoFocus={!from}
             autoCapitalize="words"
             required
             placeholder="Tito's Handmade Vodka"
@@ -624,12 +697,22 @@ function CreateNew({
               value={sizeMl}
               onChange={(e) => setSizeMl(e.target.value)}
             >
+              {sizeMl === "" ? (
+                <option value="" disabled>
+                  Pick a size
+                </option>
+              ) : null}
               {sizes.map((s) => (
-                <option key={s.ml} value={s.ml}>
-                  {s.label}
+                <option key={s.ml} value={s.ml} disabled={s.ml === excludedMl}>
+                  {s.ml === excludedMl ? `${s.label} — not this one` : s.label}
                 </option>
               ))}
             </Select>
+            {excludedMl != null ? (
+              <p className="mt-1 text-caption text-muted-foreground">
+                {formatProductSize({ unitType, sizeMl: excludedMl })}{" "}is the one you said it isn&rsquo;t.
+              </p>
+            ) : null}
           </Field>
           <Field label="Unit" htmlFor="p-unit" error={fieldErrors.unitType}>
             <Select
@@ -662,10 +745,21 @@ function CreateNew({
 
         <div className="flex gap-3">
           <Button variant="outline" size="primary" className="flex-1" onClick={onBackToSearch}>
-            Back to search
+            {from ? "Cancel" : "Back to search"}
           </Button>
-          <Button type="submit" size="primary" className="flex-[1.4]" disabled={pending || !name}>
-            {pending ? "Saving…" : "Save and count"}
+          <Button
+            type="submit"
+            size="primary"
+            className="flex-[1.4]"
+            disabled={pending || !name || sizeMl === ""}
+          >
+            {pending
+              ? "Saving…"
+              : sizeMl === ""
+                ? "Pick a size"
+                : from
+                  ? `Save ${formatProductSize({ unitType, sizeMl: Number(sizeMl) })}`
+                  : "Save and count"}
           </Button>
         </div>
       </form>
