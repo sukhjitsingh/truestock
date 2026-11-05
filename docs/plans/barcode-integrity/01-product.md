@@ -115,8 +115,9 @@ again.
 
 ## Decisions for the owner
 
-Carried over from the 2026-11-05 discussion, still unanswered. Each has a
-recommendation; approving this gate as written accepts the recommendations.
+Carried over from the 2026-11-05 discussion. Decision 3 is settled; the
+others each have a recommendation, and approving this gate as written accepts
+them.
 
 1. **A short, 8-digit barcode the app cannot identify.** Two different kinds of
    barcode share the 8-digit length, and the digits alone cannot say which one
@@ -130,13 +131,23 @@ recommendation; approving this gate as written accepts the recommendations.
    caught the Smirnoff case, because the catalog had only one size. Cost: one
    tap per new spirit, wine or non-alcoholic barcode.
 
-3. **The standard form a barcode is remembered in.** You ruled out padding
-   every code to 14 digits. **Recommended: the shortest standard form that
-   still means the same thing** — a 13-digit code that starts with a zero is
-   remembered as the 12-digit code it really is, and the short 6-digit form on
-   small bottles is expanded to its full 12 digits so both readings match.
-   Codes that are not numbers (some cartons and shipping labels) are left
-   exactly as read. The exact rules are worked out at Gate 2.
+3. **The standard form a barcode is remembered in — DECIDED 2026-11-05.**
+   Every numeric product barcode is remembered as the **standard 14-digit
+   form**: shorter codes get leading zeros added, and the 6-digit short form on
+   small bottles is first expanded to its full 12 digits. So all three
+   readings of one Smirnoff bottle are remembered as the same 14 digits.
+   **Separately, the app records which kind of barcode the camera said it
+   read** — kept as information, and the only way to tell the two kinds of
+   8-digit code apart (decision 1). Codes that are not numbers (some cartons
+   and shipping labels) are left exactly as read. What the counter *sees* on
+   screen is still the barcode as scanned (the mockups show it that way); the
+   14-digit form is how the app remembers it. Exact rules at Gate 2.
+
+   | Camera reads | Kind reported | Remembered as | Kind recorded |
+   |---|---|---|---|
+   | `082000000013` | UPC-A | `00082000000013` | UPC-A |
+   | `0082000000013` | EAN-13 | `00082000000013` | EAN-13 |
+   | `08200103` | UPC-E | `00082000000013` | UPC-E |
 
 4. **Barcodes already in your local database.** Some of them, like the
    Smirnoff pair, will turn out to be the same barcode on two products once

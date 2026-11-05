@@ -16,17 +16,33 @@ Fix 3 is deferred (see Notes).
 **Where this came from.** The owner reported on 2026-11-05 that "the app does
 not check the size — I can assign multiple bottle sizes to the same barcode."
 Reproduced the same day against a real MariaDB (10.11, in a cloud session —
-not the owner's 11.8 Docker) by calling the catalog domain functions directly:
+not the owner's 11.8 Docker) by calling the catalog domain functions directly.
+Three different strings went onto two different sizes:
 
 ```
-082000000019   → Smirnoff 1750 ml   (UPC-A form)
-0082000000019  → Smirnoff 200 ml    (EAN-13 form of the same code)
-08200019       → Smirnoff 200 ml    (UPC-E form of the same code)
+082000000019   → Smirnoff 1750 ml
+0082000000019  → Smirnoff 200 ml
+08200019       → Smirnoff 200 ml
 ```
 
-The `product_barcode` unique index only refuses an *identical string*, and no
-code normalizes a scanned value. Separately, the link screen links on one tap
-with no size confirmation.
+**Correction, recorded rather than rewritten:** those were hand-typed strings,
+and they are NOT valid encodings of one code — `082000000019` fails its check
+digit, and `08200019` expands to `082100000009`, not to it. What the run DOES
+prove is the mechanism: the `product_barcode` unique index refuses only an
+identical string, and no code normalizes a scanned value, so two encodings of
+one code would both be accepted. A valid example, checked by computing the
+GS1 check digit and the UPC-E expansion, used in every doc from here on:
+
+```
+UPC-A   082000000013
+EAN-13  0082000000013
+UPC-E   08200103        (expands to 082000000013)
+GTIN-14 00082000000013  (the stored standard form)
+```
+
+Gate 3's test plan must reproduce the bug with THESE strings against the
+pre-change code before the fix, so the test is known to fail first.
+Separately, the link screen links on one tap with no size confirmation.
 
 **What was decided in chat, 2026-11-05 (owner):**
 
@@ -42,8 +58,16 @@ with no size confirmation.
   (same shape as `lib/rescan-guard.ts`).
 - **The scanner passes the barcode's format, and the format is stored** in the
   database (the `product_barcode.format` column exists and is never written today).
-- **Do NOT pad to 14 digits (GTIN-14).** The canonical form must be something
-  else — proposed in Gate 1, decided at Gate 2/3.
+- **Standard form: padded to 14 digits (GTIN-14), and the format is recorded
+  too.** Decided by the owner 2026-11-05, reversing an earlier "do not pad to
+  14" from the same day after the two fields were explained. The stored
+  barcode is always the standard 14-digit form; the format column records
+  what kind of barcode the camera said it read (`upc_a`, `ean_13`, `upc_e`,
+  ...). The owner confirmed they understood that saving the barcode "in the
+  format it was read" would leave three different strings for one bottle,
+  which is the bug. Rejected alternative: keep the raw digits and compare
+  standard forms only in app code — the database's unique index would then
+  stop identical text only.
 - **Order:** step 0 (CI test fix) → Fix 4 → Fix 2 → Fix 1 (normalizer + tests,
   then scanner passes format, then a one-time conversion of existing barcodes).
 
