@@ -1,4 +1,4 @@
-# Status: barcode integrity
+# Status: barcode integrity — DONE 2026-11-05
 
 One barcode, one bottle size. Fixes 1, 2 and 4 from the 2026-11-05 discussion;
 Fix 3 is deferred (see Notes).
@@ -17,7 +17,7 @@ Fix 3 is deferred (see Notes).
 - [x] Slice 5 — Fix 2: "It's a different size"
 - [x] Slice 6 — Fix 1 red: reproduce the bug in DB tests (evidence recorded, not committed alone)
 - [x] Slice 7 — Fix 1 green: the normalizer, format stored, mutation-checked
-- [ ] Slice 8 — close-out: full checks, STATE.md, open items
+- [x] Slice 8 — close-out: full checks, STATE.md, open items
 
 ## Notes for a fresh session
 
@@ -276,3 +276,24 @@ data-dependent stock checks).
 **Owner's local Docker database:** rows enrolled before this ships are raw and
 will no longer resolve (decided: no conversion script). Run
 `bun run docker:reset` after merging.
+
+## Close-out (2026-11-05)
+
+All eight slices done. Final run from a clean state: typecheck clean; lint
+0 errors (1 pre-existing TanStack warning); **260/260 tests on an empty
+MariaDB 10.11**; no migration changed (`check-migrations-immutable` OK);
+production build OK (engine copy runs first); browser harness **53/55** — all
+12 barcode checks pass, the 2 failures are the pre-existing data-dependent
+stock checks.
+
+Recorded for the project: `STATE.md` (three "verified" rows, a 2026-11-05
+history entry, test count 260/23 files); `docs/open-items.md` #31 (Fix 3,
+deferred), #32 (`bun run docker:reset` after merging), #33 (glued JSX words,
+live on `/office/reorder`), #34 (built-in reader branch unverified on a
+phone); `AGENTS.md` working agreements for `normalizeBarcode`,
+`formatProductSize`, and the same-origin reader engine.
+
+**Not verified anywhere in this plan:** a real phone. Everything above ran in
+headless Chromium with a fake camera. Phase 2.9's walk should include: open
+`/count/preflight`, scan an enrolled bottle, and link one new one through the
+confirmation.

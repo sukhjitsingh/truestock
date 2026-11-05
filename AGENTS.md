@@ -296,6 +296,25 @@ Draft is simpler than it looks and should not be special-cased:
   removed**, not a `role`/`tabIndex` bolted onto the `<tr>` — that fixes the
   accessibility third and leaves the wrong-target hazard. Any edit form must also
   name its subject in the heading (`Edit Speed Rail`, not `Edit location`).
+- **A barcode is only ever stored or looked up through `normalizeBarcode`
+  (`lib/barcode.ts`).** One bottle's code can arrive as UPC-A, as EAN-13 with a
+  leading zero (how the ZXing reader reports a UPC-A), or as an 8-digit UPC-E;
+  the database's unique index only refuses an *identical* string. Comparing or
+  inserting a raw scan anywhere is how one barcode ended up on two sizes
+  (2026-11-05, docs/plans/barcode-integrity). The standard form is the 14-digit
+  GTIN; an 8-digit code is converted only when the camera reported its format,
+  never guessed, because the only dangerous mistake is merging two different
+  codes. A test fixture that inserts a barcode row must insert the standard
+  form, or a lookup will miss it and a "refused" assertion can pass for the
+  wrong reason.
+- **Sizes are printed only by `formatProductSize` (`lib/bottle-sizes.ts`)** —
+  `750 ml`, `1.75 L`, `Sixtel keg` — on the phone and in the back office alike.
+  Never format `size_ml` inline in a component.
+- **The scanner's fallback reader loads its engine from this app's origin**
+  (`/zxing/zxing_reader.wasm`, copied out of `node_modules` by
+  `scripts/copy-zxing-wasm.mjs` before every `dev` and `build`). Do not let it
+  fall back to a CDN: the CSP's `connect-src 'self'` refuses that, and the
+  camera then opens and silently decodes nothing.
 - **Dim-bar UI.** High contrast, large tap targets, dark mode, one-handed operation.
   The other hand is holding a bottle.
 - **Any form whose submit is handled in JavaScript carries `method="post"`.**
