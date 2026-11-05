@@ -36,10 +36,10 @@ proves the riskiest unknown first (Gate 3, least confident #6).
 
 6. **Fix 1, red — reproduce the bug against a real database.** Add every
    [RED FIRST] test from Gate 3's "one barcode, one product, in any written
-   form" block. Run against the unchanged code, record the failures in
-   `00-status.md`, commit with the tests failing on purpose? — **No:** commit
-   them only together with slice 7, so main never carries a red suite; the
-   recorded failure output is the evidence.
+   form" block and run them against the unchanged code; record the failure
+   output in `00-status.md`. These tests are **not committed on their own** —
+   they land in the same commit as slice 7, so the branch never carries a red
+   suite. The recorded output is the evidence that they failed first.
 
 7. **Fix 1, green — the normalizer.** `lib/barcode.ts` and its table tests;
    all six domain touchpoints normalize; `format` stored (unknown names →
