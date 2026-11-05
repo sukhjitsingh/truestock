@@ -1185,6 +1185,31 @@ try {
             `button "${label}"; ${made ? `Jameson ${newMl} ml created, barcode as ${made.pack_level}` : "no product created"}; entry screen ${counted ? "shown" : "NOT shown"}`,
           );
         }
+
+        // 7. Fix 1 (slice 7): a code stored the way a UPC-A link stores it —
+        // the 14-digit standard form, format upc_a — must be recognised when
+        // the camera reads the EAN-13 form ("0082000000013"), going straight to
+        // counting instead of asking "which bottle is this?" again. Before Fix 1
+        // the lookup used the raw reading and missed it: the owner's bug.
+        for (const id of createdProductIds) {
+          await sql.execute("DELETE FROM product_barcode WHERE product_id = ?", [id]);
+        }
+        const [r] = await sql.execute(
+          "INSERT INTO product_barcode (organization_id, product_id, barcode, format, pack_level, is_primary) VALUES (?, ?, ?, 'upc_a', 'each', 1)",
+          [ownerOrgId, smirnoff.id, FAKE_CAMERA_STORED_FORMS[1]],
+        );
+        fixtureBarcodeIds.push(r.insertId);
+        await cam.getByRole("button", { name: /^Back to / }).first().click();
+        await cam.getByRole("button", { name: "Scan barcode" }).first().click();
+        const straight = await Promise.race([
+          cam.getByRole("heading", { name: "Smirnoff", exact: true }).waitFor({ timeout: 20000 }).then(() => "counting"),
+          cam.getByRole("heading", { name: /which bottle is this/i }).waitFor({ timeout: 20000 }).then(() => "asked again"),
+        ]).catch(() => "nothing");
+        record(
+          "a bottle stored as UPC-A is recognised when the camera reads it as EAN-13",
+          straight === "counting",
+          `camera read 0082000000013 → ${straight === "counting" ? "Smirnoff's entry screen" : straight}`,
+        );
       }
     }
 

@@ -85,9 +85,8 @@ export function EnrollForm({
   onResolved,
 }: {
   barcode: string;
-  /** The detector's symbology for `barcode`. Used to look up who already
-   *  holds a refused barcode now; sent with the link/create writes from
-   *  slice 7 of docs/plans/barcode-integrity. */
+  /** The detector's symbology for `barcode`. Sent with the link/create writes
+   *  so the server can store the standard form (docs/plans/barcode-integrity). */
   format: string | null;
   onCancel: () => void;
   /** Fired for both paths — the caller only cares which product to count. */
@@ -376,6 +375,7 @@ function ConfirmLink({
       result = await linkBarcodeToProductAction({
         productId: product.id,
         barcode,
+        format: format ?? undefined,
         packLevel: askPackLevel ? packLevel : "each",
       });
     } catch {
@@ -615,7 +615,7 @@ function CreateNew({
         // which is a rarer correction than the delay of asking here every time.
         // `each` unless the counter answered "case" on the confirmation
         // before choosing "It's a different size".
-        barcode: { barcode, packLevel: from?.packLevel ?? "each", isPrimary: true },
+        barcode: { barcode, format: format ?? undefined, packLevel: from?.packLevel ?? "each", isPrimary: true },
       });
     } catch {
       // Offline. Creating the product is a WRITE that does not go through the

@@ -19,6 +19,7 @@ import { isDuplicateKeyError } from "@/lib/domain/db-errors";
 import { getOnHandSnapshot } from "@/lib/domain/on-hand";
 import { isCountedByCase } from "@/lib/pack-level";
 import { nameWithSize } from "@/lib/bottle-sizes";
+import { normalizeBarcode } from "@/lib/barcode";
 import type {
   ProductCreateInput,
   ProductUpdateInput,
@@ -338,17 +339,19 @@ export interface BarcodeResolution {
 export async function resolveBarcode(
   actor: Actor,
   barcode: string,
-  // Accepted from slice 1 of docs/plans/barcode-integrity so the scanner's
-  // symbology reaches the domain; used by the normalizer from slice 7.
-  _format?: string | null,
+  /** The detector's symbology — needed to tell a UPC-E from an EAN-8. */
+  format?: string | null,
 ): Promise<BarcodeResolution | null> {
+  // Looked up in the standard form, so any reading of a stored code finds it
+  // (docs/plans/barcode-integrity, Fix 1).
+  const { barcode: standard } = normalizeBarcode(barcode, format);
   const [hit] = await db
     .select({ productId: productBarcode.productId, packLevel: productBarcode.packLevel })
     .from(productBarcode)
     .where(
       and(
         eq(productBarcode.organizationId, actor.organizationId),
-        eq(productBarcode.barcode, barcode),
+        eq(productBarcode.barcode, standard),
       ),
     )
     .limit(1);
@@ -374,16 +377,17 @@ export async function resolveBarcode(
 export async function resolveBarcodeForCount(
   organizationId: number,
   barcode: string,
-  // See resolveBarcode: carried now, normalized from slice 7.
-  _format?: string | null,
+  /** See resolveBarcode. */
+  format?: string | null,
 ): Promise<{ productId: number; packLevel: (typeof productBarcode.$inferSelect)["packLevel"] } | null> {
+  const { barcode: standard } = normalizeBarcode(barcode, format);
   const [hit] = await db
     .select({ productId: productBarcode.productId, packLevel: productBarcode.packLevel })
     .from(productBarcode)
     .where(
       and(
         eq(productBarcode.organizationId, organizationId),
-        eq(productBarcode.barcode, barcode),
+        eq(productBarcode.barcode, standard),
       ),
     )
     .limit(1);
@@ -515,6 +519,9 @@ export async function linkBarcodeToProduct(
   actor: Actor,
   input: LinkBarcodeInput,
 ): Promise<ProductSummary> {
+  // Stored in the standard form with a vetted format (docs/plans/barcode-integrity,
+  // Fix 1): the unique index then refuses every written form of one code.
+  const standard = normalizeBarcode(input.barcode, input.format);
   await db.transaction(async (tx) => {
     // Inside the transaction so the product cannot be reassigned or
     // deactivated between the check and the insert.
@@ -535,8 +542,8 @@ export async function linkBarcodeToProduct(
       await tx.insert(productBarcode).values({
         organizationId: actor.organizationId,
         productId: input.productId,
-        barcode: input.barcode,
-        format: input.format,
+        barcode: standard.barcode,
+        format: standard.format,
         packLevel: input.packLevel,
         isPrimary: existing == null,
       });
@@ -545,7 +552,7 @@ export async function linkBarcodeToProduct(
         // product_barcode_organization_barcode_unique. Name who already holds
         // it — mid-count, "already assigned" without a name is a dead end,
         // and the answer is usually "you already scanned this one".
-        throw await barcodeTakenError(tx, actor.organizationId, input.barcode);
+        throw await barcodeTakenError(tx, actor.organizationId, standard.barcode);
       }
       throw err;
     }
@@ -628,12 +635,14 @@ export async function createProduct(
     }
 
     if (input.barcode) {
+      // Standard form + vetted format, as in linkBarcodeToProduct.
+      const standard = normalizeBarcode(input.barcode.barcode, input.barcode.format);
       try {
         await tx.insert(productBarcode).values({
           organizationId: actor.organizationId,
           productId: inserted.id,
-          barcode: input.barcode.barcode,
-          format: input.barcode.format,
+          barcode: standard.barcode,
+          format: standard.format,
           packLevel: input.barcode.packLevel,
           isPrimary: input.barcode.isPrimary ?? true,
         });
@@ -641,7 +650,7 @@ export async function createProduct(
         if (isDuplicateKeyError(err)) {
           // Name who already holds it — read inside the same (about-to-roll-
           // back) transaction, so the product insert above is undone too.
-          throw await barcodeTakenError(tx, actor.organizationId, input.barcode.barcode);
+          throw await barcodeTakenError(tx, actor.organizationId, standard.barcode);
         }
         throw err;
       }

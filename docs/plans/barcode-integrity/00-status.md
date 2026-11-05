@@ -15,8 +15,8 @@ Fix 3 is deferred (see Notes).
 - [x] Slice 3 — Fix 4: refusal names the size, offers to count the owner
 - [x] Slice 4 — Fix 2: confirm the size before linking
 - [x] Slice 5 — Fix 2: "It's a different size"
-- [ ] Slice 6 — Fix 1 red: reproduce the bug in DB tests (evidence recorded, not committed alone)
-- [ ] Slice 7 — Fix 1 green: the normalizer, format stored, mutation-checked
+- [x] Slice 6 — Fix 1 red: reproduce the bug in DB tests (evidence recorded, not committed alone)
+- [x] Slice 7 — Fix 1 green: the normalizer, format stored, mutation-checked
 - [ ] Slice 8 — close-out: full checks, STATE.md, open items
 
 ## Notes for a fresh session
@@ -223,3 +223,56 @@ in this feature's own lines were fixed with `{" "}` (slices 3 and 5). A
 pre-existing one is live on `/office/reorder`: "closedcount, and there isn't
 one" whenever no count has closed. Suggested as its own task with the
 evidence.
+
+## Slices 6–7 evidence (2026-11-05)
+
+**Test codes** (computed with an independent Python check-digit / UPC-E
+implementation, not with `lib/barcode.ts`): UPC-E rule examples
+`08200103 → 082000000013`, `01234531 → 012300000451`,
+`01234543 → 012340000053`, `01234572 → 012345000072`; EAN-8 `96385074`;
+EAN-13 `5012345678900`; GTIN-14 `10082000000010`; near misses `082000000014`
+and UPC-E `08200104` (bad check digits).
+
+**Slice 6 — red first.** The new describe "one barcode, one product, in any
+written form" in `tests/catalog-write-path.test.ts`, run against the
+unchanged domain code: **7 fail, 3 pass** (the 3 are regression guards:
+8-digit-without-format stored as read; two tenants may share a code;
+cross-tenant never resolves). Failures, verbatim:
+
+```
+resolves when read as EAN-13 / as UPC-E   Expected: 1  Received: undefined
+THE BUG (link EAN-13 form to a 2nd product)  Expected ConflictError — it succeeded
+create in UPC-E form                       Expected ConflictError — it succeeded
+stored form                                Expected "00082000000013"  Received "082000000013"
+unknown format                             Expected null  Received "qr_code"
+rapid scan, EAN-13 reading                 DomainError: Product for this barcode not found.
+```
+
+**Slice 7 — green.** `lib/barcode.ts` (`normalizeBarcode`) at all six
+touchpoints in `lib/domain/catalog.ts`; format vetted (unknown → null); the
+phone sends `format` on link and create. Suite **260/260**.
+
+Two existing tests changed, because the stored form changes on purpose:
+- `catalog-write-path` "first barcode is primary": looks the row up by the
+  14-digit form.
+- `location-write-path` "scanCountLine into a just-retired location": its
+  fixture inserted a raw 12-digit row, which would no longer resolve — the
+  scan would then be refused as NOT FOUND, and because the test only asserted
+  `DomainError` (NotFoundError is one) it would have **passed for the wrong
+  reason**. The fixture now stores the standard form and the test asserts
+  `code: "LOCATION_RETIRED"`. Mutation: putting the raw row back now fails it.
+
+**Mutation check:** `normalizeBarcode` returning its input unchanged → 18
+fail, all barcode-form tests: the 7 slice-6 tests, 9 normalizer table tests
+(the never-guess/never-merge ones correctly still pass), and the 2 tests
+above. Nothing unrelated failed. Restored: 260/260.
+
+**Browser** (fake camera, production build): new check — a code stored as a
+UPC-A link stores it (`00082000000013`, `upc_a`) is recognised when the
+camera reads `0082000000013` (EAN-13) and goes straight to Smirnoff's entry
+screen. All 12 barcode checks pass; harness 53/55 (the 2 pre-existing
+data-dependent stock checks).
+
+**Owner's local Docker database:** rows enrolled before this ships are raw and
+will no longer resolve (decided: no conversion script). Run
+`bun run docker:reset` after merging.
