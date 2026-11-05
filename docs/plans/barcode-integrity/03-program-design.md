@@ -15,7 +15,7 @@ The design is unchanged by this.
 | File | New/changed | Why it lives there |
 |---|---|---|
 | `lib/barcode.ts` | **new** | The self-contained normalizer (owner requirement). Pure: no imports from `@/db`, `@/lib/domain`, React or the DOM — the same shape as `lib/rescan-guard.ts`, so the rules are tested without a camera or database. |
-| `lib/bottle-sizes.ts` | changed | Gains `formatProductSize`. AGENTS.md makes this file "the single definition of what a size is"; the confirm screen (client) and the conflict message (server) must print a size identically, so the formatter cannot live in either. |
+| `lib/bottle-sizes.ts` | changed | Gains `formatProductSize` and `kegGallons`. AGENTS.md makes this file "the single definition of what a size is"; the confirm screen (client) and the conflict message (server) must print a size identically, so the formatter cannot live in either. |
 | `lib/validation/catalog.ts` | changed | `resolveBarcodeSchema` gains optional `format`. `linkBarcodeSchema` and `productBarcodeInputSchema` already have it. |
 | `lib/validation/counts.ts` | changed | `scanCountLineSchema` gains optional `format`. |
 | `lib/domain/catalog.ts` | changed | All six barcode touchpoints normalize first. The two duplicated "who already has it" lookups collapse into one private helper that also selects size and unit type. |
@@ -70,12 +70,22 @@ function toKnownFormat(format?: string | null): ScannedBarcodeFormat | null;
 ### `lib/bottle-sizes.ts` (added)
 
 ```ts
-/** "750 ml", "1750 ml", or "keg" — one spelling of a product's size, used by
- *  both the confirm screen and the "already belongs to" message. */
+/** One spelling of a product's size, used by both the confirm screen and the
+ *  "already belongs to" message. Decided by the owner 2026-11-05:
+ *    bottle/can < 1000 ml  → "750 ml"
+ *    bottle/can ≥ 1000 ml  → litres, trailing zeros dropped: "1 L", "1.5 L", "1.75 L"
+ *    keg 19533             → "Sixtel keg"
+ *    keg 29337             → "Quarter barrel keg"
+ *    keg 58674             → "Half barrel keg"
+ *    any other keg         → litres + " keg": "50 L keg"            */
 export function formatProductSize(p: {
   unitType: "bottle" | "can" | "keg";
   sizeMl: number;
 }): string;
+
+/** Secondary line under a keg's size on the confirm screen: "5.16 gal".
+ *  Null for anything that is not one of the three named keg sizes. */
+export function kegGallons(p: { unitType: "bottle" | "can" | "keg"; sizeMl: number }): string | null;
 ```
 
 ### Validation (changed fields only)
@@ -121,7 +131,7 @@ async function barcodeOwnerMessage(
   normalizedBarcode: string,
   shownBarcode: string,   // as scanned, for the message
 ): Promise<string>;
-// → 'This barcode already belongs to Smirnoff 750 ml.'
+// → 'This barcode already belongs to Smirnoff 750 ml.'  /  '…to Blue Moon Sixtel (Sixtel keg).'
 //   (fallback, if the owner row cannot be read: '…already belongs to another product.')
 ```
 
@@ -288,8 +298,12 @@ implementation (see `00-status.md`) — not with the module under test.
 
 | Test | Asserts |
 |---|---|
-| `formatProductSize prints millilitres` | bottle 750 → `"750 ml"`, can 355 → `"355 ml"`, bottle 1750 → `"1750 ml"` |
-| `formatProductSize says keg for a keg` | keg 19533 → `"keg"` |
+| `formatProductSize prints ml under a litre` | bottle 750 → `"750 ml"`, can 355 → `"355 ml"`, bottle 999 → `"999 ml"` |
+| `formatProductSize prints litres from 1000 ml, dropping trailing zeros` | 1000 → `"1 L"`, 1500 → `"1.5 L"`, 1750 → `"1.75 L"` |
+| `formatProductSize names the three keg sizes` | 19533 → `"Sixtel keg"`, 29337 → `"Quarter barrel keg"`, 58674 → `"Half barrel keg"` |
+| `formatProductSize falls back to litres for an unnamed keg` | keg 50000 → `"50 L keg"` |
+| `every size in the seed catalog formats to a non-empty label` | reads the seed CSV like the existing catalog test; no product prints `"NaN"`, `"0 ml"` or an empty string |
+| `kegGallons` | 19533 → `"5.16 gal"`, 29337 → `"7.75 gal"`, 58674 → `"15.5 gal"`, a bottle → null |
 
 ### `tests/catalog-write-path.test.ts` — new `describe("one barcode, one product, in any written form")`
 
@@ -299,7 +313,7 @@ implementation (see `00-status.md`) — not with the module under test.
 | `…and when read as UPC-E` | `resolveBarcode("08200103", "upc_e")` → A | **[RED FIRST]** |
 | `THE BUG: the same code cannot be linked to a second size` | link UPC-A → Smirnoff 750; link EAN-13 form → Smirnoff 200 **throws ConflictError**; Smirnoff 200 has no barcode rows | **[RED FIRST]** — succeeds today |
 | `creating a new size with the same code is refused` | `createProduct(…, barcode: UPC-E + upc_e)` throws; **no product row was created** (transaction rolled back) | **[RED FIRST]** |
-| `the refusal names the owner and its size` | message contains `Smirnoff 750 ml` | **[RED FIRST]** — no size today |
+| `the refusal names the owner and its size` | message contains `Smirnoff 750 ml`; for a keg owner, `(Sixtel keg)` | **[RED FIRST]** — no size today |
 | `the stored row holds the 14-digit form and the format` | after link with `upc_a`: row `barcode = 00082000000013`, `format = upc_a` | **[RED FIRST]** |
 | `an unknown format is stored as null` | link with `format: "qr_code"` → `format IS NULL` | **[RED FIRST]** — stores `qr_code` today |
 | `an 8-digit code with no format is stored as read` | link `08200103`, no format → row `08200103` | passes today (guards the "never guess" rule against regression) |
@@ -335,11 +349,15 @@ camera is Least confident #6.
    returning the owner's id in the error. Costs one extra indexed read on a
    rare screen, and keeps `ActionResult`'s error shape unchanged for every
    other caller. The alternative widens a contract used by every action.
-3. **`formatProductSize` prints `1750 ml`, not `1.75 L`, and `keg` for kegs.**
-   Plain and unambiguous; the size *list* already uses friendlier labels
-   ("1.75 L (handle)"). Kegs say "keg" rather than a 19,533 ml figure nobody
-   reads off a keg. Easy to change, but the confirm screen and the message
-   must change together — that is why it is one function.
+3. **Size display — DECIDED by the owner 2026-11-05.** `1.75 L` rather than
+   `1750 ml` (litres from 1,000 ml up), and kegs by their trade name —
+   "Sixtel keg", "Quarter barrel keg", "Half barrel keg" — with gallons as a
+   secondary line on the confirm screen. The message for a keg owner reads
+   *"…already belongs to Blue Moon Sixtel (Sixtel keg)"*; the repetition is
+   accepted rather than guessing whether a name already contains its size.
+   Not in scope: the back-office size dropdown still labels kegs
+   `19533 ml (sixtel)`; aligning it to this formatter is a follow-up.
+
 4. **"It's a different size" carries the bottle/case choice into the create
    form.** If a counter chose "Case carton" on a beer and then said "different
    size", the new product's barcode is linked as `case`. Alternative: always
