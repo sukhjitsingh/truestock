@@ -4,8 +4,8 @@ One barcode, one bottle size. Fixes 1, 2 and 4 from the 2026-11-05 discussion;
 Fix 3 is deferred (see Notes).
 
 - Gate 1 — Product: APPROVED 2026-11-05
-- Gate 2 — Architecture: in progress
-- Gate 3 — Program Design: pending
+- Gate 2 — Architecture: APPROVED 2026-11-05
+- Gate 3 — Program Design: in progress
 - Gate 4 — Slice plan: pending
 
 ## Slices
