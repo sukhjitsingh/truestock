@@ -12,6 +12,10 @@ proves the riskiest unknown first (Gate 3, least confident #6).
    a real decode. Proves: the plumbing compiles and runs, and the enroll
    screens are browser-testable. If the fake camera cannot be made reliable,
    stop and switch the screen checks to the phone fallback before slice 3.
+   **Added by the owner during the slice:** use the built-in reader only if it
+   can read retail barcodes, else the app-provided reader with its engine
+   served from the app's own origin (it was fetched from a CDN the CSP
+   refuses). DONE 2026-11-05 — see `00-status.md`.
 
 2. **One size spelling everywhere.** `formatProductSize` + `kegGallons` with
    their tests; preset lists move to `{ ml, nickname? }` with derived labels;

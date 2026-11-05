@@ -26,6 +26,11 @@ The design is unchanged by this.
 | `components/count/count-leg.tsx` | changed | Carries `format` through `onBarcode`, the rapid-scan payload (so also the offline queue record) and the `enroll` phase. |
 | `components/count/count-line-card.tsx`, `components/count/catalog-search.tsx`, `components/office/catalog-table.tsx` | changed | Print sizes with `formatProductSize` instead of their own `${sizeMl}ml` (owner: one spelling everywhere). `count-leg.tsx` and `enroll-form.tsx` get the same change alongside their other edits. |
 | `components/count/enroll-form.tsx` | changed | Fix 2 (confirm step, "It's a different size"), Fix 4's "Count …" button, and `format` on both writes. |
+| `lib/barcode-reader.ts` | **new** (owner, slice 1) | `chooseBarcodeReader`, the format lists and `ZXING_WASM_PATH`. Pure, so the built-in-vs-app-reader rule is tested without a phone. |
+| `scripts/copy-zxing-wasm.mjs` | **new** (owner, slice 1) | Copies the app reader's engine into `public/zxing/` on every `dev`/`build`; guarded `main()`. |
+| `package.json`, `.gitignore`, `middleware.ts`, `components/count/preflight.tsx` | changed (slice 1) | Run the copy before `dev`/`build`; ignore the copied file; make the CSP comment true; preflight names the reader. |
+| `tests/barcode-reader.test.ts` | **new** (slice 1) | The reader rule, and the copied engine against the package's published SHA-256. |
+| `scripts/lib/fake-barcode-camera.mjs` | **new** (slice 1) | EAN-13/UPC-A/UPC-E → `.y4m` for Chromium's fake camera. |
 | `tests/barcode-normalize.test.ts` | **new** | Table-driven tests of the pure module. |
 | `tests/bottle-sizes.test.ts` | changed | `formatProductSize` cases. |
 | `tests/catalog-write-path.test.ts` | changed | A new `describe` block: the bug, reproduced against a real database, then fixed. |

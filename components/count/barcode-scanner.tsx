@@ -3,10 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Zap, ZapOff } from "lucide-react";
 import { createRescanGuard, offerFrame } from "@/lib/rescan-guard";
+import { chooseBarcodeReader, ZXING_WASM_PATH } from "@/lib/barcode-reader";
 
 /**
- * Live barcode scanning via the native `BarcodeDetector`, falling back to the
- * `barcode-detector` WASM polyfill (spec §11).
+ * Live barcode scanning with the phone's built-in `BarcodeDetector` when it can
+ * read retail barcodes, otherwise the app-provided reader — the
+ * `barcode-detector` ZXing polyfill, with its engine served from this app's
+ * own origin (spec §11; rule in lib/barcode-reader.ts).
  *
  * The polyfill is imported dynamically and only when the native API is
  * missing — it is a ZXing-C++ WASM bundle, and pulling it into the main chunk
@@ -116,19 +119,54 @@ export function BarcodeScanner({
         type DetectorLike = {
           detect(source: CanvasImageSource): Promise<{ rawValue: string; format?: string }[]>;
         };
-        // Every symbology a liquor bottle or case carton actually carries.
-        // Deliberately narrow: each extra format costs detection time on every
-        // frame, and this runs in a requestAnimationFrame loop on a phone.
-        const formats = [...(["upc_a", "upc_e", "ean_13", "ean_8", "code_128", "code_39"] as const)];
+        type BuiltInDetector = {
+          new (o: { formats: string[] }): DetectorLike;
+          getSupportedFormats?: () => Promise<string[]>;
+        };
+
+        // Built-in reader first, but only if it can read retail barcodes —
+        // the rule lives in lib/barcode-reader.ts. Asking what it supports is
+        // what tells a usable built-in reader from one that would open the
+        // camera and never recognise a bottle.
+        const builtIn = (window as unknown as { BarcodeDetector?: BuiltInDetector }).BarcodeDetector;
+        let supportedFormats: string[] | null = null;
+        if (builtIn?.getSupportedFormats) {
+          try {
+            supportedFormats = await builtIn.getSupportedFormats();
+          } catch {
+            supportedFormats = null; // can't ask → treat as unusable
+          }
+        }
+        const reader = chooseBarcodeReader({ available: Boolean(builtIn), supportedFormats });
 
         let detector: DetectorLike;
-        const native = (window as unknown as { BarcodeDetector?: new (o: unknown) => DetectorLike })
-          .BarcodeDetector;
-        if (native) {
-          detector = new native({ formats });
+        if (reader.kind === "built-in" && builtIn) {
+          detector = new builtIn({ formats: reader.formats });
         } else {
           const mod = await import("barcode-detector/pure");
-          detector = new mod.BarcodeDetector({ formats }) as DetectorLike;
+          try {
+            // Load the engine from THIS app's origin, and wait for it, so a
+            // failure surfaces here rather than as a camera that silently never
+            // reads anything. See ZXING_WASM_PATH for why it must be same-origin.
+            await mod.prepareZXingModule({
+              overrides: {
+                locateFile: (path: string, prefix: string) =>
+                  path.endsWith(".wasm") ? ZXING_WASM_PATH : prefix + path,
+              },
+              fireImmediately: true,
+            });
+          } catch {
+            if (!cancelled) {
+              setError(
+                "This phone has no built-in barcode reader, and the app's own reader " +
+                  "could not load. Use search instead, and report this.",
+              );
+            }
+            return;
+          }
+          detector = new mod.BarcodeDetector({
+            formats: reader.formats as ("upc_a" | "upc_e" | "ean_13" | "ean_8" | "code_128" | "code_39")[],
+          }) as DetectorLike;
         }
 
         const stream = await navigator.mediaDevices.getUserMedia({

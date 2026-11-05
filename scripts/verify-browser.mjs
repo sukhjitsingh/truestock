@@ -26,6 +26,12 @@
 import { execSync } from "node:child_process";
 import mysql from "mysql2/promise";
 import { chromium } from "playwright";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ean13Modules, writeBarcodeY4m } from "./lib/fake-barcode-camera.mjs";
+
+/** A valid UPC-A (check digit verified) used by the fake camera. */
+const FAKE_CAMERA_UPC_A = "082000000013";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const EMAIL = process.env.CHECK_EMAIL;
@@ -888,6 +894,108 @@ try {
   record("run completed without throwing", false, String(err).split("\n")[0]);
   await page.screenshot({ path: "/var/tmp/truestock-failure.png" }).catch(() => {});
   await browser.close();
+}
+
+// ---- the scanner, through a fake camera ------------------------------------
+// docs/plans/barcode-integrity, slice 1. The enroll screens are reachable only
+// after a real scan, so Chromium is given a fake camera playing a video of a
+// valid barcode (scripts/lib/fake-barcode-camera.mjs) and the app's own reader
+// decodes it.
+//
+// The built-in BarcodeDetector is DELETED before any page script runs, so the
+// app-provided reader is what gets tested on every machine. That is the path
+// that was broken: its engine was fetched from a CDN the CSP refuses, and on
+// this owner's handset (no built-in reader) scanning could not work. Chrome on
+// a Mac has a built-in reader and would otherwise test the other path.
+{
+  const video = join(tmpdir(), "truestock-fake-camera-upca.y4m");
+  writeBarcodeY4m(video, ean13Modules(FAKE_CAMERA_UPC_A));
+
+  let scanCountId = null;
+  const camBrowser = await chromium.launch({
+    channel: "chrome",
+    args: [
+      "--use-fake-ui-for-media-stream",
+      "--use-fake-device-for-media-stream",
+      `--use-file-for-fake-video-capture=${video}`,
+    ],
+  });
+  try {
+    // A throwaway in-progress count, so the scan page has something to write
+    // into. Removed below — a fixture, not the app deleting a count.
+    const [[owner]] = await sql.execute("SELECT id, organization_id FROM `user` WHERE email = ?", [EMAIL]);
+    const [ins] = await sql.execute(
+      "INSERT INTO `count` (organization_id, type, status, opened_by, notes) VALUES (?, 'spot', 'in_progress', ?, 'verify-browser fake camera')",
+      [owner.organization_id, owner.id],
+    );
+    scanCountId = ins.insertId;
+
+    const camContext = await camBrowser.newContext({
+      viewport: { width: 390, height: 844 },
+      ignoreHTTPSErrors: true,
+      permissions: ["camera"],
+    });
+    await camContext.addInitScript(() => {
+      delete window.BarcodeDetector;
+      document.addEventListener("securitypolicyviolation", (e) => {
+        (window.__csp ??= []).push(`${e.violatedDirective} blocked ${e.blockedURI}`);
+      });
+    });
+    const cam = await camContext.newPage();
+    const actionBodies = [];
+    cam.on("request", (r) => {
+      if (r.method() === "POST") actionBodies.push(r.postData() ?? "");
+    });
+
+    await cam.goto(`${BASE}/login`, { waitUntil: "domcontentloaded" });
+    await waitForHydration(cam, "form");
+    await cam.fill('input[type="email"]', EMAIL);
+    await cam.fill('input[type="password"]', PASSWORD);
+    await Promise.all([
+      cam.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 20000 }),
+      cam.click('button[type="submit"]'),
+    ]);
+
+    await cam.goto(`${BASE}/count/${scanCountId}/scan`, { waitUntil: "networkidle" });
+    const picker = cam.getByRole("heading", { name: /which section/i });
+    await picker.waitFor({ timeout: 15000 });
+    await cam.locator("button", { hasText: /fill levels|quantities only/i }).first().click();
+    await cam.getByRole("button", { name: "Scan barcode" }).first().click();
+
+    const reached = await cam
+      .getByRole("heading", { name: /which bottle is this/i })
+      .waitFor({ timeout: 20000 })
+      .then(() => true, () => false);
+    record(
+      "with no built-in reader, the app's own reader decodes a real barcode from the camera",
+      reached,
+      reached ? "fake camera → app reader → \"Which bottle is this?\"" : "never left the scanner",
+    );
+
+    const sent = actionBodies.find((b) => b.includes('"barcode"') && b.includes('"format"')) ?? "";
+    record(
+      "the barcode's format travels to the server with it",
+      /"format":"(ean_13|upc_a)"/.test(sent),
+      sent ? sent.slice(0, 120) : "no server action carried a barcode and a format",
+    );
+
+    const camCsp = await cam.evaluate(() => window.__csp ?? []);
+    record(
+      "the app reader loads under the production CSP (no CDN fetch refused)",
+      camCsp.length === 0,
+      camCsp.join("; ") || "none",
+    );
+    await camContext.close();
+  } catch (err) {
+    record("fake-camera scan ran without throwing", false, String(err).split("\n")[0]);
+  } finally {
+    await camBrowser.close();
+    if (scanCountId != null) {
+      await sql.execute("DELETE FROM count_line_write WHERE count_line_id IN (SELECT id FROM count_line WHERE count_id = ?)", [scanCountId]);
+      await sql.execute("DELETE FROM count_line WHERE count_id = ?", [scanCountId]);
+      await sql.execute("DELETE FROM `count` WHERE id = ?", [scanCountId]);
+    }
+  }
 }
 
 // ---- put the dev data back ------------------------------------------------

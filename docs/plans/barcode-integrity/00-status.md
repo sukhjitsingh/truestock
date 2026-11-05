@@ -9,8 +9,8 @@ Fix 3 is deferred (see Notes).
 - Gate 4 — Slice plan: APPROVED 2026-11-05
 
 ## Slices
-- [~] Slice 1 — tracer: format travels end to end; fake camera reaches the enroll screen
-      (plumbing committed; harness check waits on the decoder-engine decision below)
+- [x] Slice 1 — tracer: format travels end to end; fake camera reaches the enroll screen;
+      built-in reader if usable, else the app-provided reader served same-origin
 - [ ] Slice 2 — one size spelling everywhere
 - [ ] Slice 3 — Fix 4: refusal names the size, offers to count the owner
 - [ ] Slice 4 — Fix 2: confirm the size before linking
@@ -121,3 +121,36 @@ pointing at `/zxing/zxing_reader.wasm` copied from `node_modules` — made the
 scan work under the production CSP. Not committed: it is a scope addition and
 awaits the owner. STATE.md's 2026-08-12 claim of a polyfill decode under the
 production CSP conflicts with this and should be re-checked on the handset.
+
+**Resolved by the owner, 2026-11-05:** "check if a built-in barcode reader is
+present; if not, use the app-provided reader as a fallback." Implemented in
+slice 1:
+
+- `lib/barcode-reader.ts` — `chooseBarcodeReader`: the built-in
+  `BarcodeDetector` is used only if it exists **and** `getSupportedFormats()`
+  includes all four retail formats (UPC-A, UPC-E, EAN-13, EAN-8). A built-in
+  reader that cannot read retail codes counts as not present.
+- Otherwise the app-provided reader (`barcode-detector` polyfill) loads its
+  engine from `/zxing/zxing_reader.wasm` on this app's origin, and the
+  scanner **waits for it** — a load failure now shows an error instead of a
+  camera that silently never reads.
+- `scripts/copy-zxing-wasm.mjs` copies the engine out of `node_modules` on
+  every `dev` and `build` (covers local, Docker, CI, deploy). `public/zxing/`
+  is git-ignored, so the file cannot drift from the installed version;
+  `tests/barcode-reader.test.ts` checks the copy against the package's own
+  published `ZXING_WASM_SHA256`.
+- Browser harness: a fake-camera section deletes `window.BarcodeDetector`
+  (so the app reader is what is tested even on a Mac whose Chrome has a
+  built-in one), scans a generated UPC-A, and asserts: reached "Which bottle is
+  this?", the server action carried `format`, no CSP violation.
+
+**Evidence (2026-11-05, production standalone build, local MariaDB 10.11):**
+harness 42/44 — the 3 new checks pass; the 2 failures are the pre-existing
+data-dependent stock checks (no closed count in that database). Negative
+control: with the engine file removed from the running server, the scan and
+format checks FAIL. Rule mutation (accept any built-in reader) fails exactly
+the 2 relevant unit tests. Suite 218/218.
+
+**Not verifiable here:** the built-in-reader branch. Headless Chromium on
+Linux has no `BarcodeDetector`; it needs a phone or Mac Chrome. Preflight now
+reports "Built-in present" / "App reader".

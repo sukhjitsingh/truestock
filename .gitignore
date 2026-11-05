@@ -40,3 +40,8 @@ next-env.d.ts
 
 # codegraph
 .codegraph/
+
+# The app-provided barcode reader's engine, copied out of node_modules on every
+# dev/build by scripts/copy-zxing-wasm.mjs — never committed, so it cannot drift
+# from the installed zxing-wasm version.
+/public/zxing/
