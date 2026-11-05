@@ -1,10 +1,17 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeAll, beforeEach } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { product, count, productBarcode, countLine } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
 import { scanCountLine } from "@/lib/domain/counts";
-import { resetDatabase, createFixtures } from "./helpers/test-db";
+import { migrateTestDatabase, resetDatabase, createFixtures } from "./helpers/test-db";
+
+// Apply the migration chain ourselves rather than relying on another test
+// file having run first. Bun does not fix file order, and on CI's empty
+// database this file ran first and every test hit "table doesn't exist".
+beforeAll(async () => {
+  await migrateTestDatabase();
+});
 
 describe("Rapid Scan Logic", () => {
   let actor: Actor;

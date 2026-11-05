@@ -1,16 +1,23 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeAll, beforeEach } from "bun:test";
 import { db } from "@/db";
 import { user, session, organization } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { listUsers, setUserActive, setUserRole } from "@/lib/domain/users";
 import { NotFoundError } from "@/lib/domain/errors";
 import type { Actor } from "@/lib/authz";
-import { resetDatabase } from "./helpers/test-db";
+import { migrateTestDatabase, resetDatabase } from "./helpers/test-db";
 
 const makeActor = (userId: number, organizationId: number, role: "owner" | "manager" | "staff"): Actor => ({
   userId,
   organizationId,
   role,
+});
+
+// Apply the migration chain ourselves rather than relying on another test
+// file having run first. Bun does not fix file order, and on CI's empty
+// database this file ran first and every test hit "table doesn't exist".
+beforeAll(async () => {
+  await migrateTestDatabase();
 });
 
 describe("User Write Path", () => {
