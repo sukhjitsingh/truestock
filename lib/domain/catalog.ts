@@ -337,6 +337,9 @@ export interface BarcodeResolution {
 export async function resolveBarcode(
   actor: Actor,
   barcode: string,
+  // Accepted from slice 1 of docs/plans/barcode-integrity so the scanner's
+  // symbology reaches the domain; used by the normalizer from slice 7.
+  _format?: string | null,
 ): Promise<BarcodeResolution | null> {
   const [hit] = await db
     .select({ productId: productBarcode.productId, packLevel: productBarcode.packLevel })
@@ -370,6 +373,8 @@ export async function resolveBarcode(
 export async function resolveBarcodeForCount(
   organizationId: number,
   barcode: string,
+  // See resolveBarcode: carried now, normalized from slice 7.
+  _format?: string | null,
 ): Promise<{ productId: number; packLevel: (typeof productBarcode.$inferSelect)["packLevel"] } | null> {
   const [hit] = await db
     .select({ productId: productBarcode.productId, packLevel: productBarcode.packLevel })

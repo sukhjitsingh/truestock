@@ -31,7 +31,13 @@ export function BarcodeScanner({
   footer,
   continuous = false,
 }: {
-  onDetected: (barcode: string) => void;
+  /**
+   * `format` is the symbology the detector reports (`upc_a`, `ean_13`, `upc_e`,
+   * ...), or null if it gave none. It travels with the barcode to the server,
+   * which needs it to tell an 8-digit UPC-E from an 8-digit EAN-8 — the digits
+   * alone cannot (docs/plans/barcode-integrity).
+   */
+  onDetected: (barcode: string, format: string | null) => void;
   onClose: () => void;
   /**
    * Rendered over the camera, above the aiming frame. Rapid mode uses it to
@@ -107,7 +113,9 @@ export function BarcodeScanner({
           return;
         }
 
-        type DetectorLike = { detect(source: CanvasImageSource): Promise<{ rawValue: string }[]> };
+        type DetectorLike = {
+          detect(source: CanvasImageSource): Promise<{ rawValue: string; format?: string }[]>;
+        };
         // Every symbology a liquor bottle or case carton actually carries.
         // Deliberately narrow: each extra format costs detection time on every
         // frame, and this runs in a requestAnimationFrame loop on a phone.
@@ -148,7 +156,7 @@ export function BarcodeScanner({
             const hit = results.find((r) => r.rawValue);
 
             if (hit && !cancelled && !continuousRef.current) {
-              onDetectedRef.current(hit.rawValue);
+              onDetectedRef.current(hit.rawValue, hit.format ?? null);
               return; // one-shot: the parent closes us, stop scanning now
             }
 
@@ -156,7 +164,7 @@ export function BarcodeScanner({
             // including the empty ones — a frame with no barcode is what
             // re-arms it, so it carries as much information as a hit.
             if (!cancelled && offerFrame(guard, hit?.rawValue ?? null, Date.now())) {
-              onDetectedRef.current(hit!.rawValue);
+              onDetectedRef.current(hit!.rawValue, hit!.format ?? null);
             }
           } catch {
             // A single failed frame is not an error worth surfacing — the

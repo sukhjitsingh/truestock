@@ -76,6 +76,9 @@ export function EnrollForm({
   onResolved,
 }: {
   barcode: string;
+  /** The detector's symbology for `barcode`; sent with the link/create writes
+   *  from slice 7 of docs/plans/barcode-integrity. Carried, not yet used. */
+  format: string | null;
   onCancel: () => void;
   /** Fired for both paths — the caller only cares which product to count. */
   onResolved: (product: ProductSummary) => void;

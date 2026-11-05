@@ -42,7 +42,7 @@ type Phase =
   | { kind: "pick-location" }
   | { kind: "counting" }
   | { kind: "entry"; product: ProductSummary; locationId: number; isStray: boolean }
-  | { kind: "enroll"; barcode: string };
+  | { kind: "enroll"; barcode: string; format: string | null };
 
 /**
  * One rapid-mode scan, kept only long enough to be shown over the camera.
@@ -396,14 +396,14 @@ export function CountLeg({
     [countId, refreshPending, canSeeCost],
   );
 
-  async function onBarcode(barcode: string) {
+  async function onBarcode(barcode: string, format: string | null) {
     if (activeLocationId == null) return;
 
     // Rapid mode keeps the camera up and records +1 per scan. It is only
     // offered on quantity locations, so there is no fill reading to collect
     // and no reason to leave the scanner.
     if (rapid && activeLocation?.countMode !== "tenths") {
-      await rapidScan(barcode, activeLocationId);
+      await rapidScan(barcode, format, activeLocationId);
       return;
     }
 
@@ -411,7 +411,7 @@ export function CountLeg({
     setBusy(true);
     let resolved: Awaited<ReturnType<typeof resolveBarcodeAction>>;
     try {
-      resolved = await resolveBarcodeAction({ barcode });
+      resolved = await resolveBarcodeAction({ barcode, format: format ?? undefined });
     } catch {
       // The fetch itself threw — offline. See OFFLINE_LOOKUP_MESSAGE for why
       // this is not queued and must not claim to be.
@@ -433,7 +433,7 @@ export function CountLeg({
       // Unknown barcode -> scan-to-enroll. The catalog builds itself during
       // the first count (spec §12); an unknown code is the expected path, not
       // an error state.
-      setPhase({ kind: "enroll", barcode });
+      setPhase({ kind: "enroll", barcode, format });
       return;
     }
     setPhase({
@@ -461,7 +461,7 @@ export function CountLeg({
    * enrolment needs the form, so the camera closes for it and rapid mode
    * resumes when the form is done.
    */
-  async function rapidScan(barcode: string, locationId: number) {
+  async function rapidScan(barcode: string, format: string | null, locationId: number) {
     // Serialize rapid writes explicitly.
     //
     // `runWrite` captures the pre-write value of a line so a refused write can
@@ -478,17 +478,17 @@ export function CountLeg({
     if (rapidInFlight.current) return;
     rapidInFlight.current = true;
     try {
-      await rapidScanInner(barcode, locationId);
+      await rapidScanInner(barcode, format, locationId);
     } finally {
       rapidInFlight.current = false;
     }
   }
 
-  async function rapidScanInner(barcode: string, locationId: number) {
+  async function rapidScanInner(barcode: string, format: string | null, locationId: number) {
     setBusy(true);
     let resolved: Awaited<ReturnType<typeof resolveBarcodeAction>>;
     try {
-      resolved = await resolveBarcodeAction({ barcode });
+      resolved = await resolveBarcodeAction({ barcode, format: format ?? undefined });
     } catch {
       // Offline, in the one mode where the camera never closes — so this log
       // line is the ONLY thing that can tell the counter the sweep stopped
@@ -513,7 +513,7 @@ export function CountLeg({
     if (!resolved.data) {
       setBusy(false);
       setScannerOpen(false);
-      setPhase({ kind: "enroll", barcode });
+      setPhase({ kind: "enroll", barcode, format });
       return;
     }
 
@@ -528,7 +528,7 @@ export function CountLeg({
       "scan",
       lineKey(product.id, locationId),
       writeLabel(product, location),
-      { countId, barcode, locationId, qty: 1 },
+      { countId, barcode, format: format ?? undefined, locationId, qty: 1 },
       (prev) =>
         applyIncrement(
           prev,
@@ -602,6 +602,7 @@ export function CountLeg({
     return (
       <EnrollForm
         barcode={phase.barcode}
+        format={phase.format}
         onCancel={() => setPhase({ kind: "counting" })}
         // Both enroll paths land here — whether the barcode was attached to a
         // product the catalog already had or to one just created, the next

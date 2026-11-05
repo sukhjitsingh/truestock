@@ -6,10 +6,11 @@ Fix 3 is deferred (see Notes).
 - Gate 1 — Product: APPROVED 2026-11-05
 - Gate 2 — Architecture: APPROVED 2026-11-05
 - Gate 3 — Program Design: APPROVED 2026-11-05
-- Gate 4 — Slice plan: in progress
+- Gate 4 — Slice plan: APPROVED 2026-11-05
 
 ## Slices
-- [ ] Slice 1 — tracer: format travels end to end; fake camera reaches the enroll screen
+- [~] Slice 1 — tracer: format travels end to end; fake camera reaches the enroll screen
+      (plumbing committed; harness check waits on the decoder-engine decision below)
 - [ ] Slice 2 — one size spelling everywhere
 - [ ] Slice 3 — Fix 4: refusal names the size, offers to count the owner
 - [ ] Slice 4 — Fix 2: confirm the size before linking
@@ -95,3 +96,28 @@ Separately, the link screen links on one tap with no size confirmation.
 
 **Still open (asked 2026-11-05, not yet answered):** see 01-product.md,
 "Decisions for the owner".
+
+## Slice 1 findings (2026-11-05)
+
+**The fake camera works.** `scripts/lib/fake-barcode-camera.mjs` renders a
+real EAN-13/UPC-A (and UPC-E) into a `.y4m` that Chromium plays as its webcam.
+The app's own scanner decoded it in headless Chromium and reached "Which bottle
+is this?" in ~300 ms, and the server action received
+`{"barcode":"0082000000013","format":"ean_13"}`.
+
+**Real-decoder evidence for Fix 1.** The video encoded the 12-digit UPC-A
+`082000000013`; the ZXing polyfill reported it as the 13-digit EAN-13
+`0082000000013`. So the decoder this handset uses returns a UPC-A as a string
+that differs from the printed number — the bug's mechanism, observed.
+
+**Blocker found: the polyfill cannot load its engine under the app's CSP.**
+`zxing-wasm` 3.1.1 fetches `zxing_reader.wasm` from
+`fastly.jsdelivr.net` by default, and `middleware.ts` serves
+`connect-src 'self'`, so on any browser without a native `BarcodeDetector`
+the scanner aborts ("both async and sync fetching of the wasm failed"). The
+CSP comment in `middleware.ts` already *assumes* a same-origin `.wasm`; nothing
+ever set that up. A prototype — `prepareZXingModule({ overrides: { locateFile }})`
+pointing at `/zxing/zxing_reader.wasm` copied from `node_modules` — made the
+scan work under the production CSP. Not committed: it is a scope addition and
+awaits the owner. STATE.md's 2026-08-12 claim of a polyfill decode under the
+production CSP conflicts with this and should be re-checked on the handset.
