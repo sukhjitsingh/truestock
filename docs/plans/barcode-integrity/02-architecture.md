@@ -23,9 +23,8 @@ go-live migration list.
 | `components/count/barcode-scanner.tsx` | Detector results carry `format`; the component reads only `rawValue` | `onDetected(barcode)` becomes `onDetected(barcode, format)`. The rescan guard still keys on `rawValue` alone — it decides *whether a frame counts*, not what the code means, so it is untouched. |
 | `components/count/count-leg.tsx` | `onBarcode(barcode)` → resolve, rapid scan, or enroll | Carries `format` into `resolveBarcodeAction`, the rapid-scan write payload (and therefore its offline-queue record), and `EnrollForm`. |
 | `components/count/enroll-form.tsx` | Search → **one tap links**. Create form defaults a size. | Fix 2: a confirm step between pick and link (size as the largest text; the beer bottle-or-case question moves onto it), "It's a different size" opening the create form with name/category prefilled and **no size preselected**. Fix 4's "Count Smirnoff 750 ml" button. Sends `format` on link and create. |
-| **New: a one-time conversion script** | — | Rewrites existing `product_barcode` rows into the standard form. Dry run by default; lists conflicts and refuses to write until they are resolved (Gate 1 #4). Guarded `main()` per AGENTS.md. |
 
-Not touched: `db/schema.ts`, `drizzle/`, `lib/count-queue.ts` (the queue stores
+Not touched: no conversion script (owner decision, see Data); `db/schema.ts`, `drizzle/`, `lib/count-queue.ts` (the queue stores
 whatever payload it is given; it gains a `format` field without code changes),
 `lib/rescan-guard.ts`, every back-office screen, authz.
 
@@ -95,26 +94,18 @@ bound into them changes.
   `product.unit_type` to its select, so the message reads
   *"…already belongs to Smirnoff 750 ml"* (or *"…keg"* for a keg).
 
-**Conversion of existing rows** (the script):
-1. Read every `product_barcode` row, compute its standard form (stored rows
-   have `format = NULL`, so 8-digit rows stay as read — reported, not changed).
-2. Group by `(organization_id, standard form)`. A group with rows on **more
-   than one product** is a conflict.
-3. Dry run (default): print rows that would change, rows left as read, and
-   every conflict with its row ids and product name + size. Write nothing.
-4. `--apply`: refused while any conflict exists. Otherwise updates each changed
-   row in one transaction. Re-running is a no-op.
-5. Conflict resolution is the owner's call (Gate 1 #4) — the exact mechanism
-   (a flag naming which barcode row to drop, or resetting the local database)
-   is a Gate 3 decision.
+**No conversion of existing rows — dropped by the owner 2026-11-05**, because
+there is no production database yet, so every production barcode will be
+written by the new code. This supersedes Gate 1 #4.
 
-Deleting a `product_barcode` row is safe for history: nothing references that
-table (no foreign key points at it, and count lines reference `product_id`,
-not the barcode). Invariant 6 concerns products, which are never deleted here.
-
-**Where the script needs to run:** the owner's local Docker database only.
-Production has no barcodes and has not been deployed; every barcode it ever
-holds will be written by the new code.
+What that leaves on the owner's **local Docker database**: rows enrolled before
+this ships stay exactly as they were scanned. A 12- or 13-digit row **no longer
+resolves**, because lookups now use the 14-digit form. Scanning that bottle
+opens "Which bottle is this?" again; linking it to the same product succeeds
+and adds a second, standard-form row beside the stale raw one. Harmless for
+counting, but untidy. **Recommended: `bun run
+docker:reset` once this ships**, which the phone-count protocol already uses
+between runs. Production is unaffected.
 
 ---
 
@@ -168,9 +159,9 @@ implemented in the pure module; the detector's format names come from the
    valid-check-digit gate and by table-driven tests that include near-misses
    (one wrong digit, wrong length, letters). The worst failure *after* the gate
    is a re-ask, never a merge.
-2. **Existing local rows not converted before the new code runs** would stop
-   resolving (lookups use the standard form, stored rows are raw). Local only;
-   the script runs once, and its dry run shows what would change.
+2. **Existing local rows are not converted** (owner decision). They stop
+   resolving once the new code runs; see Data. Local only — reset the Docker
+   database after this ships. Production has no rows to convert.
 3. **Detectors may disagree on UPC-E.** ZXing (the polyfill this handset uses)
    reports UPC-E as 8 digits; a native detector might expand it itself. Both
    end in the same standard form under the rules above, which is the point —

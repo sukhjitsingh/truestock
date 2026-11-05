@@ -149,9 +149,8 @@ them.
    | `0082000000013` | EAN-13 | `00082000000013` | EAN-13 |
    | `08200103` | UPC-E | `00082000000013` | UPC-E |
 
-4. **Barcodes already in your local database.** Some of them, like the
-   Smirnoff pair, will turn out to be the same barcode on two products once
-   they are compared in standard form. The app cannot decide which product is
-   right. **Recommended: the one-time conversion lists every such conflict and
-   stops, and you pick the winner** (or reset the local database instead).
-   Production has no barcodes yet, so this only affects local data.
+4. **Barcodes already in your local database — DECIDED 2026-11-05: no
+   conversion.** There is no production database yet, so every production
+   barcode will be learned under the new rules. Barcodes already in the local
+   test database are left as they are; the plan is to reset that database
+   after this ships rather than convert it.

@@ -69,7 +69,11 @@ Separately, the link screen links on one tap with no size confirmation.
   standard forms only in app code — the database's unique index would then
   stop identical text only.
 - **Order:** step 0 (CI test fix) → Fix 4 → Fix 2 → Fix 1 (normalizer + tests,
-  then scanner passes format, then a one-time conversion of existing barcodes).
+  then scanner passes format).
+- **No conversion script** (owner, 2026-11-05, during Gate 2): there is no
+  production database yet. Local Docker rows enrolled before this ships stay
+  raw and stop resolving; reset the local database after it ships. Supersedes
+  Gate 1 decision 4.
 
 **Step 0 is done** — commit `d637cbb` on `claude/mvp-readiness-report-tehzeg`:
 `tests/user-write-path.test.ts` and `tests/rapid-scan.test.ts` now migrate in
