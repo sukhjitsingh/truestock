@@ -1015,30 +1015,87 @@ try {
       camCsp.length === 0,
       camCsp.join("; ") || "none",
     );
-    // ---- Fix 4 (slice 3): a taken barcode names its owner, and offers to count it
-    // Before Fix 1 normalizes barcodes, the phone meets this refusal when
-    // ANOTHER phone links the same code while this one is on "Which bottle is
-    // this?". Reproduce exactly that: attach the code to Smirnoff 750 ml behind
-    // the screen's back, then pick a different product here. The fixture holds
-    // the code both as scanned and in its 14-digit standard form, so this check
-    // means the same thing before and after slice 7 changes what is stored.
+    // ---- Fix 2 (slice 4): picking a product opens a size confirmation; nothing is
+    // linked until "Link and count". Then Fix 4 (slice 3) through that screen.
     if (reached) {
-      const [[owner]] = await sql.execute(
+      const [[jameson]] = await sql.execute(
+        "SELECT id FROM product WHERE organization_id = ? AND name = 'Jameson' AND size_ml = 750 LIMIT 1",
+        [ownerOrgId],
+      );
+      const [[smirnoff]] = await sql.execute(
         "SELECT id FROM product WHERE organization_id = ? AND name = 'Smirnoff' AND size_ml = 750 AND unit_type = 'bottle' LIMIT 1",
         [ownerOrgId],
       );
-      if (!owner) {
-        record("a taken barcode offers to count its owner", false, "fixture missing: no 'Smirnoff' 750 ml bottle in the catalog");
+      if (!jameson || !smirnoff) {
+        record("enroll-flow fixtures present", false, "need 'Jameson' 750 ml and 'Smirnoff' 750 ml in the catalog");
       } else {
+        const barcodeRowsFor = async (productId) =>
+          (await sql.execute("SELECT id FROM product_barcode WHERE product_id = ?", [productId]))[0];
+        const pickJameson = async () => {
+          await cam.locator("#link-search").fill("Jameson");
+          await cam.getByRole("button", { name: /^Jameson\b/ }).first().click();
+          await cam.getByRole("heading", { name: /is this the bottle in your hand/i }).waitFor({ timeout: 10000 });
+        };
+
+        // 1. A pick opens the confirmation and writes nothing.
+        await pickJameson();
+        record(
+          "picking a search result opens the size confirmation and links nothing yet",
+          (await barcodeRowsFor(jameson.id)).length === 0,
+          "confirm screen shown; no barcode row for Jameson",
+        );
+
+        // 2. The size is the largest text on the screen.
+        const sizes = await cam.evaluate(() => {
+          const size = document.querySelector('[data-testid="confirm-size"]');
+          const visible = [...document.querySelectorAll("body *")].filter(
+            (el) => el.childElementCount === 0 && el.textContent.trim() && el.getClientRects().length > 0,
+          );
+          const px = (el) => parseFloat(getComputedStyle(el).fontSize);
+          return { text: size?.textContent ?? "", size: size ? px(size) : 0, max: Math.max(...visible.map(px)) };
+        });
+        record(
+          "the confirmation shows the size as the largest text",
+          sizes.text === "750 ml" && sizes.size >= sizes.max && sizes.size > 0,
+          `"${sizes.text}" at ${sizes.size}px; largest on screen ${sizes.max}px`,
+        );
+
+        // 3. Back keeps the search.
+        await cam.getByRole("button", { name: /back to results/i }).click();
+        const kept = await cam.locator("#link-search").inputValue();
+        record("\"Back to results\" keeps the search", kept === "Jameson", `search box reads "${kept}"`);
+
+        // 4. "Link and count" links, then counts.
+        await cam.getByRole("button", { name: /^Jameson\b/ }).first().click();
+        await cam.getByRole("button", { name: /link and count/i }).click();
+        const linkedTo = await cam
+          .getByRole("heading", { name: "Jameson", exact: true })
+          .waitFor({ timeout: 10000 })
+          .then(() => true, () => false);
+        const linkedRows = await barcodeRowsFor(jameson.id);
+        record(
+          "\"Link and count\" links the barcode and opens that product's entry screen",
+          linkedTo && linkedRows.length === 1,
+          `${linkedRows.length} barcode row(s) on Jameson; entry screen ${linkedTo ? "shown" : "NOT shown"}`,
+        );
+        for (const r of linkedRows) await sql.execute("DELETE FROM product_barcode WHERE id = ?", [r.id]);
+
+        // 5. Scan again — the code is unknown again — and meet Fix 4's refusal.
+        // Another "phone" links the code to Smirnoff while this one is on the
+        // confirmation. The fixture holds it as scanned AND in the 14-digit
+        // standard form, so this means the same thing after slice 7.
+        await cam.getByRole("button", { name: /^Back to / }).first().click();
+        await cam.getByRole("button", { name: "Scan barcode" }).first().click();
+        await cam.getByRole("heading", { name: /which bottle is this/i }).waitFor({ timeout: 20000 });
+        await pickJameson();
         for (const code of FAKE_CAMERA_STORED_FORMS) {
           const [r] = await sql.execute(
             "INSERT INTO product_barcode (organization_id, product_id, barcode, pack_level, is_primary) VALUES (?, ?, ?, 'each', 0)",
-            [ownerOrgId, owner.id, code],
+            [ownerOrgId, smirnoff.id, code],
           );
           fixtureBarcodeIds.push(r.insertId);
         }
-        await cam.locator("#link-search").fill("Jameson");
-        await cam.getByRole("button", { name: /^Jameson\b/ }).first().click();
+        await cam.getByRole("button", { name: /link and count/i }).click();
         // Filtered by text: Next.js renders its own (empty) route-announcer
         // with role="alert", so "the first alert" is not this message.
         const alert = await cam

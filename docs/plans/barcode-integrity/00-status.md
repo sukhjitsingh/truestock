@@ -13,7 +13,7 @@ Fix 3 is deferred (see Notes).
       built-in reader if usable, else the app-provided reader served same-origin
 - [x] Slice 2 — one size spelling everywhere
 - [x] Slice 3 — Fix 4: refusal names the size, offers to count the owner
-- [ ] Slice 4 — Fix 2: confirm the size before linking
+- [x] Slice 4 — Fix 2: confirm the size before linking
 - [ ] Slice 5 — Fix 2: "It's a different size"
 - [ ] Slice 6 — Fix 1 red: reproduce the bug in DB tests (evidence recorded, not committed alone)
 - [ ] Slice 7 — Fix 1 green: the normalizer, format stored, mutation-checked
@@ -185,3 +185,17 @@ the browser.
 
 **Local test DB note:** the 2026-11-05 repro had changed Smirnoff (id 38) to
 1750 ml in the cloud session's throwaway database; restored to 750 ml.
+
+## Slice 4 evidence (2026-11-05)
+
+Picking a search result now opens `ConfirmLink` instead of linking. Browser
+harness, fake camera, production build — all pass: a pick writes no
+`product_barcode` row; the size ("750 ml", 48 px) is the largest text on the
+screen; "Back to results" keeps the search; "Link and count" writes exactly
+one row and opens that product's entry screen; and slice 3's refusal checks
+now run through the confirmation. Harness 50/52 (the 2 existing
+data-dependent stock checks). Beer's bottle/case question renders on the same
+screen (screenshot, Corona 355 ml) — not asserted by the harness.
+
+Layout note: the action buttons follow the content instead of being pinned to
+the bottom as in the mockup, keeping them inside thumb reach on short content.

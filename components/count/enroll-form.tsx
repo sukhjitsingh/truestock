@@ -14,6 +14,7 @@ import {
   defaultSizeMlFor,
   isPresetSizeMl,
   formatProductSize,
+  kegGallons,
   nameWithSize,
 } from "@/lib/bottle-sizes";
 import { isCountedByCase } from "@/lib/pack-level";
@@ -92,47 +93,79 @@ export function EnrollForm({
   /** Fired for both paths — the caller only cares which product to count. */
   onResolved: (product: ProductSummary) => void;
 }) {
-  const [mode, setMode] = useState<"link" | "create">("link");
+  const [mode, setMode] = useState<EnrollMode>({ kind: "search" });
 
   return (
     <div className="px-bar-pad pb-8 pt-6">
-      <button
-        type="button"
-        onClick={onCancel}
-        className="mb-4 flex items-center gap-1 text-caption text-muted-foreground"
-      >
-        <ChevronLeft className="size-4" aria-hidden="true" /> Back
-      </button>
-
-      <h1 className="text-header-title text-foreground">
-        {mode === "link" ? "Which bottle is this?" : "New product"}
-      </h1>
-      <p className="mt-1 text-row-subtitle text-muted-foreground">
-        Barcode <span className="tabular-nums text-foreground">{barcode}</span>{" "}isn&rsquo;t
-        attached to anything yet.
-        {mode === "link"
-          ? " Find it in the catalog and this code sticks to it for good."
-          : " Name it and keep counting — the rest can be filled in later."}
-      </p>
-
-      {mode === "link" ? (
+      {/*
+        The search stays MOUNTED while the confirm screen shows, only hidden,
+        so "Back to results" returns to the same query and results instead of
+        an empty box someone has to retype one-handed.
+      */}
+      <div hidden={mode.kind !== "search"}>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="mb-4 flex items-center gap-1 text-caption text-muted-foreground"
+        >
+          <ChevronLeft className="size-4" aria-hidden="true" /> Back
+        </button>
+        <h1 className="text-header-title text-foreground">Which bottle is this?</h1>
+        <p className="mt-1 text-row-subtitle text-muted-foreground">
+          Barcode <span className="tabular-nums text-foreground">{barcode}</span>{" "}isn&rsquo;t
+          attached to anything yet. Find it in the catalog and this code sticks to it for good.
+        </p>
         <LinkExisting
+          onPick={(product) => setMode({ kind: "confirm", product })}
+          onNewProduct={() => setMode({ kind: "create" })}
+        />
+      </div>
+
+      {mode.kind === "confirm" ? (
+        <ConfirmLink
           barcode={barcode}
           format={format}
+          product={mode.product}
           onLinked={onResolved}
-          onNewProduct={() => setMode("create")}
+          onBack={() => setMode({ kind: "search" })}
         />
-      ) : (
-        <CreateNew
-          barcode={barcode}
-          format={format}
-          onCreated={onResolved}
-          onBackToSearch={() => setMode("link")}
-        />
-      )}
+      ) : null}
+
+      {mode.kind === "create" ? (
+        <>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="mb-4 flex items-center gap-1 text-caption text-muted-foreground"
+          >
+            <ChevronLeft className="size-4" aria-hidden="true" /> Back
+          </button>
+          <h1 className="text-header-title text-foreground">New product</h1>
+          <p className="mt-1 text-row-subtitle text-muted-foreground">
+            Barcode <span className="tabular-nums text-foreground">{barcode}</span>{" "}isn&rsquo;t
+            attached to anything yet. Name it and keep counting — the rest can be filled in later.
+          </p>
+          <CreateNew
+            barcode={barcode}
+            format={format}
+            onCreated={onResolved}
+            onBackToSearch={() => setMode({ kind: "search" })}
+          />
+        </>
+      ) : null}
     </div>
   );
 }
+
+/**
+ * Which step of enrolment is showing. `confirm` is new with
+ * docs/plans/barcode-integrity Fix 2: picking a search result no longer links
+ * the barcode — it opens a confirmation that shows the product's SIZE first.
+ */
+type EnrollMode =
+  | { kind: "search" }
+  | { kind: "confirm"; product: ProductSummary }
+  | { kind: "create" };
 
 /**
  * Who already holds this barcode, if anyone — asked after a link or create was
@@ -168,36 +201,31 @@ function CountOwnerButton({
 }
 
 /**
- * The common path: bind this barcode to a product that already exists.
+ * The common path, step one: find the product. During the first count "already
+ * in the catalog, just never scanned" is the normal case, so search comes
+ * first and creating comes second.
  *
- * The each/case question is asked only where it can be answered wrongly.
- * Binding a case carton's code as `each` silently miscounts every later scan
- * of it by the case size, which is the quiet-and-wrong failure this app is
- * written against — but it can only happen for bottled beer, the only thing
- * counted both ways. For the other 81 seeded products `each` is the only
- * meaningful answer, so asking would be a tap that never changes anything.
+ * Picking a result does NOT link anything (docs/plans/barcode-integrity,
+ * Fix 2). It used to: one tap bound the barcode to whichever row was hit, and
+ * a search for "Smirnoff" when the catalog holds only the 750 ml would bind a
+ * 200 ml bottle's barcode to the 750 — every later scan of it then counted and
+ * valued as a 750, with nothing on screen looking wrong. Linking now happens
+ * on ConfirmLink, after the size has been shown.
  */
 function LinkExisting({
-  barcode,
-  format,
-  onLinked,
+  onPick,
   onNewProduct,
 }: {
-  barcode: string;
-  format: string | null;
-  onLinked: (product: ProductSummary) => void;
+  onPick: (product: ProductSummary) => void;
   onNewProduct: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ProductSummary[]>([]);
-  const [chosen, setChosen] = useState<ProductSummary | null>(null);
-  const [packLevel, setPackLevel] = useState<"each" | "case">("each");
-  const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [owner, setOwner] = useState<ProductSummary | null>(null);
 
   async function search(value: string) {
     setQuery(value);
+    setError(null);
     if (value.trim().length < 2) {
       setResults([]);
       return;
@@ -207,109 +235,11 @@ function LinkExisting({
       if (found.ok) setResults(found.data);
     } catch {
       // Offline. Clear rather than leave the previous query's hits under the
-      // current text — tapping a stale hit here links the barcode to the WRONG
-      // product, which is a catalog error that outlives this count.
+      // current text — picking a stale hit here would put the barcode on the
+      // WRONG product, which is a catalog error that outlives this count.
       setResults([]);
       setError(OFFLINE_ENROLL_MESSAGE);
     }
-  }
-
-  async function link(product: ProductSummary, level: "each" | "case") {
-    setPending(true);
-    setError(null);
-    setOwner(null);
-    let result: Awaited<ReturnType<typeof linkBarcodeToProductAction>>;
-    try {
-      result = await linkBarcodeToProductAction({
-        productId: product.id,
-        barcode,
-        packLevel: level,
-      });
-    } catch {
-      // Offline. This is a WRITE, and unlike a count-line write it does not go
-      // through the queue — see OFFLINE_ENROLL_MESSAGE.
-      setError(OFFLINE_ENROLL_MESSAGE);
-      return;
-    } finally {
-      // `finally`, so a throw cannot leave the form permanently pending with
-      // its buttons disabled and no way back.
-      setPending(false);
-    }
-    if (!result.ok) {
-      setError(result.error.message);
-      setOwner(await findBarcodeOwner(barcode, format));
-      return;
-    }
-    onLinked(result.data);
-  }
-
-  // A product that can be scanned as a bottle OR as a case gets the question
-  // asked before anything is written. Everything else links on the first tap.
-  if (chosen) {
-    return (
-      <div className="mt-section-gap">
-        <p className="text-row-title text-foreground">{chosen.name}</p>
-        <p className="mt-1 text-row-subtitle text-muted-foreground">
-          Is this barcode on the bottle, or on the case?
-        </p>
-        <p className="mt-2 text-caption text-muted-foreground">
-          They carry different codes. Getting it wrong makes every later scan of this
-          one count as the wrong quantity, and nothing will look broken.
-        </p>
-
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          {(
-            [
-              { level: "each" as const, label: "Single bottle" },
-              { level: "case" as const, label: "Case carton" },
-            ]
-          ).map((option) => (
-            <button
-              key={option.level}
-              type="button"
-              onClick={() => setPackLevel(option.level)}
-              className={cn(
-                "min-h-tap-primary rounded-md border text-label uppercase",
-                packLevel === option.level
-                  ? "border-accent bg-accent text-accent-foreground"
-                  : "border-input bg-card text-foreground",
-              )}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-
-        {error ? (
-          <p
-            className="mt-4 rounded-md bg-negative-bg px-3 py-2 text-caption text-negative"
-            role="alert"
-          >
-            {error}
-          </p>
-        ) : null}
-        {owner ? <CountOwnerButton owner={owner} onCount={onLinked} /> : null}
-
-        <div className="mt-section-gap flex gap-3">
-          <Button
-            variant="outline"
-            size="primary"
-            className="flex-1"
-            onClick={() => setChosen(null)}
-          >
-            Back
-          </Button>
-          <Button
-            size="primary"
-            className="flex-[1.4]"
-            disabled={pending}
-            onClick={() => void link(chosen, packLevel)}
-          >
-            {pending ? "Linking…" : "Link and count"}
-          </Button>
-        </div>
-      </div>
-    );
   }
 
   return (
@@ -333,7 +263,6 @@ function LinkExisting({
           {error}
         </p>
       ) : null}
-      {owner ? <CountOwnerButton owner={owner} onCount={onLinked} /> : null}
 
       {results.length > 0 ? (
         <div className="mt-4 flex flex-col gap-2">
@@ -341,16 +270,8 @@ function LinkExisting({
             <button
               key={p.id}
               type="button"
-              disabled={pending}
-              onClick={() => {
-                if (isCountedByCase(p)) {
-                  setPackLevel("each");
-                  setChosen(p);
-                  return;
-                }
-                void link(p, "each");
-              }}
-              className="flex min-h-tap-primary flex-col justify-center rounded-lg border border-border bg-card p-card-pad text-left disabled:opacity-50 active:bg-muted"
+              onClick={() => onPick(p)}
+              className="flex min-h-tap-primary flex-col justify-center rounded-lg border border-border bg-card p-card-pad text-left active:bg-muted"
             >
               <span className="block text-row-title text-card-foreground">{p.name}</span>
               <span className="block text-row-subtitle text-muted-foreground">
@@ -367,18 +288,163 @@ function LinkExisting({
       ) : null}
 
       <div className="mt-section-gap border-t border-border pt-5">
-        <p className="text-caption text-muted-foreground">
-          Genuinely not in the catalog?
-        </p>
-        <Button
-          variant="outline"
-          size="primary"
-          className="mt-2 w-full"
-          onClick={onNewProduct}
-        >
+        <p className="text-caption text-muted-foreground">Genuinely not in the catalog?</p>
+        <Button variant="outline" size="primary" className="mt-2 w-full" onClick={onNewProduct}>
           Add it as a new product
         </Button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The common path, step two: confirm it is THIS bottle, then link
+ * (docs/plans/barcode-integrity, Fix 2; mockup mockups/link-confirm.html).
+ *
+ * The size is the largest text on the screen on purpose. The whole job of this
+ * step is for the counter to compare the number on screen with the label in
+ * their hand, so it must be the first thing read — and the button repeats it.
+ *
+ * Bottled beer's bottle-or-case question lives here too, so beer gains no
+ * step: it was already asked between pick and link. Spirits, wine and NA gain
+ * exactly one tap, which is the owner's accepted cost (Gate 1, decision 2).
+ */
+function ConfirmLink({
+  barcode,
+  format,
+  product,
+  onLinked,
+  onBack,
+}: {
+  barcode: string;
+  format: string | null;
+  product: ProductSummary;
+  onLinked: (product: ProductSummary) => void;
+  onBack: () => void;
+}) {
+  const [packLevel, setPackLevel] = useState<"each" | "case">("each");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [owner, setOwner] = useState<ProductSummary | null>(null);
+  const askPackLevel = isCountedByCase(product);
+  const size = formatProductSize(product);
+  const gallons = kegGallons(product);
+
+  async function link() {
+    setPending(true);
+    setError(null);
+    setOwner(null);
+    let result: Awaited<ReturnType<typeof linkBarcodeToProductAction>>;
+    try {
+      result = await linkBarcodeToProductAction({
+        productId: product.id,
+        barcode,
+        packLevel: askPackLevel ? packLevel : "each",
+      });
+    } catch {
+      // Offline. This is a WRITE, and unlike a count-line write it does not go
+      // through the queue — see OFFLINE_ENROLL_MESSAGE.
+      setError(OFFLINE_ENROLL_MESSAGE);
+      return;
+    } finally {
+      // `finally`, so a throw cannot leave the button permanently disabled.
+      setPending(false);
+    }
+    if (!result.ok) {
+      setError(result.error.message);
+      setOwner(await findBarcodeOwner(barcode, format));
+      return;
+    }
+    onLinked(result.data);
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onBack}
+        className="mb-4 flex items-center gap-1 text-caption text-muted-foreground"
+      >
+        <ChevronLeft className="size-4" aria-hidden="true" /> Back to results
+      </button>
+
+      <h1 className="text-label uppercase text-muted-foreground">Is this the bottle in your hand?</h1>
+
+      <div className="mt-2 rounded-lg border border-border bg-card p-card-pad">
+        <p className="text-row-title text-card-foreground">{product.name}</p>
+        <p data-testid="confirm-size" className="mt-3 text-numeral-lg font-bold leading-none tabular-nums text-card-foreground">
+          {size}
+        </p>
+        <p className="mt-2 text-row-subtitle text-muted-foreground">
+          {[gallons, product.category, product.subcategory].filter(Boolean).join(" · ")}
+        </p>
+      </div>
+
+      <p className="mt-3 text-caption text-muted-foreground">
+        Check the size on the label. If it doesn&rsquo;t match, it&rsquo;s a different product —
+        linking it here would count every future scan as {size}.
+      </p>
+
+      {askPackLevel ? (
+        <div className="mt-section-gap">
+          <p className="text-row-title text-foreground">Is this barcode on the bottle, or on the case?</p>
+          <p className="mt-1 text-caption text-muted-foreground">
+            They carry different codes. Getting it wrong makes every later scan of this one count
+            as the wrong quantity, and nothing will look broken.
+          </p>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            {(
+              [
+                { level: "each" as const, label: "Single bottle" },
+                { level: "case" as const, label: "Case carton" },
+              ]
+            ).map((option) => (
+              <button
+                key={option.level}
+                type="button"
+                aria-pressed={packLevel === option.level}
+                onClick={() => setPackLevel(option.level)}
+                className={cn(
+                  "min-h-tap-primary rounded-md border text-label uppercase",
+                  packLevel === option.level
+                    ? "border-accent bg-accent text-accent-foreground"
+                    : "border-input bg-card text-foreground",
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <p className="mt-4 rounded-md bg-muted px-3 py-2 text-caption text-muted-foreground">
+        Scanned barcode <span className="tabular-nums text-foreground">{barcode}</span>
+      </p>
+
+      {error ? (
+        <p
+          className="mt-4 rounded-md bg-negative-bg px-3 py-2 text-caption text-negative"
+          role="alert"
+        >
+          {error}
+        </p>
+      ) : null}
+      {owner ? <CountOwnerButton owner={owner} onCount={onLinked} /> : null}
+
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => void link()}
+        className="mt-section-gap flex min-h-tap-primary w-full flex-col items-center justify-center gap-0.5 rounded-md bg-primary px-3 py-2 text-primary-foreground disabled:opacity-50"
+      >
+        <span className="text-label uppercase">{pending ? "Linking…" : "Link and count"}</span>
+        <span className="text-caption opacity-80">
+          {askPackLevel && packLevel === "case"
+            ? `This barcode = a case of ${product.name}`
+            : `This barcode = ${nameWithSize(product)}`}
+        </span>
+      </button>
     </div>
   );
 }
