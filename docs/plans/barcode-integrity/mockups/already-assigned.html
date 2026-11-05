@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Already assigned (Gate 1 mockup)</title>
+<!--
+  Gate 1 mockup, throwaway by design. docs/plans/barcode-integrity/01-product.md.
+  The refusal when a barcode already belongs to another product. Dark theme.
+
+  Rules encoded here:
+  - The message names the product AND its size. "Smirnoff" alone is
+    ambiguous the moment a second size exists, which is exactly when this
+    message matters.
+  - It says what to do next, and offers it as a button: go and count the
+    product that already owns the barcode. That is nearly always the right
+    answer — "you already scanned this one."
+  - After Fix 1, this screen should be RARE: a barcode already in the catalog
+    in any written form resolves straight to its product instead of reaching
+    the link screen at all. It stays as the backstop.
+-->
+<style>
+  :root {
+    --background: #0b0b0c; --foreground: #f5f5f4;
+    --card: #17181a; --muted-foreground: #a8a8a5;
+    --primary: #f5f5f4; --primary-foreground: #0a0a0a;
+    --border: #232326; --input: #6b6b6b;
+    --negative: #f0718a; --negative-bg: #3a1620;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #000; color: var(--foreground);
+    font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    display: flex; gap: 32px; flex-wrap: wrap; justify-content: center; padding: 24px; }
+  .phone { width: 390px; min-height: 560px; background: var(--background);
+    border-radius: 36px; padding: 24px 20px; border: 1px solid var(--border);
+    display: flex; flex-direction: column; }
+  .label { text-transform: uppercase; letter-spacing: .06em; font-size: 12px;
+    font-weight: 600; color: var(--muted-foreground); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+    padding: 16px; margin-top: 8px; }
+  .name { font-size: 18px; font-weight: 600; }
+  .size { font-size: 28px; font-weight: 700; margin-top: 4px; }
+  .alert { margin-top: 20px; border-radius: 12px; background: var(--negative-bg); color: var(--negative);
+    padding: 14px; font-size: 15px; }
+  .alert b { color: #fff; }
+  .spacer { flex: 1; }
+  .primary { width: 100%; min-height: 64px; border: 0; border-radius: 12px;
+    background: var(--primary); color: var(--primary-foreground); font: inherit; font-weight: 700;
+    text-transform: uppercase; font-size: 14px; letter-spacing: .04em; }
+  .secondary { width: 100%; min-height: 56px; margin-top: 12px; border-radius: 12px;
+    border: 1px solid var(--input); background: transparent; color: var(--foreground);
+    font: inherit; font-weight: 600; text-transform: uppercase; font-size: 13px; }
+  .tag { font-size: 12px; color: var(--muted-foreground); text-align: center; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+
+<div>
+  <p class="tag">Today</p>
+  <div class="phone">
+    <p class="label">Is this the bottle in your hand?</p>
+    <div class="card"><div class="name">Smirnoff</div><div class="size">200 ml</div></div>
+    <div class="alert">Barcode 082000000019 is already assigned to "Smirnoff".</div>
+    <div class="spacer"></div>
+    <button class="secondary">Back</button>
+  </div>
+</div>
+
+<div>
+  <p class="tag">After this feature</p>
+  <div class="phone">
+    <p class="label">Is this the bottle in your hand?</p>
+    <div class="card"><div class="name">Smirnoff</div><div class="size">200 ml</div></div>
+    <div class="alert">
+      This barcode already belongs to <b>Smirnoff 750 ml</b>.
+      If the bottle in your hand is a 750, count it as that.
+    </div>
+    <div class="spacer"></div>
+    <button class="primary">Count Smirnoff 750 ml</button>
+    <button class="secondary">Back to search</button>
+  </div>
+</div>
+
+</body>
+</html>

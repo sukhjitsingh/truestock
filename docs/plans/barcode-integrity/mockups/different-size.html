@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Different size (Gate 1 mockup)</title>
+<!--
+  Gate 1 mockup, throwaway by design. docs/plans/barcode-integrity/01-product.md.
+  The new-product form, opened from "It's a different size" on the link
+  confirmation. Dark theme: counting app.
+
+  Rules encoded here:
+  - Name and category come from the product the counter nearly picked, so
+    the only required action is picking the size.
+  - The size the counter nearly picked (750) is shown as "not this one" and
+    is NOT preselected. Preselecting it would let the counter save a second
+    750 ml Smirnoff by tapping straight through, which the catalog refuses
+    anyway — but it would also be the plausible-but-wrong default the app
+    exists to avoid. The size list is the same closed spirits preset list the phone
+    already uses (lib/bottle-sizes.ts, as of 2026-11-05) (no free-text size on the phone).
+  - Save stays disabled until a size is picked.
+-->
+<style>
+  :root {
+    --background: #0b0b0c; --foreground: #f5f5f4;
+    --card: #17181a; --muted: #131315; --muted-foreground: #a8a8a5;
+    --primary: #f5f5f4; --primary-foreground: #0a0a0a;
+    --accent: #60a5fa; --accent-foreground: #0a0a0a;
+    --border: #232326; --input: #6b6b6b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #000; color: var(--foreground);
+    font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    display: flex; gap: 32px; flex-wrap: wrap; justify-content: center; padding: 24px; }
+  .phone { width: 390px; min-height: 780px; background: var(--background);
+    border-radius: 36px; padding: 24px 20px; border: 1px solid var(--border);
+    display: flex; flex-direction: column; }
+  .back { color: var(--muted-foreground); font-size: 14px; margin-bottom: 20px; }
+  h1 { font-size: 24px; margin: 0; }
+  .sub { color: var(--muted-foreground); font-size: 14px; margin: 6px 0 24px; }
+  .label { display: block; text-transform: uppercase; letter-spacing: .06em; font-size: 12px;
+    font-weight: 600; color: var(--muted-foreground); margin: 18px 0 6px; }
+  .field { min-height: 52px; border: 1px solid var(--input); border-radius: 10px;
+    background: var(--card); padding: 14px; font-size: 16px; }
+  .field.prefilled::after { content: "  · from Smirnoff 750 ml"; color: var(--muted-foreground); font-size: 13px; }
+  .sizes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .sizes button { min-height: 56px; border-radius: 10px; border: 1px solid var(--input);
+    background: var(--card); color: var(--foreground); font: inherit; font-weight: 600;
+    font-variant-numeric: tabular-nums; }
+  .sizes button.on { background: var(--accent); color: var(--accent-foreground); border-color: var(--accent); }
+  .sizes button.not { opacity: .45; text-decoration: line-through; }
+  .hint { color: var(--muted-foreground); font-size: 13px; margin-top: 8px; }
+  .spacer { flex: 1; }
+  .row { display: flex; gap: 12px; margin-top: 24px; }
+  .secondary { flex: 1; min-height: 56px; border-radius: 12px; border: 1px solid var(--input);
+    background: transparent; color: var(--foreground); font: inherit; font-weight: 600;
+    text-transform: uppercase; font-size: 13px; }
+  .primary { flex: 1.4; min-height: 56px; border: 0; border-radius: 12px;
+    background: var(--primary); color: var(--primary-foreground); font: inherit; font-weight: 700;
+    text-transform: uppercase; font-size: 14px; }
+  .primary[disabled] { opacity: .4; }
+  .tag { font-size: 12px; color: var(--muted-foreground); text-align: center; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+
+<div>
+  <p class="tag">A · Just opened — save waits for a size</p>
+  <div class="phone">
+    <div class="back">‹ Back to Smirnoff 750 ml</div>
+    <h1>Add a different size</h1>
+    <p class="sub">Barcode <b>082000000019</b> becomes this new size. Smirnoff 750 ml is left alone.</p>
+
+    <span class="label">Name</span>
+    <div class="field prefilled">Smirnoff</div>
+
+    <span class="label">Category</span>
+    <div class="field">Spirits</div>
+
+    <span class="label">Size — pick the one on the label</span>
+    <div class="sizes">
+      <button>50 ml</button><button>200 ml</button><button>375 ml</button>
+      <button>500 ml</button><button>700 ml</button><button class="not">750 ml</button>
+      <button>1 L</button><button>1.75 L</button>
+    </div>
+    <p class="hint">750 ml is the one you said it isn't.</p>
+
+    <div class="spacer"></div>
+    <div class="row">
+      <button class="secondary">Cancel</button>
+      <button class="primary" disabled>Pick a size</button>
+    </div>
+  </div>
+</div>
+
+<div>
+  <p class="tag">B · 200 ml picked — one tap to save</p>
+  <div class="phone">
+    <div class="back">‹ Back to Smirnoff 750 ml</div>
+    <h1>Add a different size</h1>
+    <p class="sub">Barcode <b>082000000019</b> becomes this new size. Smirnoff 750 ml is left alone.</p>
+
+    <span class="label">Name</span>
+    <div class="field prefilled">Smirnoff</div>
+
+    <span class="label">Category</span>
+    <div class="field">Spirits</div>
+
+    <span class="label">Size — pick the one on the label</span>
+    <div class="sizes">
+      <button>50 ml</button><button class="on">200 ml</button><button>375 ml</button>
+      <button>500 ml</button><button>700 ml</button><button class="not">750 ml</button>
+      <button>1 L</button><button>1.75 L</button>
+    </div>
+
+    <div class="spacer"></div>
+    <div class="row">
+      <button class="secondary">Cancel</button>
+      <button class="primary">Save Smirnoff 200 ml</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

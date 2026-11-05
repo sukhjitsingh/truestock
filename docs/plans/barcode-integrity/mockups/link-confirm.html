@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Link confirm (Gate 1 mockup)</title>
+<!--
+  Gate 1 mockup, throwaway by design. docs/plans/barcode-integrity/01-product.md.
+  The confirmation step after a counter picks a search result on the
+  "Which bottle is this?" screen. Dark theme: this is the counting app.
+
+  Rules encoded here:
+  - The SIZE is the largest text on screen. The product name is secondary.
+    The whole point of the step is that the counter compares the number on
+    screen to the bottle in their hand.
+  - "Link and count" states the size it is committing to, so the button
+    itself repeats the check.
+  - "It's a different size" is a full-width, always-visible secondary action,
+    not a link. It is the escape for the 200 ml Smirnoff case.
+  - Beer: the existing bottle-or-case question lives on THIS screen, so beer
+    gains no extra step. Spirits/wine/NA gain exactly one tap.
+-->
+<style>
+  :root {
+    --background: #0b0b0c; --foreground: #f5f5f4;
+    --card: #17181a; --muted: #131315; --muted-foreground: #a8a8a5;
+    --primary: #f5f5f4; --primary-foreground: #0a0a0a;
+    --accent: #60a5fa; --accent-foreground: #0a0a0a;
+    --border: #232326; --input: #6b6b6b;
+    --warning: #f0b429; --warning-bg: #3a2a10;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #000; color: var(--foreground);
+    font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    display: flex; gap: 32px; flex-wrap: wrap; justify-content: center; padding: 24px; }
+  .phone { width: 390px; min-height: 780px; background: var(--background);
+    border-radius: 36px; padding: 24px 20px; border: 1px solid var(--border);
+    display: flex; flex-direction: column; }
+  .caption { color: var(--muted-foreground); font-size: 13px; }
+  .back { color: var(--muted-foreground); font-size: 14px; margin-bottom: 20px; }
+  .label { text-transform: uppercase; letter-spacing: .06em; font-size: 12px;
+    font-weight: 600; color: var(--muted-foreground); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+    padding: 20px; margin-top: 8px; }
+  .name { font-size: 18px; font-weight: 600; margin-top: 2px; }
+  .size { font-size: 56px; font-weight: 700; line-height: 1; margin: 14px 0 6px;
+    font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+  .meta { color: var(--muted-foreground); font-size: 14px; }
+  .q { font-size: 17px; font-weight: 600; margin: 24px 0 4px; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  .seg button { min-height: 56px; border-radius: 12px; border: 1px solid var(--input);
+    background: var(--card); color: var(--foreground); font: inherit; font-weight: 600;
+    text-transform: uppercase; font-size: 13px; letter-spacing: .04em; }
+  .seg button.on { background: var(--accent); color: var(--accent-foreground); border-color: var(--accent); }
+  .barcode { margin-top: 18px; padding: 10px 12px; border-radius: 10px; background: var(--muted);
+    font-size: 13px; color: var(--muted-foreground); }
+  .barcode b { color: var(--foreground); font-variant-numeric: tabular-nums; }
+  .spacer { flex: 1; }
+  .primary { width: 100%; min-height: 64px; border: 0; border-radius: 12px;
+    background: var(--primary); color: var(--primary-foreground); font: inherit;
+    font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: 15px; }
+  .primary small { display: block; font-weight: 500; text-transform: none; letter-spacing: 0;
+    font-size: 13px; opacity: .75; }
+  .secondary { width: 100%; min-height: 56px; margin-top: 12px; border-radius: 12px;
+    border: 1px solid var(--input); background: transparent; color: var(--foreground);
+    font: inherit; font-weight: 600; text-transform: uppercase; font-size: 13px; letter-spacing: .04em; }
+  .tag { font-size: 12px; color: var(--muted-foreground); text-align: center; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+
+<!-- State A: a spirit. One new tap: "Link and count". -->
+<div>
+  <p class="tag">A · Spirit — one extra tap</p>
+  <div class="phone">
+    <div class="back">‹ Back to results</div>
+    <p class="label">Is this the bottle in your hand?</p>
+    <div class="card">
+      <div class="name">Smirnoff</div>
+      <div class="size">750 ml</div>
+      <div class="meta">Spirits · Vodka</div>
+    </div>
+    <p class="caption" style="margin-top:12px">
+      Check the size on the label. If it doesn't match, it's a different product —
+      linking it here would count every future scan as 750 ml.
+    </p>
+    <div class="barcode">Scanned barcode <b>082000000019</b></div>
+    <div class="spacer"></div>
+    <button class="primary">Link and count<small>This barcode = Smirnoff 750 ml</small></button>
+    <button class="secondary">It's a different size</button>
+  </div>
+</div>
+
+<!-- State B: bottled beer. The bottle-or-case question is on the same screen,
+     so beer's tap count is unchanged from today. -->
+<div>
+  <p class="tag">B · Bottled beer — no extra tap</p>
+  <div class="phone">
+    <div class="back">‹ Back to results</div>
+    <p class="label">Is this the bottle in your hand?</p>
+    <div class="card">
+      <div class="name">Corona</div>
+      <div class="size">355 ml</div>
+      <div class="meta">Beer · case size not entered yet</div>
+    </div>
+    <p class="q">Is this barcode on the bottle, or on the case?</p>
+    <p class="caption">They carry different codes.</p>
+    <div class="seg">
+      <button class="on">Single bottle</button>
+      <button>Case carton</button>
+    </div>
+    <div class="barcode">Scanned barcode <b>033544000809</b></div>
+    <div class="spacer"></div>
+    <button class="primary">Link and count<small>This barcode = one 355 ml bottle</small></button>
+    <button class="secondary">It's a different size</button>
+  </div>
+</div>
+
+</body>
+</html>
