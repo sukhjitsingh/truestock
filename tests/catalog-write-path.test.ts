@@ -22,6 +22,7 @@ import { db, closePool } from "@/db";
 import { product, productBarcode, productPar } from "@/db/schema";
 import {
   linkBarcodeToProduct,
+  createProduct,
   resolveBarcode,
   updateProduct,
   searchProducts,
@@ -467,5 +468,73 @@ describe("inline cost/case-size editing (per-cell updateProductAction)", () => {
 
     const [row] = await db.select().from(product).where(eq(product.id, fx.pricedProductId));
     expect(row.currentUnitCost).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// docs/plans/barcode-integrity, Fix 4 (slice 3): when a barcode is already
+// taken, the refusal names the owning product AND its size. "Already assigned
+// to Smirnoff" is useless the moment a second Smirnoff size exists — which is
+// exactly when this message matters.
+// ---------------------------------------------------------------------------
+
+describe("the 'already belongs to' refusal names the owner and its size", () => {
+  const CODE = "082000000013";
+
+  test("linking a taken barcode names the owner with its size", async () => {
+    await linkBarcodeToProduct(fx.owner, { productId: fx.pricedProductId, barcode: CODE, packLevel: "each" });
+    const err = await linkBarcodeToProduct(fx.owner, {
+      productId: fx.secondProductId,
+      barcode: CODE,
+      packLevel: "each",
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect(err.message).toBe("This barcode already belongs to Tito's Handmade Vodka 750 ml.");
+  });
+
+  test("creating a product with a taken barcode names the owner too, and creates nothing", async () => {
+    await linkBarcodeToProduct(fx.owner, { productId: fx.pricedProductId, barcode: CODE, packLevel: "each" });
+    const err = await createProduct(fx.owner, {
+      name: "Tito's Handmade Vodka",
+      category: "Spirits",
+      unitType: "bottle",
+      sizeMl: 1750,
+      barcode: { barcode: CODE, packLevel: "each" },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect(err.message).toBe("This barcode already belongs to Tito's Handmade Vodka 750 ml.");
+
+    // The product insert and the barcode insert share one transaction.
+    const created = await db
+      .select({ id: product.id })
+      .from(product)
+      .where(and(eq(product.organizationId, fx.organizationId), eq(product.sizeMl, 1750)));
+    expect(created).toHaveLength(0);
+  });
+
+  test("a keg owner is named by its keg size", async () => {
+    const keg = await createProduct(fx.owner, {
+      name: "Blue Moon Sixtel",
+      category: "Beer",
+      unitType: "keg",
+      sizeMl: 19533,
+      barcode: { barcode: CODE, packLevel: "each" },
+    });
+    expect(keg.id).toBeGreaterThan(0);
+    const err = await linkBarcodeToProduct(fx.owner, {
+      productId: fx.pricedProductId,
+      barcode: CODE,
+      packLevel: "each",
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect(err.message).toBe("This barcode already belongs to Blue Moon Sixtel (Sixtel keg).");
+  });
+
+  test("another tenant's barcode is never named — it is not a conflict at all", async () => {
+    // Invariant 9: the message must not leak another tenant's product name.
+    // Per-tenant uniqueness means the same code in another org simply succeeds.
+    await linkBarcodeToProduct(fx.otherOwner, { productId: fx.otherProductId, barcode: CODE, packLevel: "each" });
+    const ok = await linkBarcodeToProduct(fx.owner, { productId: fx.pricedProductId, barcode: CODE, packLevel: "each" });
+    expect(ok.id).toBe(fx.pricedProductId);
   });
 });

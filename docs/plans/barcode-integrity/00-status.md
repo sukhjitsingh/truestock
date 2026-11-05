@@ -12,7 +12,7 @@ Fix 3 is deferred (see Notes).
 - [x] Slice 1 — tracer: format travels end to end; fake camera reaches the enroll screen;
       built-in reader if usable, else the app-provided reader served same-origin
 - [x] Slice 2 — one size spelling everywhere
-- [ ] Slice 3 — Fix 4: refusal names the size, offers to count the owner
+- [x] Slice 3 — Fix 4: refusal names the size, offers to count the owner
 - [ ] Slice 4 — Fix 2: confirm the size before linking
 - [ ] Slice 5 — Fix 2: "It's a different size"
 - [ ] Slice 6 — Fix 1 red: reproduce the bug in DB tests (evidence recorded, not committed alone)
@@ -154,3 +154,34 @@ the 2 relevant unit tests. Suite 218/218.
 **Not verifiable here:** the built-in-reader branch. Headless Chromium on
 Linux has no `BarcodeDetector`; it needs a phone or Mac Chrome. Preflight now
 reports "Built-in present" / "App reader".
+
+## Slice 3 evidence (2026-11-05)
+
+**Red first.** Three new tests in `tests/catalog-write-path.test.ts`
+("the 'already belongs to' refusal names the owner and its size") were run
+against the unchanged domain code and failed:
+
+```
+Expected: "This barcode already belongs to Tito's Handmade Vodka 750 ml."
+Received: "Barcode 082000000013 is already assigned to "Tito's Handmade Vodka"."
+Expected: "This barcode already belongs to Blue Moon Sixtel (Sixtel keg)."
+Received: "Barcode 082000000013 is already assigned to "Blue Moon Sixtel"."
+```
+
+(link, create, and keg owner — 3 fail, 25 pass). The fourth test, another
+tenant's code is never named, passed before and after: a regression guard.
+After `barcodeTakenError`: 28/28.
+
+**Browser.** The harness reproduces how this refusal really happens before
+Fix 1 — another phone links the code while this one is on "Which bottle is
+this?" — and asserts the alert reads "This barcode already belongs to
+Smirnoff 750 ml." and that "Count Smirnoff 750 ml" opens Smirnoff's entry
+screen. Harness 46/48 (the 2 failures are the existing data-dependent stock
+checks). Fixture rows removed afterwards.
+
+**Also fixed on that screen:** "Barcode 0082000000013isn't attached" — JSX
+dropped the space after the `</span>`; now an explicit `{" "}`, confirmed in
+the browser.
+
+**Local test DB note:** the 2026-11-05 repro had changed Smirnoff (id 38) to
+1750 ml in the cloud session's throwaway database; restored to 750 ml.

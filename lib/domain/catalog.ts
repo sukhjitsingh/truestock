@@ -18,6 +18,7 @@ import { ConflictError, DomainError, NotFoundError } from "@/lib/domain/errors";
 import { isDuplicateKeyError } from "@/lib/domain/db-errors";
 import { getOnHandSnapshot } from "@/lib/domain/on-hand";
 import { isCountedByCase } from "@/lib/pack-level";
+import { nameWithSize } from "@/lib/bottle-sizes";
 import type {
   ProductCreateInput,
   ProductUpdateInput,
@@ -397,6 +398,37 @@ export async function resolveBarcodeForCount(
 type Runner = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**
+ * The refusal for a barcode another product in this organization already
+ * holds, naming that product AND its size (docs/plans/barcode-integrity,
+ * Fix 4). "Already assigned to Smirnoff" stops helping the moment a second
+ * Smirnoff size exists, which is exactly when this message matters.
+ *
+ * Scoped to the organization: a code held by another tenant is never named —
+ * per-tenant uniqueness means it is not a conflict in the first place
+ * (invariant 9).
+ *
+ * Call it inside the transaction whose insert just failed, so it reads a
+ * snapshot consistent with that failure.
+ */
+async function barcodeTakenError(
+  tx: Runner,
+  organizationId: number,
+  barcode: string,
+): Promise<ConflictError> {
+  const [owner] = await tx
+    .select({ name: product.name, unitType: product.unitType, sizeMl: product.sizeMl })
+    .from(productBarcode)
+    .innerJoin(product, eq(product.id, productBarcode.productId))
+    .where(and(eq(productBarcode.organizationId, organizationId), eq(productBarcode.barcode, barcode)))
+    .limit(1);
+  return new ConflictError(
+    owner
+      ? `This barcode already belongs to ${nameWithSize(owner)}.`
+      : "This barcode already belongs to another product.",
+  );
+}
+
+/**
  * Invariant 9, the ownership-not-existence half: `vendor_id` arrives from the
  * client, and its foreign key only proves the vendor row EXISTS — not whose it
  * is. Without this check an owner or manager in Tenant A can point their own
@@ -513,22 +545,7 @@ export async function linkBarcodeToProduct(
         // product_barcode_organization_barcode_unique. Name who already holds
         // it — mid-count, "already assigned" without a name is a dead end,
         // and the answer is usually "you already scanned this one".
-        const [owner] = await tx
-          .select({ name: product.name })
-          .from(productBarcode)
-          .innerJoin(product, eq(product.id, productBarcode.productId))
-          .where(
-            and(
-              eq(productBarcode.organizationId, actor.organizationId),
-              eq(productBarcode.barcode, input.barcode),
-            ),
-          )
-          .limit(1);
-        throw new ConflictError(
-          owner
-            ? `Barcode ${input.barcode} is already assigned to "${owner.name}".`
-            : `Barcode ${input.barcode} is already assigned to another product.`,
-        );
+        throw await barcodeTakenError(tx, actor.organizationId, input.barcode);
       }
       throw err;
     }
@@ -622,26 +639,9 @@ export async function createProduct(
         });
       } catch (err) {
         if (isDuplicateKeyError(err)) {
-          // product_barcode_barcode_unique — look up who already has it so
-          // the error names the actual collision, not just "duplicate".
-          // Read inside the same (about-to-roll-back) transaction so this
-          // sees a consistent snapshot with the failed insert above.
-          const [owner] = await tx
-            .select({ name: product.name })
-            .from(productBarcode)
-            .innerJoin(product, eq(product.id, productBarcode.productId))
-            .where(
-              and(
-                eq(productBarcode.organizationId, actor.organizationId),
-                eq(productBarcode.barcode, input.barcode.barcode),
-              ),
-            )
-            .limit(1);
-          throw new ConflictError(
-            owner
-              ? `Barcode ${input.barcode.barcode} is already assigned to "${owner.name}".`
-              : `Barcode ${input.barcode.barcode} is already assigned to another product.`,
-          );
+          // Name who already holds it — read inside the same (about-to-roll-
+          // back) transaction, so the product insert above is undone too.
+          throw await barcodeTakenError(tx, actor.organizationId, input.barcode.barcode);
         }
         throw err;
       }

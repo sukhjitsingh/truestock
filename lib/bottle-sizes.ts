@@ -61,6 +61,18 @@ export function formatProductSize(p: { unitType: string; sizeMl: number }): stri
 }
 
 /**
+ * A product named with its size, for messages and buttons:
+ * "Smirnoff 750 ml", "Blue Moon Sixtel (Sixtel keg)". Kegs take brackets
+ * because their catalog names usually already end in the keg size; the
+ * repetition is accepted rather than guessing whether a name contains it
+ * (owner, 2026-11-05).
+ */
+export function nameWithSize(p: { name: string; unitType: string; sizeMl: number }): string {
+  const size = formatProductSize(p);
+  return p.unitType === "keg" ? `${p.name} (${size})` : `${p.name} ${size}`;
+}
+
+/**
  * The secondary line under a keg's size on the confirm screen ("5.16 gal"),
  * and the hint in the keg size dropdown. Null for anything that is not one of
  * the three named keg sizes — a gallon figure for a 750 ml bottle helps no one.

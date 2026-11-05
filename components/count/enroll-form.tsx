@@ -5,10 +5,17 @@ import { ChevronLeft } from "lucide-react";
 import {
   createProductAction,
   linkBarcodeToProductAction,
+  resolveBarcodeAction,
   searchProductsAction,
 } from "@/app/actions/catalog";
 import type { ProductSummary } from "@/lib/domain/catalog";
-import { bottleSizesFor, defaultSizeMlFor, isPresetSizeMl, formatProductSize } from "@/lib/bottle-sizes";
+import {
+  bottleSizesFor,
+  defaultSizeMlFor,
+  isPresetSizeMl,
+  formatProductSize,
+  nameWithSize,
+} from "@/lib/bottle-sizes";
 import { isCountedByCase } from "@/lib/pack-level";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -72,12 +79,14 @@ const OFFLINE_ENROLL_MESSAGE =
  */
 export function EnrollForm({
   barcode,
+  format,
   onCancel,
   onResolved,
 }: {
   barcode: string;
-  /** The detector's symbology for `barcode`; sent with the link/create writes
-   *  from slice 7 of docs/plans/barcode-integrity. Carried, not yet used. */
+  /** The detector's symbology for `barcode`. Used to look up who already
+   *  holds a refused barcode now; sent with the link/create writes from
+   *  slice 7 of docs/plans/barcode-integrity. */
   format: string | null;
   onCancel: () => void;
   /** Fired for both paths — the caller only cares which product to count. */
@@ -99,7 +108,7 @@ export function EnrollForm({
         {mode === "link" ? "Which bottle is this?" : "New product"}
       </h1>
       <p className="mt-1 text-row-subtitle text-muted-foreground">
-        Barcode <span className="tabular-nums text-foreground">{barcode}</span> isn&rsquo;t
+        Barcode <span className="tabular-nums text-foreground">{barcode}</span>{" "}isn&rsquo;t
         attached to anything yet.
         {mode === "link"
           ? " Find it in the catalog and this code sticks to it for good."
@@ -109,17 +118,52 @@ export function EnrollForm({
       {mode === "link" ? (
         <LinkExisting
           barcode={barcode}
+          format={format}
           onLinked={onResolved}
           onNewProduct={() => setMode("create")}
         />
       ) : (
         <CreateNew
           barcode={barcode}
+          format={format}
           onCreated={onResolved}
           onBackToSearch={() => setMode("link")}
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Who already holds this barcode, if anyone — asked after a link or create was
+ * refused, so the screen can offer to count that product instead
+ * (docs/plans/barcode-integrity, Fix 4). Usually the answer to "already
+ * belongs to" is "you already scanned this one".
+ *
+ * Re-resolving rather than reading an id out of the error keeps every other
+ * action's error shape unchanged; it is one indexed read on a rare screen.
+ * Any failure (offline included) just means no button.
+ */
+async function findBarcodeOwner(barcode: string, format: string | null): Promise<ProductSummary | null> {
+  try {
+    const found = await resolveBarcodeAction({ barcode, format: format ?? undefined });
+    return found.ok ? (found.data?.product ?? null) : null;
+  } catch {
+    return null;
+  }
+}
+
+function CountOwnerButton({
+  owner,
+  onCount,
+}: {
+  owner: ProductSummary;
+  onCount: (product: ProductSummary) => void;
+}) {
+  return (
+    <Button size="primary" className="mt-3 w-full" onClick={() => onCount(owner)}>
+      Count {nameWithSize(owner)}
+    </Button>
   );
 }
 
@@ -135,10 +179,12 @@ export function EnrollForm({
  */
 function LinkExisting({
   barcode,
+  format,
   onLinked,
   onNewProduct,
 }: {
   barcode: string;
+  format: string | null;
   onLinked: (product: ProductSummary) => void;
   onNewProduct: () => void;
 }) {
@@ -148,6 +194,7 @@ function LinkExisting({
   const [packLevel, setPackLevel] = useState<"each" | "case">("each");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [owner, setOwner] = useState<ProductSummary | null>(null);
 
   async function search(value: string) {
     setQuery(value);
@@ -170,6 +217,7 @@ function LinkExisting({
   async function link(product: ProductSummary, level: "each" | "case") {
     setPending(true);
     setError(null);
+    setOwner(null);
     let result: Awaited<ReturnType<typeof linkBarcodeToProductAction>>;
     try {
       result = await linkBarcodeToProductAction({
@@ -189,6 +237,7 @@ function LinkExisting({
     }
     if (!result.ok) {
       setError(result.error.message);
+      setOwner(await findBarcodeOwner(barcode, format));
       return;
     }
     onLinked(result.data);
@@ -239,6 +288,7 @@ function LinkExisting({
             {error}
           </p>
         ) : null}
+        {owner ? <CountOwnerButton owner={owner} onCount={onLinked} /> : null}
 
         <div className="mt-section-gap flex gap-3">
           <Button
@@ -283,6 +333,7 @@ function LinkExisting({
           {error}
         </p>
       ) : null}
+      {owner ? <CountOwnerButton owner={owner} onCount={onLinked} /> : null}
 
       {results.length > 0 ? (
         <div className="mt-4 flex flex-col gap-2">
@@ -361,10 +412,12 @@ function LinkExisting({
  */
 function CreateNew({
   barcode,
+  format,
   onCreated,
   onBackToSearch,
 }: {
   barcode: string;
+  format: string | null;
   onCreated: (product: ProductSummary) => void;
   onBackToSearch: () => void;
 }) {
@@ -377,6 +430,7 @@ function CreateNew({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nameCollision, setNameCollision] = useState(false);
+  const [owner, setOwner] = useState<ProductSummary | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const sizes = bottleSizesFor({ category, unitType });
@@ -411,6 +465,7 @@ function CreateNew({
     setPending(true);
     setError(null);
     setNameCollision(false);
+    setOwner(null);
     setFieldErrors({});
 
     let result: Awaited<ReturnType<typeof createProductAction>>;
@@ -447,6 +502,7 @@ function CreateNew({
       // rather than a duplicate created. Say so, instead of leaving someone
       // to invent a name the catalog does not already have.
       setNameCollision(/already exists/i.test(result.error.message));
+      setOwner(await findBarcodeOwner(barcode, format));
       return;
     }
     onCreated(result.data);
@@ -534,6 +590,7 @@ function CreateNew({
                 Attach this barcode to the existing one instead
               </button>
             ) : null}
+            {owner ? <CountOwnerButton owner={owner} onCount={onCreated} /> : null}
           </div>
         ) : null}
 

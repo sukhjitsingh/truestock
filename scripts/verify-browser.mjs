@@ -32,6 +32,9 @@ import { ean13Modules, writeBarcodeY4m } from "./lib/fake-barcode-camera.mjs";
 
 /** A valid UPC-A (check digit verified) used by the fake camera. */
 const FAKE_CAMERA_UPC_A = "082000000013";
+/** How that code is stored: as the reader reports it today (EAN-13), and in
+ *  the 14-digit standard form from slice 7 of docs/plans/barcode-integrity. */
+const FAKE_CAMERA_STORED_FORMS = ["0082000000013", "00082000000013"];
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const EMAIL = process.env.CHECK_EMAIL;
@@ -936,6 +939,8 @@ try {
   writeBarcodeY4m(video, ean13Modules(FAKE_CAMERA_UPC_A));
 
   let scanCountId = null;
+  let ownerOrgId = null;
+  const fixtureBarcodeIds = [];
   const camBrowser = await chromium.launch({
     channel: "chrome",
     args: [
@@ -947,10 +952,11 @@ try {
   try {
     // A throwaway in-progress count, so the scan page has something to write
     // into. Removed below — a fixture, not the app deleting a count.
-    const [[owner]] = await sql.execute("SELECT id, organization_id FROM `user` WHERE email = ?", [EMAIL]);
+    const [[signedInUser]] = await sql.execute("SELECT id, organization_id FROM `user` WHERE email = ?", [EMAIL]);
+    ownerOrgId = signedInUser.organization_id;
     const [ins] = await sql.execute(
       "INSERT INTO `count` (organization_id, type, status, opened_by, notes) VALUES (?, 'spot', 'in_progress', ?, 'verify-browser fake camera')",
-      [owner.organization_id, owner.id],
+      [signedInUser.organization_id, signedInUser.id],
     );
     scanCountId = ins.insertId;
 
@@ -1009,11 +1015,66 @@ try {
       camCsp.length === 0,
       camCsp.join("; ") || "none",
     );
+    // ---- Fix 4 (slice 3): a taken barcode names its owner, and offers to count it
+    // Before Fix 1 normalizes barcodes, the phone meets this refusal when
+    // ANOTHER phone links the same code while this one is on "Which bottle is
+    // this?". Reproduce exactly that: attach the code to Smirnoff 750 ml behind
+    // the screen's back, then pick a different product here. The fixture holds
+    // the code both as scanned and in its 14-digit standard form, so this check
+    // means the same thing before and after slice 7 changes what is stored.
+    if (reached) {
+      const [[owner]] = await sql.execute(
+        "SELECT id FROM product WHERE organization_id = ? AND name = 'Smirnoff' AND size_ml = 750 AND unit_type = 'bottle' LIMIT 1",
+        [ownerOrgId],
+      );
+      if (!owner) {
+        record("a taken barcode offers to count its owner", false, "fixture missing: no 'Smirnoff' 750 ml bottle in the catalog");
+      } else {
+        for (const code of FAKE_CAMERA_STORED_FORMS) {
+          const [r] = await sql.execute(
+            "INSERT INTO product_barcode (organization_id, product_id, barcode, pack_level, is_primary) VALUES (?, ?, ?, 'each', 0)",
+            [ownerOrgId, owner.id, code],
+          );
+          fixtureBarcodeIds.push(r.insertId);
+        }
+        await cam.locator("#link-search").fill("Jameson");
+        await cam.getByRole("button", { name: /^Jameson\b/ }).first().click();
+        // Filtered by text: Next.js renders its own (empty) route-announcer
+        // with role="alert", so "the first alert" is not this message.
+        const alert = await cam
+          .getByRole("alert")
+          .filter({ hasText: /already belongs/ })
+          .first()
+          .innerText({ timeout: 10000 })
+          .catch(() => "");
+        record(
+          "the refusal names the owner and its size",
+          alert.includes("This barcode already belongs to Smirnoff 750 ml."),
+          alert.replace(/\s+/g, " ").slice(0, 120) || "(no alert shown)",
+        );
+        const countOwner = cam.getByRole("button", { name: "Count Smirnoff 750 ml" });
+        // The button appears after a follow-up lookup, so wait for it.
+        const offered = await countOwner.first().waitFor({ timeout: 10000 }).then(() => true, () => false);
+        if (offered) await countOwner.first().click();
+        const landed = offered
+          ? await cam.getByRole("heading", { name: "Smirnoff", exact: true }).waitFor({ timeout: 10000 }).then(() => true, () => false)
+          : false;
+        record(
+          "\"Count Smirnoff 750 ml\" opens the owner's entry screen",
+          offered && landed,
+          !offered ? "button not offered" : landed ? "entry screen for Smirnoff" : "button did not open the entry screen",
+        );
+      }
+    }
+
     await camContext.close();
   } catch (err) {
     record("fake-camera scan ran without throwing", false, String(err).split("\n")[0]);
   } finally {
     await camBrowser.close();
+    for (const id of fixtureBarcodeIds) {
+      await sql.execute("DELETE FROM product_barcode WHERE id = ?", [id]);
+    }
     if (scanCountId != null) {
       await sql.execute("DELETE FROM count_line_write WHERE count_line_id IN (SELECT id FROM count_line WHERE count_id = ?)", [scanCountId]);
       await sql.execute("DELETE FROM count_line WHERE count_id = ?", [scanCountId]);
