@@ -21,6 +21,8 @@ import {
   bottleSizesFor,
   defaultSizeMlFor,
   isPresetSizeMl,
+  formatProductSize,
+  kegGallons,
   type BottleSize,
   type SizeContext,
 } from "@/lib/bottle-sizes";
@@ -260,5 +262,79 @@ describe("the seed catalog", () => {
       "Spirits/bottle/750",
       "Wine/bottle/750",
     ]);
+  });
+
+  // docs/plans/barcode-integrity: every real product must print a sensible
+  // size, since every screen now goes through formatProductSize.
+  test("every seeded product formats to a real size label", () => {
+    for (const p of readProducts()) {
+      const label = formatProductSize(p);
+      expect(label).not.toMatch(/NaN|undefined|^0 ml$|^$/);
+      if (p.unitType === "keg") expect(label).toMatch(/^(Sixtel|Quarter barrel|Half barrel) keg$/);
+      else expect(label).toMatch(/^\d+ ml$|^\d+(\.\d+)? L$/);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// One spelling of a size, everywhere (owner, 2026-11-05 — docs/plans/barcode-integrity)
+// ---------------------------------------------------------------------------
+
+describe("formatProductSize", () => {
+  test("prints ml under a litre", () => {
+    expect(formatProductSize({ unitType: "bottle", sizeMl: 750 })).toBe("750 ml");
+    expect(formatProductSize({ unitType: "can", sizeMl: 355 })).toBe("355 ml");
+    expect(formatProductSize({ unitType: "bottle", sizeMl: 999 })).toBe("999 ml");
+  });
+
+  test("prints litres from 1000 ml, dropping trailing zeros", () => {
+    expect(formatProductSize({ unitType: "bottle", sizeMl: 1000 })).toBe("1 L");
+    expect(formatProductSize({ unitType: "bottle", sizeMl: 1500 })).toBe("1.5 L");
+    expect(formatProductSize({ unitType: "bottle", sizeMl: 1750 })).toBe("1.75 L");
+    expect(formatProductSize({ unitType: "bottle", sizeMl: 10000 })).toBe("10 L");
+  });
+
+  test("names the three keg sizes", () => {
+    expect(formatProductSize({ unitType: "keg", sizeMl: 19533 })).toBe("Sixtel keg");
+    expect(formatProductSize({ unitType: "keg", sizeMl: 29337 })).toBe("Quarter barrel keg");
+    expect(formatProductSize({ unitType: "keg", sizeMl: 58674 })).toBe("Half barrel keg");
+  });
+
+  test("falls back to litres for a keg size it has no name for", () => {
+    expect(formatProductSize({ unitType: "keg", sizeMl: 50000 })).toBe("50 L keg");
+  });
+});
+
+describe("kegGallons", () => {
+  test("gives gallons for the three named keg sizes", () => {
+    expect(kegGallons({ unitType: "keg", sizeMl: 19533 })).toBe("5.16 gal");
+    expect(kegGallons({ unitType: "keg", sizeMl: 29337 })).toBe("7.75 gal");
+    expect(kegGallons({ unitType: "keg", sizeMl: 58674 })).toBe("15.5 gal");
+  });
+
+  test("is null for anything else", () => {
+    expect(kegGallons({ unitType: "bottle", sizeMl: 750 })).toBeNull();
+    expect(kegGallons({ unitType: "keg", sizeMl: 50000 })).toBeNull();
+  });
+});
+
+describe("dropdown labels are built from formatProductSize", () => {
+  test("every preset label starts with the shared size spelling", () => {
+    const lists: [readonly BottleSize[], string][] = [
+      [SPIRITS_SIZES, "bottle"],
+      [BEER_SIZES, "bottle"],
+      [WINE_SIZES, "bottle"],
+      [KEG_SIZES, "keg"],
+    ];
+    for (const [list, unitType] of lists) {
+      for (const s of list) {
+        expect(s.label.startsWith(formatProductSize({ unitType, sizeMl: s.ml }))).toBe(true);
+      }
+    }
+  });
+
+  test("the handle and keg labels read the way the owner chose", () => {
+    expect(SPIRITS_SIZES.find((s) => s.ml === 1750)?.label).toBe("1.75 L (handle)");
+    expect(KEG_SIZES.find((s) => s.ml === 19533)?.label).toBe("Sixtel keg (5.16 gal)");
   });
 });

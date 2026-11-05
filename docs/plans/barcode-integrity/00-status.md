@@ -11,7 +11,7 @@ Fix 3 is deferred (see Notes).
 ## Slices
 - [x] Slice 1 — tracer: format travels end to end; fake camera reaches the enroll screen;
       built-in reader if usable, else the app-provided reader served same-origin
-- [ ] Slice 2 — one size spelling everywhere
+- [x] Slice 2 — one size spelling everywhere
 - [ ] Slice 3 — Fix 4: refusal names the size, offers to count the owner
 - [ ] Slice 4 — Fix 2: confirm the size before linking
 - [ ] Slice 5 — Fix 2: "It's a different size"

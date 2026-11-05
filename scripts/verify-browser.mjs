@@ -468,6 +468,30 @@ try {
     `tile=${shown} db=${activeProducts}`,
   );
 
+  // ---- barcode-integrity slice 2: one size spelling, back office included --
+  // Every size comes from formatProductSize (lib/bottle-sizes.ts). The old
+  // inline `${sizeMl}ml` printed "750ml" with no space and "Keg" with no size.
+  {
+    await page.goto(`${BASE}/office/catalog?q=sixtel`, { waitUntil: "networkidle" });
+    await waitForHydration(page, "table");
+    const kegCells = await page.locator("table tbody").innerText();
+    record(
+      "the back-office catalog names keg sizes the shared way",
+      /Sixtel keg/.test(kegCells) && !/\bKeg\b/.test(kegCells),
+      (kegCells.match(/Sixtel keg/g) ?? []).length + " rows say \"Sixtel keg\"",
+    );
+
+    await page.goto(`${BASE}/office/catalog`, { waitUntil: "networkidle" });
+    await waitForHydration(page, "table");
+    const cells = await page.locator("table tbody").innerText();
+    const oldSpelling = cells.match(/\b\d+ml\b/g) ?? [];
+    record(
+      "the back-office catalog prints bottle sizes the shared way (\"750 ml\", never \"750ml\")",
+      oldSpelling.length === 0 && /\b\d+ ml\b|\b\d+(\.\d+)? L\b/.test(cells),
+      oldSpelling.length ? `old spelling still shown: ${oldSpelling.slice(0, 3).join(", ")}` : "shared spelling on every row shown",
+    );
+  }
+
   // ---- slice 4: per-cell cost editing, and no navigation per save --------
   await page.goto(`${BASE}/office/catalog`, { waitUntil: "networkidle" });
   await waitForHydration(page, "table");

@@ -29,6 +29,7 @@ import { BarcodeScanner } from "@/components/count/barcode-scanner";
 import { QuantityEntry, type QuantitySubmission } from "@/components/count/quantity-entry";
 import { FillEntry } from "@/components/count/fill-entry";
 import { EnrollForm } from "@/components/count/enroll-form";
+import { formatProductSize } from "@/lib/bottle-sizes";
 
 interface LocalLine extends CountLineCardData {
   lineId: number | null;
@@ -641,7 +642,7 @@ export function CountLeg({
 
         <h1 className="text-header-title text-foreground">{product.name}</h1>
         <p className="mt-1 text-row-subtitle text-muted-foreground">
-          {product.unitType === "keg" ? "Keg" : `${product.sizeMl}ml`} &middot; {location.name}
+          {formatProductSize(product)} &middot; {location.name}
           {isStray ? " · stray" : ""}
         </p>
 
@@ -893,7 +894,7 @@ export function CountLeg({
               >
                 <p className="text-row-title text-card-foreground">{p.name}</p>
                 <p className="text-row-subtitle text-muted-foreground">
-                  {p.unitType === "keg" ? "Keg" : `${p.sizeMl}ml`}
+                  {formatProductSize(p)}
                   {p.brand ? ` · ${p.brand}` : ""}
                 </p>
               </button>

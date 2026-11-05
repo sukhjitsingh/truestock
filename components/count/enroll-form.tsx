@@ -8,7 +8,7 @@ import {
   searchProductsAction,
 } from "@/app/actions/catalog";
 import type { ProductSummary } from "@/lib/domain/catalog";
-import { bottleSizesFor, defaultSizeMlFor, isPresetSizeMl } from "@/lib/bottle-sizes";
+import { bottleSizesFor, defaultSizeMlFor, isPresetSizeMl, formatProductSize } from "@/lib/bottle-sizes";
 import { isCountedByCase } from "@/lib/pack-level";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -303,7 +303,7 @@ function LinkExisting({
             >
               <span className="block text-row-title text-card-foreground">{p.name}</span>
               <span className="block text-row-subtitle text-muted-foreground">
-                {p.unitType === "keg" ? "Keg" : `${p.sizeMl}ml`}
+                {formatProductSize(p)}
                 {p.brand ? ` · ${p.brand}` : ""}
               </span>
             </button>
