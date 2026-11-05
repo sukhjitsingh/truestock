@@ -93,6 +93,13 @@ All on the phone, in the counting app (dark theme).
 | `mockups/different-size.html` | The new-product form opened from "It's a different size": name and category already filled in from the product the counter almost picked, size waiting to be chosen. |
 | `mockups/already-assigned.html` | The refusal message, before and after: it now names the product **and its size**, and offers a way back to the search. |
 
+**Amended 2026-11-05 (owner, during Gate 3): sizes read the same everywhere.**
+Every screen that shows a size — the counting app and the back office alike —
+prints it one way: `750 ml` under a litre, `1.75 L` from a litre up, and kegs
+by name (`Sixtel keg`, `Quarter barrel keg`, `Half barrel keg`). The size
+pickers keep their short hints in brackets (`1.75 L (handle)`,
+`Sixtel keg (5.16 gal)`).
+
 Fix 1 (recognising the same barcode in any form) has **no screen of its own**.
 Its visible effect is the absence of a screen: a bottle you have already
 enrolled goes straight to counting instead of asking "which bottle is this?"

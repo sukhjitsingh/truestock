@@ -15,7 +15,7 @@ The design is unchanged by this.
 | File | New/changed | Why it lives there |
 |---|---|---|
 | `lib/barcode.ts` | **new** | The self-contained normalizer (owner requirement). Pure: no imports from `@/db`, `@/lib/domain`, React or the DOM — the same shape as `lib/rescan-guard.ts`, so the rules are tested without a camera or database. |
-| `lib/bottle-sizes.ts` | changed | Gains `formatProductSize` and `kegGallons`. AGENTS.md makes this file "the single definition of what a size is"; the confirm screen (client) and the conflict message (server) must print a size identically, so the formatter cannot live in either. |
+| `lib/bottle-sizes.ts` | changed | Gains `formatProductSize` and `kegGallons`; preset lists become `{ ml, nickname? }` with `label` derived from `formatProductSize`. AGENTS.md makes this file "the single definition of what a size is"; the confirm screen (client) and the conflict message (server) must print a size identically, so the formatter cannot live in either. |
 | `lib/validation/catalog.ts` | changed | `resolveBarcodeSchema` gains optional `format`. `linkBarcodeSchema` and `productBarcodeInputSchema` already have it. |
 | `lib/validation/counts.ts` | changed | `scanCountLineSchema` gains optional `format`. |
 | `lib/domain/catalog.ts` | changed | All six barcode touchpoints normalize first. The two duplicated "who already has it" lookups collapse into one private helper that also selects size and unit type. |
@@ -24,6 +24,7 @@ The design is unchanged by this.
 | `app/actions/counts.ts` | unchanged | `scanCountLineAction` already passes the whole parsed input through. |
 | `components/count/barcode-scanner.tsx` | changed | `DetectorLike` result type gains `format`; `onDetected` is called with it. The rescan guard still receives `rawValue` only. |
 | `components/count/count-leg.tsx` | changed | Carries `format` through `onBarcode`, the rapid-scan payload (so also the offline queue record) and the `enroll` phase. |
+| `components/count/count-line-card.tsx`, `components/count/catalog-search.tsx`, `components/office/catalog-table.tsx` | changed | Print sizes with `formatProductSize` instead of their own `${sizeMl}ml` (owner: one spelling everywhere). `count-leg.tsx` and `enroll-form.tsx` get the same change alongside their other edits. |
 | `components/count/enroll-form.tsx` | changed | Fix 2 (confirm step, "It's a different size"), Fix 4's "Count …" button, and `format` on both writes. |
 | `tests/barcode-normalize.test.ts` | **new** | Table-driven tests of the pure module. |
 | `tests/bottle-sizes.test.ts` | changed | `formatProductSize` cases. |
@@ -31,8 +32,33 @@ The design is unchanged by this.
 | `scripts/verify-browser.mjs` | changed (see Least confident #6) | Browser checks for the confirm and different-size screens. |
 
 **Not changed:** `db/schema.ts`, `drizzle/`, `lib/count-queue.ts`,
-`lib/rescan-guard.ts`, `lib/action-result.ts`, `lib/domain/errors.ts`, any
-back-office file.
+`lib/rescan-guard.ts`, `lib/action-result.ts`, `lib/domain/errors.ts`, and no
+back-office file beyond the catalog table's size cell and the shared size
+dropdown labels.
+
+---
+
+## One size spelling, everywhere (owner, 2026-11-05)
+
+Today six components each format a size themselves with `` `${sizeMl}ml` ``
+(kegs print just `Keg`), and the preset lists carry hand-written labels such as
+`19533 ml (sixtel)`. All of them move onto `formatProductSize`:
+
+| Where | File:line today | Today | After |
+|---|---|---|---|
+| Back-office catalog table | `components/office/catalog-table.tsx:424` | `1750ml` / `Keg` | `1.75 L` / `Sixtel keg` |
+| Phone entry screen header | `components/count/count-leg.tsx:643` | same | same as above |
+| Phone stray-bottle search | `components/count/count-leg.tsx:895` | same | same |
+| Phone catalog search | `components/count/catalog-search.tsx:75` | same | same |
+| Phone count-line card | `components/count/count-line-card.tsx:83` | same | same |
+| Phone link search results | `components/count/enroll-form.tsx:303` | same | same |
+| Size dropdowns (phone create form, back-office product form) | `lib/bottle-sizes.ts` preset `label`s | `1.75 L (handle)`, `19533 ml (sixtel)` | size text from `formatProductSize`, then the nickname in brackets: `1.75 L (handle)`, `355 ml (12 oz)`, `Sixtel keg (5.16 gal)` |
+
+The preset lists change shape from hand-written labels to `{ ml, nickname? }`,
+with `label` derived once at module load — so the dropdown and every other
+screen cannot disagree. Nicknames stay because they help someone *pick*
+("handle", "tallboy", "magnum"); they are never shown outside a dropdown.
+Kegs' nickname is the gallon figure from `kegGallons`.
 
 ---
 
@@ -303,6 +329,7 @@ implementation (see `00-status.md`) — not with the module under test.
 | `formatProductSize names the three keg sizes` | 19533 → `"Sixtel keg"`, 29337 → `"Quarter barrel keg"`, 58674 → `"Half barrel keg"` |
 | `formatProductSize falls back to litres for an unnamed keg` | keg 50000 → `"50 L keg"` |
 | `every size in the seed catalog formats to a non-empty label` | reads the seed CSV like the existing catalog test; no product prints `"NaN"`, `"0 ml"` or an empty string |
+| `preset labels are built from formatProductSize` | every preset's label starts with `formatProductSize` of its own size; `1750` → `"1.75 L (handle)"`; `19533` → `"Sixtel keg (5.16 gal)"` |
 | `kegGallons` | 19533 → `"5.16 gal"`, 29337 → `"7.75 gal"`, 58674 → `"15.5 gal"`, a bottle → null |
 
 ### `tests/catalog-write-path.test.ts` — new `describe("one barcode, one product, in any written form")`
@@ -329,6 +356,7 @@ tests fail again and nothing else does. Recorded in `00-status.md`.
 
 | Check | Asserts |
 |---|---|
+| `the back-office catalog prints sizes the shared way` | the catalog table shows `1.75 L`-style and `… keg` sizes and no `\d+ml` string anywhere in its cells |
 | `picking a search result does not link it` | after tapping a result, a confirm screen shows and the database holds no new barcode row |
 | `the confirm screen shows the size largest` | the size text's computed font-size is the largest on the screen |
 | `"It's a different size" prefills and preselects nothing` | name and category fields carry the picked product's values; no size is selected; Save is disabled; the excluded size cannot be picked |
@@ -355,8 +383,8 @@ camera is Least confident #6.
    secondary line on the confirm screen. The message for a keg owner reads
    *"…already belongs to Blue Moon Sixtel (Sixtel keg)"*; the repetition is
    accepted rather than guessing whether a name already contains its size.
-   Not in scope: the back-office size dropdown still labels kegs
-   `19533 ml (sixtel)`; aligning it to this formatter is a follow-up.
+   **Applied everywhere a size is printed — owner, 2026-11-05: "so everything
+   stays the same".** See "One size spelling, everywhere" below.
 
 4. **"It's a different size" carries the bottle/case choice into the create
    form.** If a counter chose "Case carton" on a beer and then said "different

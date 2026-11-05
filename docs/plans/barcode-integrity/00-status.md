@@ -75,6 +75,13 @@ Separately, the link screen links on one tap with no size confirmation.
   raw and stop resolving; reset the local database after it ships. Supersedes
   Gate 1 decision 4.
 
+- **Size display (owner, during Gate 3):** `750 ml` under a litre, `1.75 L`
+  from a litre up, kegs by name (`Sixtel keg` / `Quarter barrel keg` /
+  `Half barrel keg`, gallons as a secondary line). Applied **everywhere a size
+  is printed**, back office included, via one formatter — "so everything stays
+  the same". Gates 1 and 2 carry a dated amendment for this rather than being
+  reopened.
+
 **Step 0 is done** — commit `d637cbb` on `claude/mvp-readiness-report-tehzeg`:
 `tests/user-write-path.test.ts` and `tests/rapid-scan.test.ts` now migrate in
 `beforeAll`. It was trivial, so it skipped the gates per `docs/plans/README.md`.

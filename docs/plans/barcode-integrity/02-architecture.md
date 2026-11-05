@@ -24,6 +24,12 @@ go-live migration list.
 | `components/count/count-leg.tsx` | `onBarcode(barcode)` → resolve, rapid scan, or enroll | Carries `format` into `resolveBarcodeAction`, the rapid-scan write payload (and therefore its offline-queue record), and `EnrollForm`. |
 | `components/count/enroll-form.tsx` | Search → **one tap links**. Create form defaults a size. | Fix 2: a confirm step between pick and link (size as the largest text; the beer bottle-or-case question moves onto it), "It's a different size" opening the create form with name/category prefilled and **no size preselected**. Fix 4's "Count Smirnoff 750 ml" button. Sends `format` on link and create. |
 
+**Amended 2026-11-05 at Gate 3 (owner):** sizes are printed one way across the
+whole app — the six components that format sizes themselves and the shared
+size-dropdown labels all move onto one formatter in `lib/bottle-sizes.ts`. That
+adds the back-office catalog table's size cell to this feature. Details in
+`03-program-design.md`, "One size spelling, everywhere".
+
 Not touched: no conversion script (owner decision, see Data); `db/schema.ts`, `drizzle/`, `lib/count-queue.ts` (the queue stores
 whatever payload it is given; it gains a `format` field without code changes),
 `lib/rescan-guard.ts`, every back-office screen, authz.
