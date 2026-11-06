@@ -345,6 +345,14 @@ Written, reviewed, typechecked — never observed working.
 
 ## Recent history
 
+- **2026-11-06** — **Merge QA, count queue fixed, invoice failures handed off.**
+  A real-phone and real-invoice QA of the Phase 2.5 + `main` merge found ten
+  failures that every automated suite passed. Two were in the count queue (a
+  correction overtaken by a queued write; no retry on mobile data) and are fixed
+  on `fix/count-queue-order-and-retry`, proven by mutation-checked e2e tests but
+  not yet on the phone (open-item #46). Eight are invoice failures, including
+  approval posting no costs, handed to the invoice branch (open-item #47,
+  `docs/qa/2026-11-06-invoice-failures-handoff.md`).
 - **2026-11-06** — **Glued words fixed (open-item #44).** Next's SWC drops
   the leading space of a multi-line JSX text run that contains an HTML entity;
   `/office/reorder` read "closedcount, and there isn't one". Fixed, browser

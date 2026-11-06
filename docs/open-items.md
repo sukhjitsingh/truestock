@@ -2140,3 +2140,50 @@ polyfill fetched its engine from `fastly.jsdelivr.net`, which that CSP refuses â
 reproduced in a browser. So either that handset used a built-in reader after
 all, or the engine came from somewhere other than the CDN. Preflight now answers
 which.
+
+## 46. The count queue after the 2026-11-06 fix: what is proven and what is left
+
+**Trigger:** before relying on offline counting in a real count. The first
+three bullets under "Still open" are small and can go in any count-screen work.
+
+**Fixed (local branch `fix/count-queue-order-and-retry`, not pushed).** Two
+defects found on a real phone. A new write went straight to the server past
+queued ones, so a correction landed first and the older write replayed on top:
+the phone showed `4 ea` and Synced while the database held 6. And the queue
+drained only on mount and on the `online` event, which never fires when a phone
+falls over to mobile data, so one write sat unsent for over 7 minutes. Writes in
+`components/count/count-leg.tsx` now go through one lock with older queued writes
+first, a new write waits behind a blocked queue, and pending writes retry every
+15 seconds.
+
+**Proven.** Three tests in `e2e/specs/count-flow.e2e.ts`, on a production build.
+Mutation-checked: with the original file, exactly those three fail and the older
+four pass. They abort only the count POSTs, because `context.setOffline` flips
+`navigator.onLine` and so cannot reproduce the phone case.
+
+**Not proven.** The fix has not been run on the real phone, which is where both
+defects were found. Whether either defect predates the Phase 2.5 merge was not
+tested on `main`.
+
+**Still open:**
+
+- The retry timer lives in the scan screen, so the queue only retries while that
+  screen is mounted.
+- Finish section gives no warning with writes pending.
+- `/count/<id>` shows no pending indicator and left Submit live with 1 pending.
+  `canSubmitCount` in `components/count/session-actions.tsx` exists to guard this;
+  it was read, not tested.
+- `verify-browser` leaves a second `Jameson` (1.75 L) in `truestock_e2e`, so
+  `count-flow` fails with a strict-mode error if it runs afterwards. That looks
+  like an app failure and is not one.
+
+## 47. Eight invoice failures from the 2026-11-06 QA run
+
+**Trigger:** next work on `feat/phase-2.5-invoice-automation`, and before any
+real invoice is trusted to post costs.
+
+Real invoices found failures the automated suites did not, including approval
+posting no costs with nothing on screen to show it. The findings, code pointers,
+suggested order and decisions needed are in
+`docs/qa/2026-11-06-invoice-failures-handoff.md`. Close this item when that
+document's "Open findings" are closed or moved here individually.
