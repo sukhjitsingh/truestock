@@ -37,6 +37,7 @@ import { assignVendorToProductsAction, updateProductAction } from "@/app/actions
 import type { ProductSummary, ProductIncompleteReason, VendorSummary } from "@/lib/domain/catalog";
 import { unitCostSchema } from "@/lib/validation/catalog";
 import { isCountedByCase } from "@/lib/pack-level";
+import { formatProductSize } from "@/lib/bottle-sizes";
 
 const REASON_LABEL: Record<ProductIncompleteReason, string> = {
   needs_producer: "Needs producer",
@@ -421,7 +422,7 @@ export function CatalogTable({
               {product.name}
             </span>
             <span className="block text-caption text-muted-foreground">
-              {product.unitType === "keg" ? "Keg" : `${product.sizeMl}ml`}
+              {formatProductSize(product)}
               {product.brand ? ` · ${product.brand}` : ""}
             </span>
             {product.incomplete.length > 0 ? (

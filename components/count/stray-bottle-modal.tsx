@@ -6,6 +6,7 @@ import { searchProductsAction } from "@/app/actions/catalog";
 import type { LocationSummary, ProductSummary } from "@/lib/domain/catalog";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { formatProductSize } from "@/lib/bottle-sizes";
 
 export interface StrayBottleModalProps {
   isOpen: boolean;
@@ -189,7 +190,7 @@ function StrayBottleModalBody({
                       {product.name}
                     </span>
                     <span className="text-caption text-muted-foreground">
-                      {product.unitType === "keg" ? "Keg" : `${product.sizeMl}ml`}
+                      {formatProductSize(product)}
                       {product.brand ? ` · ${product.brand}` : ""}
                     </span>
                   </button>

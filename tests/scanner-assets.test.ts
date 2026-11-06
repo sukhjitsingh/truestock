@@ -66,7 +66,9 @@ describe("scanner component", () => {
   const src = read("components/count/barcode-scanner.tsx");
 
   test("overrides locateFile before the polyfill detector is constructed", () => {
-    const override = src.indexOf("setZXingModuleOverrides({ locateFile: locateScannerFile })");
+    // Passed through prepareZXingModule (awaited, so a load failure is shown)
+    // since the barcode-integrity merge — the override itself is unchanged.
+    const override = src.indexOf("locateFile: locateScannerFile");
     const construct = src.indexOf("new mod.BarcodeDetector(");
     expect(override).toBeGreaterThan(-1);
     expect(construct).toBeGreaterThan(-1);

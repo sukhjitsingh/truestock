@@ -597,7 +597,7 @@ export async function scanCountLine(
   actor: Actor,
   input: ScanCountLineInput,
 ): Promise<CountLineRow> {
-  const resolved = await resolveBarcodeForCount(actor.organizationId, input.barcode);
+  const resolved = await resolveBarcodeForCount(actor.organizationId, input.barcode, input.format);
   if (!resolved) {
     throw new NotFoundError("Product for this barcode");
   }

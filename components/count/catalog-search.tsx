@@ -8,6 +8,7 @@ import { CardStack, GlyphTile, monogram } from "@/components/ui/card";
 import { StatusPill } from "@/components/ui/status-pill";
 import { BarcodeScanner } from "@/components/count/barcode-scanner";
 import { EnrollForm } from "@/components/count/enroll-form";
+import { formatProductSize } from "@/lib/bottle-sizes";
 
 const CATEGORY_GLYPH: Record<string, string> = {
   Spirits: "SP",
@@ -42,6 +43,9 @@ export function CountCatalogSearch() {
   const [offline, setOffline] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [enrollingBarcode, setEnrollingBarcode] = useState<string | null>(null);
+  // The detector's symbology, carried with the barcode so the server can store
+  // its standard form (lib/barcode.ts, docs/plans/barcode-integrity).
+  const [enrollingFormat, setEnrollingFormat] = useState<string | null>(null);
   // A scan whose lookup could not be completed (offline, or the server refused).
   // Kept apart from `offline`, which is about the search box.
   const [scanError, setScanError] = useState<string | null>(null);
@@ -68,11 +72,11 @@ export function CountCatalogSearch() {
     }
   }
 
-  async function handleBarcodeDetected(barcode: string) {
+  async function handleBarcodeDetected(barcode: string, format: string | null) {
     setScannerOpen(false);
     setScanError(null);
     try {
-      const res = await resolveBarcodeAction({ barcode });
+      const res = await resolveBarcodeAction({ barcode, format: format ?? undefined });
       if (res.ok && res.data) {
         setQuery(res.data.product.name);
         setResults([res.data.product]);
@@ -81,6 +85,7 @@ export function CountCatalogSearch() {
       } else if (res.ok) {
         // The server looked and the barcode is genuinely unknown -> enroll it.
         setEnrollingBarcode(barcode);
+        setEnrollingFormat(format);
       } else {
         // A refused lookup is not an answer about the catalog. Opening the enroll
         // form here would offer to create a duplicate of a product that may well
@@ -98,6 +103,7 @@ export function CountCatalogSearch() {
     return (
       <EnrollForm
         barcode={enrollingBarcode}
+        format={enrollingFormat}
         onCancel={() => setEnrollingBarcode(null)}
         onResolved={(product) => {
           setEnrollingBarcode(null);
@@ -179,7 +185,7 @@ export function CountCatalogSearch() {
                     {product.name}
                   </p>
                   <p className="truncate text-row-subtitle text-muted-foreground">
-                    {product.unitType === "keg" ? "Keg" : `${product.sizeMl}ml`} &middot;{" "}
+                    {formatProductSize(product)} &middot;{" "}
                     {product.category}
                     {product.brand ? ` · ${product.brand}` : ""}
                   </p>

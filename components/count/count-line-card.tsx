@@ -3,6 +3,7 @@ import { ChevronRight } from "lucide-react";
 import { cn, formatUnits } from "@/lib/utils";
 import { Money } from "@/components/ui/money";
 import { GlyphTile, monogram } from "@/components/ui/card";
+import { formatProductSize } from "@/lib/bottle-sizes";
 
 export interface CountLineCardData {
   productName: string;
@@ -99,7 +100,7 @@ export function CountLineCard({
           ) : null}
         </div>
         <p className="truncate text-row-subtitle text-muted-foreground">
-          {data.unitType === "keg" ? "Keg" : `${data.sizeMl}ml`} &middot; {data.locationName}
+          {formatProductSize(data)} &middot; {data.locationName}
         </p>
 
         <div

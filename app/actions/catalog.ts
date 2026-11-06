@@ -74,7 +74,7 @@ export async function resolveBarcodeAction(
   return runAction(async () => {
     const actor = await requireRole("owner", "manager", "staff");
     const parsed = resolveBarcodeSchema.parse(input);
-    return catalog.resolveBarcode(actor, parsed.barcode);
+    return catalog.resolveBarcode(actor, parsed.barcode, parsed.format);
   });
 }
 

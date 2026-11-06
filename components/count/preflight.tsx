@@ -47,12 +47,12 @@ function computeChecks(): Check[] {
         : `${location.origin} is not secure. Camera API is blocked in insecure contexts. Use HTTPS on port 3443.`,
     },
     {
-      label: "📷 Camera BarcodeDetector",
+      label: "📷 Barcode reader",
       tone: "success",
-      status: nativeDetector ? "✓ Native" : "WASM polyfill",
+      status: nativeDetector ? "✓ Built-in present" : "App reader",
       detail: nativeDetector
-        ? "The native BarcodeDetector is available and will be used for fast hardware-accelerated scanning."
-        : "Native BarcodeDetector absent; ZXing WASM polyfill will load automatically on first scan.",
+        ? "This browser has a built-in barcode reader. The scanner uses it if it can read UPC and EAN codes, and otherwise switches to the app's own reader — it checks when the camera opens."
+        : "No built-in barcode reader, so the app's own reader loads on first scan. It works, but the first scan is slower — expect that and do not read it as a stall.",
     },
     {
       label: "💾 IndexedDB offline storage",

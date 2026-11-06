@@ -38,49 +38,111 @@ export type SizeContext = {
   unitType: string;
 };
 
+/**
+ * One spelling of a product's size, used on every screen that shows one —
+ * phone and back office alike, and in the "already belongs to" message.
+ * Decided by the owner 2026-11-05 (docs/plans/barcode-integrity): "so
+ * everything stays the same".
+ *
+ *   bottle/can under 1000 ml  → "750 ml"
+ *   bottle/can 1000 ml and up → litres, trailing zeros dropped: "1 L", "1.5 L", "1.75 L"
+ *   the three keg sizes       → "Sixtel keg", "Quarter barrel keg", "Half barrel keg"
+ *   any other keg             → litres + " keg": "50 L keg"
+ *
+ * Kegs are named rather than measured because nobody reads 19,533 ml off a
+ * keg; the trade name is what is on the invoice and in the walk-in.
+ */
+export function formatProductSize(p: { unitType: string; sizeMl: number }): string {
+  if (p.unitType === "keg") {
+    const named = KEG_NAMES.get(p.sizeMl);
+    return named ? `${named} keg` : `${litres(p.sizeMl)} L keg`;
+  }
+  return p.sizeMl < 1000 ? `${p.sizeMl} ml` : `${litres(p.sizeMl)} L`;
+}
+
+/**
+ * A product named with its size, for messages and buttons:
+ * "Smirnoff 750 ml", "Blue Moon Sixtel (Sixtel keg)". Kegs take brackets
+ * because their catalog names usually already end in the keg size; the
+ * repetition is accepted rather than guessing whether a name contains it
+ * (owner, 2026-11-05).
+ */
+export function nameWithSize(p: { name: string; unitType: string; sizeMl: number }): string {
+  const size = formatProductSize(p);
+  return p.unitType === "keg" ? `${p.name} (${size})` : `${p.name} ${size}`;
+}
+
+/**
+ * The secondary line under a keg's size on the confirm screen ("5.16 gal"),
+ * and the hint in the keg size dropdown. Null for anything that is not one of
+ * the three named keg sizes — a gallon figure for a 750 ml bottle helps no one.
+ */
+export function kegGallons(p: { unitType: string; sizeMl: number }): string | null {
+  if (p.unitType !== "keg" || !KEG_NAMES.has(p.sizeMl)) return null;
+  return `${trimDecimals(p.sizeMl / ML_PER_US_GALLON, 2)} gal`;
+}
+
+/** US keg sizes by volume (AGENTS.md domain vocabulary). */
+const KEG_NAMES = new Map<number, string>([
+  [19533, "Sixtel"],
+  [29337, "Quarter barrel"],
+  [58674, "Half barrel"],
+]);
+
+const ML_PER_US_GALLON = 3785.411784;
+
+function litres(ml: number): string {
+  return trimDecimals(ml / 1000, 3);
+}
+
+/** 1.750 → "1.75", 1.000 → "1", 5.16 → "5.16". Never exponent notation. */
+function trimDecimals(n: number, places: number): string {
+  return n.toFixed(places).replace(/\.?0+$/, "");
+}
+
+/**
+ * A dropdown entry. The size text always comes from `formatProductSize`, so a
+ * dropdown can never spell a size differently from the rest of the app; the
+ * nickname in brackets ("handle", "12 oz", "magnum") is only a picking aid and
+ * appears nowhere else.
+ */
+function preset(ml: number, unitType: string, nickname?: string): BottleSize {
+  const size = formatProductSize({ unitType, sizeMl: ml });
+  return { ml, label: nickname ? `${size} (${nickname})` : size };
+}
+
 export const SPIRITS_SIZES: readonly BottleSize[] = [
-  { ml: 50, label: "50 ml (mini)" },
-  { ml: 200, label: "200 ml" },
-  { ml: 375, label: "375 ml (half)" },
-  { ml: 500, label: "500 ml" },
-  { ml: 700, label: "700 ml" },
-  { ml: 750, label: "750 ml" },
-  { ml: 1000, label: "1 L" },
-  { ml: 1750, label: "1.75 L (handle)" },
+  preset(50, "bottle", "mini"),
+  preset(200, "bottle"),
+  preset(375, "bottle", "half"),
+  preset(500, "bottle"),
+  preset(700, "bottle"),
+  preset(750, "bottle"),
+  preset(1000, "bottle"),
+  preset(1750, "bottle", "handle"),
 ];
 
 export const BEER_SIZES: readonly BottleSize[] = [
-  { ml: 222, label: "222 ml (7.5 oz)" },
-  { ml: 330, label: "330 ml (11.2 oz import)" },
-  { ml: 355, label: "355 ml (12 oz)" },
-  { ml: 473, label: "473 ml (16 oz tallboy)" },
-  { ml: 650, label: "650 ml (22 oz bomber)" },
-  { ml: 740, label: "740 ml (25 oz)" },
+  preset(222, "bottle", "7.5 oz"),
+  preset(330, "bottle", "11.2 oz import"),
+  preset(355, "bottle", "12 oz"),
+  preset(473, "bottle", "16 oz tallboy"),
+  preset(650, "bottle", "22 oz bomber"),
+  preset(740, "bottle", "25 oz"),
 ];
 
 export const WINE_SIZES: readonly BottleSize[] = [
-  { ml: 187, label: "187 ml (split)" },
-  { ml: 375, label: "375 ml (half)" },
-  { ml: 750, label: "750 ml" },
-  { ml: 1500, label: "1.5 L (magnum)" },
+  preset(187, "bottle", "split"),
+  preset(375, "bottle", "half"),
+  preset(750, "bottle"),
+  preset(1500, "bottle", "magnum"),
 ];
 
-/**
- * Keg volumes, from CLAUDE.md's "Draft beer" section. These are the same three
- * numbers the seed catalog uses; they are not approximations to be tidied.
- */
-export const KEG_SIZES: readonly BottleSize[] = [
-  { ml: 19533, label: "19533 ml (sixtel)" },
-  { ml: 29337, label: "29337 ml (quarter barrel)" },
-  { ml: 58674, label: "58674 ml (half barrel)" },
-];
+/** Keg dropdown: "Sixtel keg (5.16 gal)" — the name, then gallons as the hint. */
+export const KEG_SIZES: readonly BottleSize[] = [19533, 29337, 58674].map((ml) =>
+  preset(ml, "keg", kegGallons({ unitType: "keg", sizeMl: ml }) ?? undefined),
+);
 
-/**
- * A list paired with the size that opens selected. The pairing lives here
- * rather than as a flag on each entry so there is exactly one default per
- * list and no way to express two — or none, which would leave a required
- * field empty on a form the user never touched.
- */
 type SizeList = { sizes: readonly BottleSize[]; defaultMl: number };
 
 const SPIRITS: SizeList = { sizes: SPIRITS_SIZES, defaultMl: 750 };

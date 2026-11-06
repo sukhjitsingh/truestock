@@ -1,6 +1,6 @@
 # Truestock — current state
 
-Where the project actually is. Updated 2026-08-21.
+Where the project actually is. Updated 2026-11-06.
 
 This file answers one question: **what is proven, what is merely built, and what
 is next.** The distinction matters more here than the feature list, because this
@@ -142,8 +142,16 @@ Verified means *observed running*, not reviewed or typechecked.
 | **Role gating survives the TanStack migration** | `bun run verify:browser` asserts a manager's rendered DOM contains **no** `Unit cost for` string and zero cost inputs, with an owner positive control that must find it — so the check cannot pass by failing to render. Columns are built per role at call time, never `columnVisibility` |
 | **The catalog table's own behaviour** | Same harness: clicking a sortable header changes `aria-sort` **and** reorders the rows; pagination advances `Showing 1–20 of 99` → `21–40 of 99` and changes which rows show; a product with no par level renders **no** stock bar (15 rows, 0 meters); clicking a non-interactive cell does not navigate |
 | **The accessibility floor, on `/office/catalog`** | Same harness: 30 tab stops walked, none bare; every icon-only control has an accessible name; no heading-level skips; opening the account menu moves focus into it and Escape returns focus to the trigger. Both focus guards are mutation-checked — reverting either fails loudly |
+| **One barcode, one product, in any written form** | 2026-11-05, docs/plans/barcode-integrity. Every barcode is stored and looked up as the 14-digit standard form (`lib/barcode.ts`), so the UPC-A, EAN-13 and UPC-E readings of one bottle are one code and the unique index refuses linking it to a second size. **Red first**: 7 DB tests failed against the old code exactly as the owner's bug predicts (linking the EAN-13 form to a second product *succeeded*; rapid scan of the EAN-13 reading said "Product for this barcode not found"), then passed. Mutation: the normalizer returning its input fails exactly the 18 barcode-form tests. Browser: a code stored from a UPC-A link is recognised when the fake camera reads its EAN-13 form |
+| **Size before link, and naming the owner** | Same plan, browser harness with a fake camera: picking a product opens a confirmation with the size as the largest text and links nothing until "Link and count"; "It's a different size" opens a prefilled form with no size chosen and the rejected size disabled; a taken barcode is refused as "already belongs to Smirnoff 750 ml" with a working "Count Smirnoff 750 ml" button |
+| **The app's own barcode reader loads under the production CSP** | 2026-11-05. Before this, the fallback reader fetched its engine from `fastly.jsdelivr.net`, which `connect-src 'self'` refuses — reproduced in headless Chromium against a production build: the camera opened and decoded nothing. The engine is now served from the app's origin and copied out of `node_modules` on every build (fingerprint-checked against the package's `ZXING_WASM_SHA256`). The harness hides any built-in reader, scans a generated UPC-A, and reaches "Which bottle is this?"; with the engine file removed, that check fails. **The built-in-reader branch is unverified** (open-item #45) |
 
-**210 tests across 21 files**, all green — **re-run 2026-08-14 against MariaDB
+**260 tests across 23 files**, all green as of 2026-11-05 — run against an empty
+MariaDB **10.11** in a cloud session (not the owner's 11.8 Docker), so this also
+proves every DB test file migrates for itself (see 2026-11-05 below). Browser
+harness **53/55** against a production standalone build; the 2 failures are the
+data-dependent stock checks, which need a closed count that database lacked.
+The figure that stood here: **210 tests across 21 files**, all green — **re-run 2026-08-14 against MariaDB
 11.8 in Docker: 210 pass, 0 fail, 612 assertions, 31.7s.** Plus **45 browser
 checks** via `bun run verify:browser`.
 
@@ -337,6 +345,43 @@ Written, reviewed, typechecked — never observed working.
 
 ## Recent history
 
+- **2026-11-06** — **Glued words fixed (open-item #44).** Next's SWC drops
+  the leading space of a multi-line JSX text run that contains an HTML entity;
+  `/office/reorder` read "closedcount, and there isn't one". Fixed, browser
+  verified, and guarded by `tests/jsx-entity-spacing.test.ts` (270 tests).
+- **2026-11-05** — **Barcode integrity: one barcode, one bottle size**
+  (docs/plans/barcode-integrity, all four gates approved by the owner, eight
+  slices). The owner reported *"I can assign multiple bottle sizes to the same
+  barcode."* Root cause, reproduced: the ZXing reader reports a printed UPC-A as
+  its 13-digit EAN-13 form, and the unique index only refused an identical
+  string — so a second reading of an enrolled bottle reopened "Which bottle is
+  this?" and could be linked to another size; and linking itself was one tap
+  with no size shown. What shipped:
+  - **Fix 1** — `lib/barcode.ts`: every barcode stored and looked up as the
+    14-digit GTIN, the camera's format recorded; 8-digit codes converted only
+    when the camera said which kind they are, never guessed.
+  - **Fix 2** — picking a product opens a confirmation with the size as the
+    largest text; "It's a different size" opens a prefilled form with no size
+    chosen.
+  - **Fix 4** — a taken barcode is refused as "already belongs to Smirnoff
+    750 ml", with a button to count that product instead.
+  - **One size spelling everywhere**, back office included: `750 ml`, `1.75 L`,
+    `Sixtel keg` (`formatProductSize`).
+  - **Found and fixed on the way:** the fallback barcode reader could not load
+    under the production CSP (its engine came from a CDN the CSP refuses); the
+    scanner now uses the built-in reader only if it can read retail barcodes,
+    else the app's own reader, served same-origin. Also: two DB test files that
+    passed only by test order (CI's Deploy workflow had been red on every merge
+    since PR #11 because of it) now migrate for themselves; and a test that would
+    have passed for the wrong reason now asserts the specific error.
+  - **Browser-testable scanning:** the harness gives Chromium a fake camera
+    playing a generated barcode, so the enroll screens run end to end through
+    the real decoder.
+  - **Deferred / opened:** Fix 3 (size edits rewrite history, #42); reset local
+    Docker data after merging (#43); words glued by dropped JSX spaces, live on
+    the reorder page (#44); the built-in-reader branch unverified on a phone
+    (#45). (Numbered #31–#34 on `main`; renumbered when merged into the
+    Phase 2.5 branch, whose own items already use #31–#41.)
 - **2026-10-25** — **PRs #28 (Phase 2.5 backend follow-ons) and #29 (UI/UX
   redesign v2) merged into `feat/phase-2.5-invoice-automation`; a post-merge QA
   pass on the merged tree found and fixed seven defects, none of which a status

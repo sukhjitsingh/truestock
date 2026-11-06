@@ -167,7 +167,10 @@ describe("createProduct — collisions and ownership leave nothing behind", () =
     await db.insert(productBarcode).values({
       organizationId: fx.organizationId,
       productId: fx.pricedProductId,
-      barcode: "012345678905",
+      // The standard 14-digit form the app stores (lib/barcode.ts). A raw
+      // "012345678905" row would not collide with createProduct's normalized
+      // insert, and this test would then create the duplicate it guards against.
+      barcode: "00012345678905",
       packLevel: "each",
       isPrimary: true,
     });

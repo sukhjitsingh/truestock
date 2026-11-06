@@ -77,6 +77,7 @@ import {
   newClientLineId,
   type Fixtures,
 } from "./helpers/test-db";
+import { normalizeBarcode } from "@/lib/barcode";
 
 let fx: Fixtures;
 
@@ -111,7 +112,10 @@ async function enrollBarcode(productId: number) {
   await db.insert(productBarcode).values({
     organizationId: fx.organizationId,
     productId,
-    barcode: BARCODE,
+    // Stored the way the app stores it: the 14-digit standard form
+    // (lib/barcode.ts, AGENTS.md). Scans below still pass the raw code, as a
+    // phone does; a raw stored row would no longer resolve.
+    barcode: normalizeBarcode(BARCODE).barcode,
     packLevel: "each",
     isPrimary: true,
   });
