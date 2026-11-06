@@ -231,7 +231,9 @@ test.describe("fix 3: the enroll form says why Save is off", () => {
     await expect(page.getByRole("heading", { level: 1, name: "Which bottle is this?" })).toBeVisible();
     await page.getByRole("button", { name: "Add it as a new product" }).click();
     await expect(page.getByRole("heading", { level: 1, name: "New product" })).toBeVisible();
-    await expect(page.getByText(UNKNOWN_UPC)).toBeVisible();
+    // The search panel stays mounted (hidden) under the create screen so Back to
+    // search keeps its results, and it names the barcode too: match the visible copy.
+    await expect(page.getByText(UNKNOWN_UPC).and(page.locator(":visible"))).toBeVisible();
 
     const name = page.getByRole("textbox", { name: "Name" });
     const saveAndCount = page.getByRole("button", { name: "Save and count" });
