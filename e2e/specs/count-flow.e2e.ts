@@ -19,7 +19,9 @@
  * exercised rather than a leftover being resumed, and one test cannot pass on
  * another's rows. The suite is serial (workers: 1) so this is safe.
  */
+import type { Page } from "playwright/test";
 import { expect, requireRole, test } from "../support/fixtures";
+import type { Db } from "../support/db";
 import { authFile } from "../support/env";
 import {
   addEaches,
@@ -170,4 +172,97 @@ test("Speed Rail takes a fill level: Half, one save, [0.5] on the line", async (
   const ledger = await db.ledgerRows({ countLineId: lines[0].id });
   expect(ledger).toHaveLength(1);
   expect(ledger[0].partialFillsDelta).toEqual([0.5]);
+});
+
+/**
+ * The phone case from the 2026-11-06 QA run: Wi-Fi drops, the phone falls over to
+ * mobile data, and the server stops answering while `navigator.onLine` stays true
+ * and no `online` event ever fires. `context.setOffline` would flip both, so it
+ * cannot reproduce this; aborting only the count writes can, and it leaves the
+ * search picker working so the next write is reachable.
+ */
+async function blockCountWrites(page: Page): Promise<void> {
+  await page.route("**/count/**", (route) => {
+    const request = route.request();
+    if (request.method() === "POST" && request.postData()?.includes("clientLineId")) {
+      return route.abort("connectionfailed");
+    }
+    return route.fallback();
+  });
+}
+
+async function unblockCountWrites(page: Page): Promise<void> {
+  await page.unroute("**/count/**");
+}
+
+async function setEaches(page: Page, productName: string, eaches: number): Promise<void> {
+  await searchAndOpen(page, productName, productName);
+  await page.getByRole("tab", { name: "Set exact count (=)" }).click();
+  await eachesField(page).fill(String(eaches));
+  await quantitySave(page).click();
+  await expect(page.getByRole("heading", { level: 1, name: productName, exact: true })).toBeHidden();
+}
+
+async function eachDeltas(db: Db, countId: number): Promise<number[]> {
+  const [line] = await db.countLines(countId);
+  return (await db.ledgerRows({ countLineId: line.id })).map((row) => row.sealedEachDelta);
+}
+
+test("a correction cannot overtake a queued write", async ({ page, db, problems }) => {
+  problems.allow(/ERR_CONNECTION_FAILED|Failed to fetch/); // the aborted writes, on purpose
+  const countId = await startCount(page);
+  await pickLocation(page, "Storeroom");
+  await addEaches(page, "Jameson", "Jameson", 3);
+
+  await blockCountWrites(page);
+  await addEaches(page, "Jameson", "Jameson", 2);
+  await expect(legCard(page, "Jameson")).toContainText("5 ea");
+  await expect(syncChip(page)).toHaveText("1 pending");
+
+  // The network is back but nothing announced it, and the correction is made
+  // before any retry has run. Sent straight past the queue it lands first, the
+  // +2 replays on top, and the database holds 6 while the screen says 4.
+  await unblockCountWrites(page);
+  await setEaches(page, "Jameson", 4);
+
+  await expect(syncChip(page)).toHaveText("Synced");
+  await expect(legCard(page, "Jameson")).toContainText("4 ea");
+  expect((await db.countLines(countId))[0].sealedEachQty).toBe(4);
+  expect(await eachDeltas(db, countId)).toEqual([3, 2, -1]);
+});
+
+test("a queued write retries without an online event", async ({ page, db, problems }) => {
+  problems.allow(/ERR_CONNECTION_FAILED|Failed to fetch/);
+  const countId = await startCount(page);
+  await pickLocation(page, "Storeroom");
+  await addEaches(page, "Jameson", "Jameson", 3);
+
+  await blockCountWrites(page);
+  await addEaches(page, "Jameson", "Jameson", 2);
+  await expect(syncChip(page)).toHaveText("1 pending");
+  expect((await db.countLines(countId))[0].sealedEachQty).toBe(3);
+
+  // No reload, no navigation, no event: only the retry timer can drain this.
+  await unblockCountWrites(page);
+  await expect(syncChip(page)).toHaveText("Synced", { timeout: 25_000 });
+  expect((await db.countLines(countId))[0].sealedEachQty).toBe(5);
+  expect(await eachDeltas(db, countId)).toEqual([3, 2]);
+});
+
+test("a write made while the queue is blocked waits behind it", async ({ page, db, problems }) => {
+  problems.allow(/ERR_CONNECTION_FAILED|Failed to fetch/);
+  const countId = await startCount(page);
+  await pickLocation(page, "Storeroom");
+  await addEaches(page, "Jameson", "Jameson", 3);
+
+  await blockCountWrites(page);
+  await addEaches(page, "Jameson", "Jameson", 2);
+  await setEaches(page, "Jameson", 4);
+  await expect(syncChip(page)).toHaveText("2 pending");
+  expect((await db.countLines(countId))[0].sealedEachQty).toBe(3);
+
+  await unblockCountWrites(page);
+  await expect(syncChip(page)).toHaveText("Synced", { timeout: 25_000 });
+  expect((await db.countLines(countId))[0].sealedEachQty).toBe(4);
+  expect(await eachDeltas(db, countId)).toEqual([3, 2, -1]);
 });

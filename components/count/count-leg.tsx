@@ -63,6 +63,8 @@ interface RapidEvent {
 }
 
 const RAPID_LOG_LIMIT = 4;
+/** How often queued writes are retried while any are waiting. */
+const QUEUE_RETRY_MS = 15_000;
 
 const OFFLINE_LOOKUP_MESSAGE =
   "Offline — couldn't look that up, and nothing was recorded for it. " +
@@ -185,6 +187,21 @@ export function CountLeg({
     setPendingWrites((await pendingFor(countId)).length);
   }, [countId]);
 
+  // Everything that sends count writes runs one at a time through `exclusive`.
+  // Replay order is only real if nothing can overtake: a SET sent straight past
+  // a queued ADD lands first, then the ADD replays on top of the correction and
+  // the screen and the database disagree with nothing looking wrong.
+  const sendTailRef = useRef<Promise<unknown>>(Promise.resolve());
+  const flushWaitingRef = useRef(false);
+  // The write `runWrite` is sending itself. It is in the queue too, for
+  // durability, so `flush` has to know to leave it alone.
+  const sendingIdRef = useRef<string | null>(null);
+  const exclusive = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
+    const run = sendTailRef.current.then(task);
+    sendTailRef.current = run.catch(() => undefined);
+    return run;
+  }, []);
+
   /** Send one queued write, reusing its stored id. Returns false if the network is still down. */
   const sendQueued = useCallback(async (write: QueuedWrite): Promise<boolean> => {
     const body = { ...write.payload, clientLineId: write.id };
@@ -243,23 +260,41 @@ export function CountLeg({
    * burning through the queue would just mark every write failed.
    */
   const flush = useCallback(async () => {
-    for (const write of await pendingFor(countId)) {
-      const reachable = await sendQueued(write);
-      if (!reachable) break;
-    }
+    // One waiting drain is enough: it reads the queue when its turn comes, so a
+    // second would only resend. Without this, retry ticks pile up behind a slow
+    // request.
+    if (flushWaitingRef.current) return;
+    flushWaitingRef.current = true;
+    await exclusive(async () => {
+      flushWaitingRef.current = false;
+      for (const write of await pendingFor(countId)) {
+        // `runWrite` is sending this one, and everything after it is newer.
+        if (write.id === sendingIdRef.current) break;
+        const reachable = await sendQueued(write);
+        if (!reachable) break;
+      }
+    });
     await refreshPending();
-  }, [countId, sendQueued, refreshPending]);
+  }, [countId, exclusive, sendQueued, refreshPending]);
+
+  // Retry on a timer while anything is queued. The `online` event is not
+  // enough: a phone that falls from Wi-Fi to mobile data never goes offline as
+  // far as the browser knows, so `online` never fires and a queued write would
+  // wait until the screen happened to remount.
+  const hasPending = pendingWrites > 0;
+  useEffect(() => {
+    if (!hasPending) return;
+    const timer = setInterval(() => {
+      if (navigator.onLine !== false) void flush();
+    }, QUEUE_RETRY_MS);
+    return () => clearInterval(timer);
+  }, [hasPending, flush]);
 
   // Drain on mount — a leg reopened after a dropped connection must actually
   // send what is still waiting, not merely display a count of it — and again
   // whenever the browser says the network is back.
   useEffect(() => {
-    // `flush` is async: it talks to IndexedDB and the network and only
-    // touches state in a promise continuation, which the rule's static
-    // analysis can't see. This is external-system synchronization — the
-    // carve-out the rule's own docs describe — not derived state. The queue
-    // must actually be drained on mount, not merely counted.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // The queue must actually be drained on mount, not merely counted.
     void flush();
     const onOnline = () => void flush();
     window.addEventListener("online", onOnline);
@@ -309,6 +344,7 @@ export function CountLeg({
         return optimistic(prev);
       });
 
+      sendingIdRef.current = id;
       await enqueue({
         id,
         kind,
@@ -323,14 +359,26 @@ export function CountLeg({
       const body = { ...payload, clientLineId: id };
       let result: Awaited<ReturnType<typeof incrementCountLineAction>>;
       try {
-        result =
-          kind === "scan"
-            ? await scanCountLineAction(body)
-            : kind === "increment"
-              ? await incrementCountLineAction(body)
-              : kind === "fills"
-                ? await editCountLineFillsAction(body)
-                : await setCountLineQuantitiesAction(body);
+        result = await exclusive(async () => {
+          // Older queued writes go first, or this one overtakes them. If they
+          // still can't get through, neither can this: it waits behind them.
+          for (const older of await pendingFor(countId)) {
+            if (older.id === id) continue;
+            if (!(await sendQueued(older))) throw new Error("Queue still blocked");
+          }
+          const sent =
+            kind === "scan"
+              ? await scanCountLineAction(body)
+              : kind === "increment"
+                ? await incrementCountLineAction(body)
+                : kind === "fills"
+                  ? await editCountLineFillsAction(body)
+                  : await setCountLineQuantitiesAction(body);
+          // Answered either way, so it leaves the queue. Inside the lock so
+          // `flush` can never see it after the server has already replied.
+          await dequeue(id);
+          return sent;
+        });
       } catch {
         // The fetch threw — offline, which is the case this queue exists for.
         // The write is already durably enqueued under `id`, the optimistic row
@@ -344,10 +392,11 @@ export function CountLeg({
         await refreshPending();
         if (!holdBusyOnOk) setBusy(false);
         return true;
+      } finally {
+        sendingIdRef.current = null;
       }
 
       if (result.ok) {
-        await dequeue(id);
         // Adopt the server's line id and authoritative quantities. The server
         // stays the source of truth; the optimistic row was only a placeholder.
         const row = result.data;
@@ -391,7 +440,6 @@ export function CountLeg({
           }
           return next;
         });
-        await dequeue(id);
         setError(result.error.message);
       }
 
@@ -406,7 +454,7 @@ export function CountLeg({
       if (!(holdBusyOnOk && result.ok)) setBusy(false);
       return result.ok;
     },
-    [countId, refreshPending, canSeeCost],
+    [countId, refreshPending, canSeeCost, exclusive, sendQueued],
   );
 
   async function onBarcode(barcode: string, format: string | null) {
