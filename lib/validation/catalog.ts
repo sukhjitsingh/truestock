@@ -181,6 +181,9 @@ export type ProductSearchInput = z.infer<typeof productSearchSchema>;
 
 export const resolveBarcodeSchema = z.object({
   barcode: barcodeStringSchema,
+  // The detector's symbology. Loose on purpose: an older phone bundle or an
+  // unlisted name must not get a scan rejected. lib/barcode.ts narrows it.
+  format: z.string().trim().max(20).optional(),
 });
 
 /**

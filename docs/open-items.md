@@ -1283,3 +1283,91 @@ None of this is a hazard, and none of it is a data-correctness risk — it is a
 migration that reached four of seven surfaces. Recorded so it is not mistaken for
 a decision. The whole-row-click hazard, which *was* a hazard, is gone everywhere:
 no `<tr>` in the codebase carries an `onClick` (item #27, closed 2026-08-12).
+
+## 31. Changing a product's size rewrites history and re-points its barcodes
+
+**Trigger: before the back office is used to correct a size on any product
+that has been counted or has a barcode — in practice, the first size edit
+after go-live. Deferred by the owner on 2026-11-05 (barcode integrity, "Fix 3").**
+
+Found while reproducing the owner's barcode bug. Two silent effects of editing
+`size_ml` in the back office:
+
+- **Every barcode on that product now means the new size.** A 750 ml bottle's
+  barcode on a product edited to 1.75 L scans as a 1.75 L from then on.
+- **Past counts display the new size.** Invariant 2 snapshots cost and case size
+  onto `count_line`, but not `size_ml`; count screens read the product's
+  *current* size (`lib/domain/counts.ts`, the `sizeMl: product.sizeMl` mapping
+  around line 1123). So a historical count starts showing "Smirnoff 1.75 L" for a
+  bottle that was a 750. Valuation does not use `size_ml`, so totals are unchanged
+  — the display and the barcode's meaning are what move.
+
+Options weighed (docs/plans/barcode-integrity, 2026-11-05 discussion):
+**A** — size editable until the product appears on a count or holds a barcode,
+then locked with an "Add a different size" action (recommended, no schema
+change; matches AGENTS.md's "a handle needs its own row"); **B** — allow, but
+state the consequence live as the quantity SET button does; **C** — snapshot
+`size_ml` onto `count_line` (migration, widens invariant 2).
+
+## 32. Local databases enrolled before barcode integrity hold raw barcodes
+
+**Trigger: the first time the owner's local Docker stack runs code from the
+barcode-integrity branch.** Production is unaffected — it holds no barcodes.
+
+Since docs/plans/barcode-integrity (2026-11-05) every barcode is stored and
+looked up in the 14-digit standard form (`lib/barcode.ts`). Rows written before
+that are stored as they were scanned, so a 12- or 13-digit row no longer
+resolves: scanning that bottle reopens "Which bottle is this?", and linking it
+again adds a second, standard-form row beside the stale one. Harmless for
+counting, untidy for the catalog. **Decided: no conversion script** (owner,
+during Gate 2 — there is no production data to convert). **Run
+`bun run docker:reset` once after merging.** Close this item when that has
+been done.
+
+## 33. ~~Some JSX text renders two words glued together~~ — CLOSED 2026-11-06
+
+**Closed.** The rule, established by compiling controlled snippets with
+Next's own SWC `transform`: a JSX text run loses its **leading** space when it
+follows a tag or `{expression}`, spans more than one source line, and contains
+an HTML entity (`&rsquo;`, `&middot;`, …). Single-line runs, runs without an
+entity, and a literal `’` are unaffected; trailing spaces are kept. A scan of
+the compiled output found 54 such runs, of which exactly one was broken — the
+reorder sentence below — now fixed with `{" "}` and confirmed in a browser
+("…the most recent closed count, and there isn't one"). Guarded by
+`tests/jsx-entity-spacing.test.ts`, which parses every `.tsx` file and fails on
+that shape; mutation-checked against both the tag and the `{expression}` form.
+The original entry follows.
+
+
+**Trigger: now, cheaply — it is live on `/office/reorder` whenever no count has
+closed, which is the owner's current state.** Suggested as a separate task on
+2026-11-05 with the evidence.
+
+The build drops the space after a closing tag or `{expression}` in some text
+runs: the reorder page compiles to `"closed"}),"count, and there isn’t one…"`
+and reads **"closedcount, and there isn't one"**. Two instances in the barcode
+screens were fixed with an explicit `{" "}`. Not every such run is affected —
+`{x} &middot; {y}` compiles correctly and several multi-line sentences keep
+their space — so the exact rule is not yet established; find it from the
+compiled output, then fix every instance and verify in a browser.
+
+## 34. The built-in barcode reader branch has never run
+
+**Trigger: the next time the counting app is opened on a phone (Phase 2.9's
+walk), or in Chrome on a Mac.**
+
+Since 2026-11-05 the scanner uses the phone's built-in `BarcodeDetector` only if
+`getSupportedFormats()` includes UPC-A, UPC-E, EAN-13 and EAN-8, and otherwise
+the app's own reader, whose engine the app now serves itself
+(`lib/barcode-reader.ts`, `scripts/copy-zxing-wasm.mjs`). The app-reader branch
+is browser-verified with a fake camera; the built-in branch cannot be exercised
+in headless Linux Chromium, which has no `BarcodeDetector`. Open
+`/count/preflight` on the handset: it now reports "Built-in present" or
+"App reader". Scan one bottle and confirm it reads.
+
+Related, and worth settling on the same phone: STATE.md's 2026-08-12 entry
+records a polyfill decode **under the production CSP**. Before 2026-11-05 the
+polyfill fetched its engine from `fastly.jsdelivr.net`, which that CSP refuses —
+reproduced in a browser. So either that handset used a built-in reader after
+all, or the engine came from somewhere other than the CDN. Preflight now answers
+which.

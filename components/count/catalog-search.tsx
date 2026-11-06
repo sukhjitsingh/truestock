@@ -6,6 +6,7 @@ import { searchProductsAction } from "@/app/actions/catalog";
 import type { ProductSummary } from "@/lib/domain/catalog";
 import { CardStack, Card } from "@/components/ui/card";
 import { StatusPill } from "@/components/ui/status-pill";
+import { formatProductSize } from "@/lib/bottle-sizes";
 
 export function CountCatalogSearch() {
   const [query, setQuery] = useState("");
@@ -72,7 +73,7 @@ export function CountCatalogSearch() {
               <Card key={product.id}>
                 <p className="text-row-title text-card-foreground">{product.name}</p>
                 <p className="text-row-subtitle text-muted-foreground">
-                  {product.unitType === "keg" ? "Keg" : `${product.sizeMl}ml`} &middot;{" "}
+                  {formatProductSize(product)} &middot;{" "}
                   {product.category}
                   {product.brand ? ` · ${product.brand}` : ""}
                 </p>

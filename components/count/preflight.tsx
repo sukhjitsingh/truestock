@@ -69,12 +69,12 @@ function computeChecks(): Check[] {
           : "navigator.mediaDevices is undefined. This is caused by the insecure context above, not by the camera. Scanning will be unavailable; search still works.",
       },
       {
-        label: "Barcode decoder",
+        label: "Barcode reader",
         tone: "success",
-        status: nativeDetector ? "Native" : "WASM polyfill",
+        status: nativeDetector ? "Built-in present" : "App reader",
         detail: nativeDetector
-          ? "The native BarcodeDetector is available and will be used."
-          : "No native BarcodeDetector, so the ZXing WASM polyfill loads on first scan. It works, but the first scan is slower — expect that and do not read it as a stall.",
+          ? "This browser has a built-in barcode reader. The scanner uses it if it can read UPC and EAN codes, and otherwise switches to the app's own reader — it checks when the camera opens."
+          : "No built-in barcode reader, so the app's own reader loads on first scan. It works, but the first scan is slower — expect that and do not read it as a stall.",
       },
       {
         label: "Write ids",

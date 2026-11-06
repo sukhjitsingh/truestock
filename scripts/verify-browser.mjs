@@ -26,6 +26,15 @@
 import { execSync } from "node:child_process";
 import mysql from "mysql2/promise";
 import { chromium } from "playwright";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ean13Modules, writeBarcodeY4m } from "./lib/fake-barcode-camera.mjs";
+
+/** A valid UPC-A (check digit verified) used by the fake camera. */
+const FAKE_CAMERA_UPC_A = "082000000013";
+/** How that code is stored: as the reader reports it today (EAN-13), and in
+ *  the 14-digit standard form from slice 7 of docs/plans/barcode-integrity. */
+const FAKE_CAMERA_STORED_FORMS = ["0082000000013", "00082000000013"];
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const EMAIL = process.env.CHECK_EMAIL;
@@ -462,6 +471,49 @@ try {
     `tile=${shown} db=${activeProducts}`,
   );
 
+  // ---- barcode-integrity slice 2: one size spelling, back office included --
+  // Every size comes from formatProductSize (lib/bottle-sizes.ts). The old
+  // inline `${sizeMl}ml` printed "750ml" with no space and "Keg" with no size.
+  {
+    await page.goto(`${BASE}/office/catalog?q=sixtel`, { waitUntil: "networkidle" });
+    await waitForHydration(page, "table");
+    const kegCells = await page.locator("table tbody").innerText();
+    record(
+      "the back-office catalog names keg sizes the shared way",
+      /Sixtel keg/.test(kegCells) && !/\bKeg\b/.test(kegCells),
+      (kegCells.match(/Sixtel keg/g) ?? []).length + " rows say \"Sixtel keg\"",
+    );
+
+    await page.goto(`${BASE}/office/catalog`, { waitUntil: "networkidle" });
+    await waitForHydration(page, "table");
+    const cells = await page.locator("table tbody").innerText();
+    const oldSpelling = cells.match(/\b\d+ml\b/g) ?? [];
+    record(
+      "the back-office catalog prints bottle sizes the shared way (\"750 ml\", never \"750ml\")",
+      oldSpelling.length === 0 && /\b\d+ ml\b|\b\d+(\.\d+)? L\b/.test(cells),
+      oldSpelling.length ? `old spelling still shown: ${oldSpelling.slice(0, 3).join(", ")}` : "shared spelling on every row shown",
+    );
+  }
+
+  // ---- open-item #33: no words glued together by the build ------------------
+  // SWC drops the leading space of a multi-line JSX text run that contains an
+  // HTML entity (tests/jsx-entity-spacing.test.ts). This sentence shipped as
+  // "closedcount, and there isn't one" and shows whenever no count has closed.
+  {
+    await page.goto(`${BASE}/office/reorder`, { waitUntil: "networkidle" });
+    const text = (await page.locator("main").innerText()).replace(/\s+/g, " ");
+    if (!/on-hand comes from the most recent/.test(text)) {
+      skip("the reorder page's no-closed-count sentence reads correctly", "a count has closed, so that sentence is not shown");
+      skipped.push("open item 33 — reorder no-closed-count sentence: only shown before any count closes");
+    } else {
+      record(
+        "the reorder page's no-closed-count sentence reads correctly",
+        /most recent closed count, and there isn.t one/i.test(text) && !/closedcount/i.test(text),
+        (text.match(/most recent .{0,40}/i) ?? [""])[0],
+      );
+    }
+  }
+
   // ---- slice 4: per-cell cost editing, and no navigation per save --------
   await page.goto(`${BASE}/office/catalog`, { waitUntil: "networkidle" });
   await waitForHydration(page, "table");
@@ -888,6 +940,320 @@ try {
   record("run completed without throwing", false, String(err).split("\n")[0]);
   await page.screenshot({ path: "/var/tmp/truestock-failure.png" }).catch(() => {});
   await browser.close();
+}
+
+// ---- the scanner, through a fake camera ------------------------------------
+// docs/plans/barcode-integrity, slice 1. The enroll screens are reachable only
+// after a real scan, so Chromium is given a fake camera playing a video of a
+// valid barcode (scripts/lib/fake-barcode-camera.mjs) and the app's own reader
+// decodes it.
+//
+// The built-in BarcodeDetector is DELETED before any page script runs, so the
+// app-provided reader is what gets tested on every machine. That is the path
+// that was broken: its engine was fetched from a CDN the CSP refuses, and on
+// this owner's handset (no built-in reader) scanning could not work. Chrome on
+// a Mac has a built-in reader and would otherwise test the other path.
+{
+  const video = join(tmpdir(), "truestock-fake-camera-upca.y4m");
+  writeBarcodeY4m(video, ean13Modules(FAKE_CAMERA_UPC_A));
+
+  let scanCountId = null;
+  let ownerOrgId = null;
+  const fixtureBarcodeIds = [];
+  const createdProductIds = [];
+  const camBrowser = await chromium.launch({
+    channel: "chrome",
+    args: [
+      "--use-fake-ui-for-media-stream",
+      "--use-fake-device-for-media-stream",
+      `--use-file-for-fake-video-capture=${video}`,
+    ],
+  });
+  try {
+    // A throwaway in-progress count, so the scan page has something to write
+    // into. Removed below — a fixture, not the app deleting a count.
+    const [[signedInUser]] = await sql.execute("SELECT id, organization_id FROM `user` WHERE email = ?", [EMAIL]);
+    ownerOrgId = signedInUser.organization_id;
+    const [ins] = await sql.execute(
+      "INSERT INTO `count` (organization_id, type, status, opened_by, notes) VALUES (?, 'spot', 'in_progress', ?, 'verify-browser fake camera')",
+      [signedInUser.organization_id, signedInUser.id],
+    );
+    scanCountId = ins.insertId;
+
+    const camContext = await camBrowser.newContext({
+      viewport: { width: 390, height: 844 },
+      ignoreHTTPSErrors: true,
+      permissions: ["camera"],
+    });
+    await camContext.addInitScript(() => {
+      delete window.BarcodeDetector;
+      document.addEventListener("securitypolicyviolation", (e) => {
+        (window.__csp ??= []).push(`${e.violatedDirective} blocked ${e.blockedURI}`);
+      });
+    });
+    const cam = await camContext.newPage();
+    const actionBodies = [];
+    cam.on("request", (r) => {
+      if (r.method() === "POST") actionBodies.push(r.postData() ?? "");
+    });
+
+    await cam.goto(`${BASE}/login`, { waitUntil: "domcontentloaded" });
+    await waitForHydration(cam, "form");
+    await cam.fill('input[type="email"]', EMAIL);
+    await cam.fill('input[type="password"]', PASSWORD);
+    await Promise.all([
+      cam.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 20000 }),
+      cam.click('button[type="submit"]'),
+    ]);
+
+    await cam.goto(`${BASE}/count/${scanCountId}/scan`, { waitUntil: "networkidle" });
+    const picker = cam.getByRole("heading", { name: /which section/i });
+    await picker.waitFor({ timeout: 15000 });
+    await cam.locator("button", { hasText: /fill levels|quantities only/i }).first().click();
+    await cam.getByRole("button", { name: "Scan barcode" }).first().click();
+
+    const reached = await cam
+      .getByRole("heading", { name: /which bottle is this/i })
+      .waitFor({ timeout: 20000 })
+      .then(() => true, () => false);
+    record(
+      "with no built-in reader, the app's own reader decodes a real barcode from the camera",
+      reached,
+      reached ? "fake camera → app reader → \"Which bottle is this?\"" : "never left the scanner",
+    );
+
+    const sent = actionBodies.find((b) => b.includes('"barcode"') && b.includes('"format"')) ?? "";
+    record(
+      "the barcode's format travels to the server with it",
+      /"format":"(ean_13|upc_a)"/.test(sent),
+      sent ? sent.slice(0, 120) : "no server action carried a barcode and a format",
+    );
+
+    const camCsp = await cam.evaluate(() => window.__csp ?? []);
+    record(
+      "the app reader loads under the production CSP (no CDN fetch refused)",
+      camCsp.length === 0,
+      camCsp.join("; ") || "none",
+    );
+    // ---- Fix 2 (slice 4): picking a product opens a size confirmation; nothing is
+    // linked until "Link and count". Then Fix 4 (slice 3) through that screen.
+    if (reached) {
+      const [[jameson]] = await sql.execute(
+        "SELECT id FROM product WHERE organization_id = ? AND name = 'Jameson' AND size_ml = 750 LIMIT 1",
+        [ownerOrgId],
+      );
+      const [[smirnoff]] = await sql.execute(
+        "SELECT id FROM product WHERE organization_id = ? AND name = 'Smirnoff' AND size_ml = 750 AND unit_type = 'bottle' LIMIT 1",
+        [ownerOrgId],
+      );
+      if (!jameson || !smirnoff) {
+        record("enroll-flow fixtures present", false, "need 'Jameson' 750 ml and 'Smirnoff' 750 ml in the catalog");
+      } else {
+        const barcodeRowsFor = async (productId) =>
+          (await sql.execute("SELECT id FROM product_barcode WHERE product_id = ?", [productId]))[0];
+        const pickJameson = async () => {
+          await cam.locator("#link-search").fill("Jameson");
+          await cam.getByRole("button", { name: /^Jameson\b/ }).first().click();
+          await cam.getByRole("heading", { name: /is this the bottle in your hand/i }).waitFor({ timeout: 10000 });
+        };
+
+        // 1. A pick opens the confirmation and writes nothing.
+        await pickJameson();
+        record(
+          "picking a search result opens the size confirmation and links nothing yet",
+          (await barcodeRowsFor(jameson.id)).length === 0,
+          "confirm screen shown; no barcode row for Jameson",
+        );
+
+        // 2. The size is the largest text on the screen.
+        const sizes = await cam.evaluate(() => {
+          const size = document.querySelector('[data-testid="confirm-size"]');
+          const visible = [...document.querySelectorAll("body *")].filter(
+            (el) => el.childElementCount === 0 && el.textContent.trim() && el.getClientRects().length > 0,
+          );
+          const px = (el) => parseFloat(getComputedStyle(el).fontSize);
+          return { text: size?.textContent ?? "", size: size ? px(size) : 0, max: Math.max(...visible.map(px)) };
+        });
+        record(
+          "the confirmation shows the size as the largest text",
+          sizes.text === "750 ml" && sizes.size >= sizes.max && sizes.size > 0,
+          `"${sizes.text}" at ${sizes.size}px; largest on screen ${sizes.max}px`,
+        );
+
+        // 3. Back keeps the search.
+        await cam.getByRole("button", { name: /back to results/i }).click();
+        const kept = await cam.locator("#link-search").inputValue();
+        record("\"Back to results\" keeps the search", kept === "Jameson", `search box reads "${kept}"`);
+
+        // 4. "Link and count" links, then counts.
+        await cam.getByRole("button", { name: /^Jameson\b/ }).first().click();
+        await cam.getByRole("button", { name: /link and count/i }).click();
+        const linkedTo = await cam
+          .getByRole("heading", { name: "Jameson", exact: true })
+          .waitFor({ timeout: 10000 })
+          .then(() => true, () => false);
+        const linkedRows = await barcodeRowsFor(jameson.id);
+        record(
+          "\"Link and count\" links the barcode and opens that product's entry screen",
+          linkedTo && linkedRows.length === 1,
+          `${linkedRows.length} barcode row(s) on Jameson; entry screen ${linkedTo ? "shown" : "NOT shown"}`,
+        );
+        for (const r of linkedRows) await sql.execute("DELETE FROM product_barcode WHERE id = ?", [r.id]);
+
+        // 5. Scan again — the code is unknown again — and meet Fix 4's refusal.
+        // Another "phone" links the code to Smirnoff while this one is on the
+        // confirmation. The fixture holds it as scanned AND in the 14-digit
+        // standard form, so this means the same thing after slice 7.
+        await cam.getByRole("button", { name: /^Back to / }).first().click();
+        await cam.getByRole("button", { name: "Scan barcode" }).first().click();
+        await cam.getByRole("heading", { name: /which bottle is this/i }).waitFor({ timeout: 20000 });
+        await pickJameson();
+        for (const code of FAKE_CAMERA_STORED_FORMS) {
+          const [r] = await sql.execute(
+            "INSERT INTO product_barcode (organization_id, product_id, barcode, pack_level, is_primary) VALUES (?, ?, ?, 'each', 0)",
+            [ownerOrgId, smirnoff.id, code],
+          );
+          fixtureBarcodeIds.push(r.insertId);
+        }
+        await cam.getByRole("button", { name: /link and count/i }).click();
+        // Filtered by text: Next.js renders its own (empty) route-announcer
+        // with role="alert", so "the first alert" is not this message.
+        const alert = await cam
+          .getByRole("alert")
+          .filter({ hasText: /already belongs/ })
+          .first()
+          .innerText({ timeout: 10000 })
+          .catch(() => "");
+        record(
+          "the refusal names the owner and its size",
+          alert.includes("This barcode already belongs to Smirnoff 750 ml."),
+          alert.replace(/\s+/g, " ").slice(0, 120) || "(no alert shown)",
+        );
+        const countOwner = cam.getByRole("button", { name: "Count Smirnoff 750 ml" });
+        // The button appears after a follow-up lookup, so wait for it.
+        const offered = await countOwner.first().waitFor({ timeout: 10000 }).then(() => true, () => false);
+        if (offered) await countOwner.first().click();
+        const landed = offered
+          ? await cam.getByRole("heading", { name: "Smirnoff", exact: true }).waitFor({ timeout: 10000 }).then(() => true, () => false)
+          : false;
+        record(
+          "\"Count Smirnoff 750 ml\" opens the owner's entry screen",
+          offered && landed,
+          !offered ? "button not offered" : landed ? "entry screen for Smirnoff" : "button did not open the entry screen",
+        );
+
+        // 6. Fix 2 (slice 5): "It's a different size". Clear the other-phone
+        // fixture so the code is unknown again, scan, pick Jameson, and ask for
+        // a different size. Prefilled name + category, NO size chosen, Save
+        // disabled, and the size just ruled out cannot be picked.
+        for (const id of fixtureBarcodeIds.splice(0)) {
+          await sql.execute("DELETE FROM product_barcode WHERE id = ?", [id]);
+        }
+        const [existingSizes] = await sql.execute(
+          "SELECT size_ml FROM product WHERE organization_id = ? AND name = 'Jameson'",
+          [ownerOrgId],
+        );
+        const taken = new Set(existingSizes.map((r) => Number(r.size_ml)));
+        const newMl = [200, 375, 1000, 1750, 500, 700, 50].find((ml) => !taken.has(ml));
+
+        await cam.getByRole("button", { name: /^Back to / }).first().click();
+        await cam.getByRole("button", { name: "Scan barcode" }).first().click();
+        await cam.getByRole("heading", { name: /which bottle is this/i }).waitFor({ timeout: 20000 });
+        await pickJameson();
+        await cam.getByRole("button", { name: /it.s a different size/i }).click();
+        await cam.getByRole("heading", { name: /add a different size/i }).waitFor({ timeout: 10000 });
+
+        const form = await cam.evaluate(() => {
+          const size = document.querySelector("#p-size");
+          return {
+            name: document.querySelector("#p-name")?.value,
+            category: document.querySelector("#p-category")?.value,
+            size: size?.value,
+            sevenFiftyDisabled: [...(size?.options ?? [])].some((o) => o.value === "750" && o.disabled),
+          };
+        });
+        const saveButton = cam.locator('form button[type="submit"]');
+        const saveDisabledBefore = await saveButton.isDisabled();
+        record(
+          "\"It's a different size\" prefills, preselects no size, and rules out the size just rejected",
+          form.name === "Jameson" && form.category === "Spirits" && form.size === "" &&
+            form.sevenFiftyDisabled && saveDisabledBefore,
+          JSON.stringify({ ...form, saveDisabled: saveDisabledBefore }),
+        );
+
+        if (newMl == null) {
+          record("a different size can be saved and counted", false, "Jameson already exists in every spirits size — no free size to test with");
+        } else {
+          await cam.locator("#p-size").selectOption(String(newMl));
+          const label = (await saveButton.innerText()).replace(/\s+/g, " ").trim();
+          await saveButton.click();
+          const counted = await cam
+            .getByRole("heading", { name: "Jameson", exact: true })
+            .waitFor({ timeout: 10000 })
+            .then(() => true, () => false);
+          const [[made]] = await sql.execute(
+            `SELECT p.id, pb.pack_level FROM product p
+               JOIN product_barcode pb ON pb.product_id = p.id
+              WHERE p.organization_id = ? AND p.name = 'Jameson' AND p.size_ml = ?`,
+            [ownerOrgId, newMl],
+          );
+          if (made) createdProductIds.push(made.id);
+          record(
+            "a different size can be saved and counted",
+            counted && made?.pack_level === "each" && new RegExp(`^save ${newMl < 1000 ? `${newMl} ml` : ""}`, "i").test(label),
+            `button "${label}"; ${made ? `Jameson ${newMl} ml created, barcode as ${made.pack_level}` : "no product created"}; entry screen ${counted ? "shown" : "NOT shown"}`,
+          );
+        }
+
+        // 7. Fix 1 (slice 7): a code stored the way a UPC-A link stores it —
+        // the 14-digit standard form, format upc_a — must be recognised when
+        // the camera reads the EAN-13 form ("0082000000013"), going straight to
+        // counting instead of asking "which bottle is this?" again. Before Fix 1
+        // the lookup used the raw reading and missed it: the owner's bug.
+        for (const id of createdProductIds) {
+          await sql.execute("DELETE FROM product_barcode WHERE product_id = ?", [id]);
+        }
+        const [r] = await sql.execute(
+          "INSERT INTO product_barcode (organization_id, product_id, barcode, format, pack_level, is_primary) VALUES (?, ?, ?, 'upc_a', 'each', 1)",
+          [ownerOrgId, smirnoff.id, FAKE_CAMERA_STORED_FORMS[1]],
+        );
+        fixtureBarcodeIds.push(r.insertId);
+        await cam.getByRole("button", { name: /^Back to / }).first().click();
+        await cam.getByRole("button", { name: "Scan barcode" }).first().click();
+        const straight = await Promise.race([
+          cam.getByRole("heading", { name: "Smirnoff", exact: true }).waitFor({ timeout: 20000 }).then(() => "counting"),
+          cam.getByRole("heading", { name: /which bottle is this/i }).waitFor({ timeout: 20000 }).then(() => "asked again"),
+        ]).catch(() => "nothing");
+        record(
+          "a bottle stored as UPC-A is recognised when the camera reads it as EAN-13",
+          straight === "counting",
+          `camera read 0082000000013 → ${straight === "counting" ? "Smirnoff's entry screen" : straight}`,
+        );
+      }
+    }
+
+    await camContext.close();
+  } catch (err) {
+    record("fake-camera scan ran without throwing", false, String(err).split("\n")[0]);
+  } finally {
+    await camBrowser.close();
+    for (const id of fixtureBarcodeIds) {
+      await sql.execute("DELETE FROM product_barcode WHERE id = ?", [id]);
+    }
+    // A product this run created through the app is removed as fixture
+    // teardown, the same way the throwaway locations are — the app itself
+    // never hard-deletes a product (invariant 6). Nothing references it: no
+    // count line was written.
+    for (const id of createdProductIds) {
+      await sql.execute("DELETE FROM product_barcode WHERE product_id = ?", [id]);
+      await sql.execute("DELETE FROM product WHERE id = ?", [id]);
+    }
+    if (scanCountId != null) {
+      await sql.execute("DELETE FROM count_line_write WHERE count_line_id IN (SELECT id FROM count_line WHERE count_id = ?)", [scanCountId]);
+      await sql.execute("DELETE FROM count_line WHERE count_id = ?", [scanCountId]);
+      await sql.execute("DELETE FROM `count` WHERE id = ?", [scanCountId]);
+    }
+  }
 }
 
 // ---- put the dev data back ------------------------------------------------

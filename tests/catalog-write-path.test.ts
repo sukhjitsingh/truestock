@@ -19,14 +19,15 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test";
 import { and, eq, isNull } from "drizzle-orm";
 import { db, closePool } from "@/db";
-import { product, productBarcode, productPar } from "@/db/schema";
+import { product, productBarcode, productPar, countLine } from "@/db/schema";
 import {
   linkBarcodeToProduct,
+  createProduct,
   resolveBarcode,
   updateProduct,
   searchProducts,
 } from "@/lib/domain/catalog";
-import { openCount, incrementCountLine, submitCount, reviewCount, closeCount } from "@/lib/domain/counts";
+import { openCount, incrementCountLine, scanCountLine, submitCount, reviewCount, closeCount } from "@/lib/domain/counts";
 import { reorderList } from "@/lib/domain/reports";
 import { ConflictError, NotFoundError } from "@/lib/domain/errors";
 import {
@@ -114,7 +115,8 @@ describe("linking a barcode to an existing product", () => {
     // Derived server-side, never taken from the client — two primaries on one
     // product is a state no constraint forbids and nothing would notice.
     expect(rows.filter((r) => r.isPrimary)).toHaveLength(1);
-    expect(rows.find((r) => r.barcode === "082000774006")!.isPrimary).toBe(true);
+    // Stored in the 14-digit standard form (docs/plans/barcode-integrity, Fix 1).
+    expect(rows.find((r) => r.barcode === "00082000774006")!.isPrimary).toBe(true);
   });
 
   test("pack_level is stored as given — a case carton is not an each", async () => {
@@ -467,5 +469,188 @@ describe("inline cost/case-size editing (per-cell updateProductAction)", () => {
 
     const [row] = await db.select().from(product).where(eq(product.id, fx.pricedProductId));
     expect(row.currentUnitCost).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// docs/plans/barcode-integrity, Fix 4 (slice 3): when a barcode is already
+// taken, the refusal names the owning product AND its size. "Already assigned
+// to Smirnoff" is useless the moment a second Smirnoff size exists — which is
+// exactly when this message matters.
+// ---------------------------------------------------------------------------
+
+describe("the 'already belongs to' refusal names the owner and its size", () => {
+  const CODE = "082000000013";
+
+  test("linking a taken barcode names the owner with its size", async () => {
+    await linkBarcodeToProduct(fx.owner, { productId: fx.pricedProductId, barcode: CODE, packLevel: "each" });
+    const err = await linkBarcodeToProduct(fx.owner, {
+      productId: fx.secondProductId,
+      barcode: CODE,
+      packLevel: "each",
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect(err.message).toBe("This barcode already belongs to Tito's Handmade Vodka 750 ml.");
+  });
+
+  test("creating a product with a taken barcode names the owner too, and creates nothing", async () => {
+    await linkBarcodeToProduct(fx.owner, { productId: fx.pricedProductId, barcode: CODE, packLevel: "each" });
+    const err = await createProduct(fx.owner, {
+      name: "Tito's Handmade Vodka",
+      category: "Spirits",
+      unitType: "bottle",
+      sizeMl: 1750,
+      barcode: { barcode: CODE, packLevel: "each" },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect(err.message).toBe("This barcode already belongs to Tito's Handmade Vodka 750 ml.");
+
+    // The product insert and the barcode insert share one transaction.
+    const created = await db
+      .select({ id: product.id })
+      .from(product)
+      .where(and(eq(product.organizationId, fx.organizationId), eq(product.sizeMl, 1750)));
+    expect(created).toHaveLength(0);
+  });
+
+  test("a keg owner is named by its keg size", async () => {
+    const keg = await createProduct(fx.owner, {
+      name: "Blue Moon Sixtel",
+      category: "Beer",
+      unitType: "keg",
+      sizeMl: 19533,
+      barcode: { barcode: CODE, packLevel: "each" },
+    });
+    expect(keg.id).toBeGreaterThan(0);
+    const err = await linkBarcodeToProduct(fx.owner, {
+      productId: fx.pricedProductId,
+      barcode: CODE,
+      packLevel: "each",
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect(err.message).toBe("This barcode already belongs to Blue Moon Sixtel (Sixtel keg).");
+  });
+
+  test("another tenant's barcode is never named — it is not a conflict at all", async () => {
+    // Invariant 9: the message must not leak another tenant's product name.
+    // Per-tenant uniqueness means the same code in another org simply succeeds.
+    await linkBarcodeToProduct(fx.otherOwner, { productId: fx.otherProductId, barcode: CODE, packLevel: "each" });
+    const ok = await linkBarcodeToProduct(fx.owner, { productId: fx.pricedProductId, barcode: CODE, packLevel: "each" });
+    expect(ok.id).toBe(fx.pricedProductId);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// docs/plans/barcode-integrity, Fix 1 (slices 6–7): one barcode, one product,
+// however the camera writes it down.
+//
+// The owner's bug (2026-11-05): one bottle's barcode ended up on two sizes.
+// The ZXing reader reports a printed UPC-A as its 13-digit EAN-13 form (seen
+// through the fake camera: 082000000013 → "0082000000013"), and the unique
+// index only refuses an IDENTICAL string — so a second reading looked like a
+// new barcode and could be linked to a different product.
+//
+// Test codes were computed with an independent check-digit / UPC-E
+// implementation, not with lib/barcode.ts:
+//   UPC-A 082000000013 · EAN-13 0082000000013 · UPC-E 08200103 (→ 082000000013)
+//   standard 14-digit form 00082000000013
+// ---------------------------------------------------------------------------
+
+describe("one barcode, one product, in any written form", () => {
+  const UPC_A = "082000000013";
+  const EAN_13 = "0082000000013";
+  const UPC_E = "08200103";
+  const GTIN_14 = "00082000000013";
+
+  const barcodeRows = (productId: number) =>
+    db.select().from(productBarcode).where(eq(productBarcode.productId, productId));
+
+  test("a bottle linked as UPC-A resolves when read as EAN-13", async () => {
+    await linkBarcodeToProduct(fx.owner, { productId: fx.pricedProductId, barcode: UPC_A, format: "upc_a", packLevel: "each" });
+    const found = await resolveBarcode(fx.owner, EAN_13, "ean_13");
+    expect(found?.product.id).toBe(fx.pricedProductId);
+  });
+
+  test("…and when read as UPC-E", async () => {
+    await linkBarcodeToProduct(fx.owner, { productId: fx.pricedProductId, barcode: UPC_A, format: "upc_a", packLevel: "each" });
+    const found = await resolveBarcode(fx.owner, UPC_E, "upc_e");
+    expect(found?.product.id).toBe(fx.pricedProductId);
+  });
+
+  test("THE BUG: the same code cannot be linked to a second product in another form", async () => {
+    await linkBarcodeToProduct(fx.owner, { productId: fx.pricedProductId, barcode: UPC_A, format: "upc_a", packLevel: "each" });
+    const err = await linkBarcodeToProduct(fx.owner, {
+      productId: fx.secondProductId,
+      barcode: EAN_13,
+      format: "ean_13",
+      packLevel: "each",
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect(err.message).toBe("This barcode already belongs to Tito's Handmade Vodka 750 ml.");
+    expect(await barcodeRows(fx.secondProductId)).toHaveLength(0);
+  });
+
+  test("creating a new size with the same code in UPC-E form is refused, and creates nothing", async () => {
+    await linkBarcodeToProduct(fx.owner, { productId: fx.pricedProductId, barcode: UPC_A, format: "upc_a", packLevel: "each" });
+    const err = await createProduct(fx.owner, {
+      name: "Tito's Handmade Vodka",
+      category: "Spirits",
+      unitType: "bottle",
+      sizeMl: 200,
+      barcode: { barcode: UPC_E, format: "upc_e", packLevel: "each" },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictError);
+    const made = await db
+      .select({ id: product.id })
+      .from(product)
+      .where(and(eq(product.organizationId, fx.organizationId), eq(product.sizeMl, 200)));
+    expect(made).toHaveLength(0);
+  });
+
+  test("the stored row holds the 14-digit standard form and the format", async () => {
+    await linkBarcodeToProduct(fx.owner, { productId: fx.pricedProductId, barcode: UPC_A, format: "upc_a", packLevel: "each" });
+    const [row] = await barcodeRows(fx.pricedProductId);
+    expect(row.barcode).toBe(GTIN_14);
+    expect(row.format).toBe("upc_a");
+  });
+
+  test("an unknown format name is stored as null, never as client text", async () => {
+    await linkBarcodeToProduct(fx.owner, { productId: fx.pricedProductId, barcode: UPC_A, format: "qr_code", packLevel: "each" });
+    const [row] = await barcodeRows(fx.pricedProductId);
+    expect(row.format).toBeNull();
+  });
+
+  test("an 8-digit code with no format is stored exactly as read — never guessed", async () => {
+    await linkBarcodeToProduct(fx.owner, { productId: fx.pricedProductId, barcode: UPC_E, packLevel: "each" });
+    const [row] = await barcodeRows(fx.pricedProductId);
+    expect(row.barcode).toBe(UPC_E);
+  });
+
+  test("rapid scan finds the product whatever the reading", async () => {
+    await linkBarcodeToProduct(fx.owner, { productId: fx.pricedProductId, barcode: UPC_A, format: "upc_a", packLevel: "each" });
+    const count = await openCount(fx.owner, { type: "spot" });
+    const line = await scanCountLine(fx.owner, {
+      clientLineId: newClientLineId(),
+      countId: count.id,
+      barcode: EAN_13,
+      format: "ean_13",
+      locationId: fx.locationId,
+      qty: 1,
+    });
+    expect(line.productId).toBe(fx.pricedProductId);
+    const [stored] = await db.select().from(countLine).where(eq(countLine.countId, count.id));
+    expect(stored.sealedEachQty).toBe(1);
+  });
+
+  test("two tenants may still hold the same code, in any form", async () => {
+    await linkBarcodeToProduct(fx.otherOwner, { productId: fx.otherProductId, barcode: EAN_13, format: "ean_13", packLevel: "each" });
+    const mine = await linkBarcodeToProduct(fx.owner, { productId: fx.pricedProductId, barcode: UPC_A, format: "upc_a", packLevel: "each" });
+    expect(mine.id).toBe(fx.pricedProductId);
+  });
+
+  test("another tenant's code never resolves here, in any form", async () => {
+    await linkBarcodeToProduct(fx.otherOwner, { productId: fx.otherProductId, barcode: UPC_A, format: "upc_a", packLevel: "each" });
+    expect(await resolveBarcode(fx.owner, EAN_13, "ean_13")).toBeNull();
+    expect(await resolveBarcode(fx.owner, UPC_A, "upc_a")).toBeNull();
   });
 });

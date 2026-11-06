@@ -489,7 +489,11 @@ describe("write-path guard: a retired location refuses count-line writes", () =>
     const barcode = "012345678905";
     await db.insert(productBarcode).values({
       productId: fx.pricedProductId,
-      barcode,
+      // Stored the way the app stores it — the 14-digit standard form
+      // (docs/plans/barcode-integrity). A raw "012345678905" row would no
+      // longer resolve, and the scan below would be refused as NOT FOUND,
+      // passing this test for the wrong reason.
+      barcode: "00012345678905",
       packLevel: "each",
       organizationId: fx.organizationId,
     });
@@ -505,6 +509,8 @@ describe("write-path guard: a retired location refuses count-line writes", () =>
       qty: 1,
     });
     await expect(attempt).rejects.toBeInstanceOf(DomainError);
+    // Refused for the RIGHT reason: the retired location, not an unknown barcode.
+    await expect(attempt).rejects.toMatchObject({ code: "LOCATION_RETIRED" });
 
     const lines = await db.select().from(countLine).where(eq(countLine.countId, c.id));
     expect(lines).toHaveLength(0);

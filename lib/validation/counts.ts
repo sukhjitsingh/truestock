@@ -90,6 +90,8 @@ export const scanCountLineSchema = z.object({
   clientLineId: z.uuid(),
   countId: z.number().int().positive(),
   barcode: z.string().trim().min(4).max(64),
+  // The detector's symbology — see resolveBarcodeSchema in ./catalog.ts.
+  format: z.string().trim().max(20).optional(),
   locationId: z.number().int().positive(),
   // A barcode scan of a case carton vs. a loose bottle resolves to a
   // pack_level (each|case) from ProductBarcode; the quantity being recorded
