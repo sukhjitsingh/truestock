@@ -48,7 +48,7 @@ export default async function ReorderPage() {
           asOfCountId == null ? (
             <p className="text-row-subtitle text-muted-foreground">
               Nothing to suggest yet — on-hand comes from the most recent{" "}
-              <strong className="text-foreground">closed</strong> count, and there isn&rsquo;t
+              <strong className="text-foreground">closed</strong>{" "}count, and there isn&rsquo;t
               one. An in-progress count can&rsquo;t be used: every section not yet walked would
               read as zero and put the whole catalog on this list.
             </p>

@@ -327,6 +327,10 @@ Written, reviewed, typechecked — never observed working.
 
 ## Recent history
 
+- **2026-11-06** — **Glued words fixed (open-item #33).** Next's SWC drops
+  the leading space of a multi-line JSX text run that contains an HTML entity;
+  `/office/reorder` read "closedcount, and there isn't one". Fixed, browser
+  verified, and guarded by `tests/jsx-entity-spacing.test.ts` (270 tests).
 - **2026-11-05** — **Barcode integrity: one barcode, one bottle size**
   (docs/plans/barcode-integrity, all four gates approved by the owner, eight
   slices). The owner reported *"I can assign multiple bottle sizes to the same

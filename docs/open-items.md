@@ -1324,7 +1324,20 @@ during Gate 2 — there is no production data to convert). **Run
 `bun run docker:reset` once after merging.** Close this item when that has
 been done.
 
-## 33. Some JSX text renders two words glued together
+## 33. ~~Some JSX text renders two words glued together~~ — CLOSED 2026-11-06
+
+**Closed.** The rule, established by compiling controlled snippets with
+Next's own SWC `transform`: a JSX text run loses its **leading** space when it
+follows a tag or `{expression}`, spans more than one source line, and contains
+an HTML entity (`&rsquo;`, `&middot;`, …). Single-line runs, runs without an
+entity, and a literal `’` are unaffected; trailing spaces are kept. A scan of
+the compiled output found 54 such runs, of which exactly one was broken — the
+reorder sentence below — now fixed with `{" "}` and confirmed in a browser
+("…the most recent closed count, and there isn't one"). Guarded by
+`tests/jsx-entity-spacing.test.ts`, which parses every `.tsx` file and fails on
+that shape; mutation-checked against both the tag and the `{expression}` form.
+The original entry follows.
+
 
 **Trigger: now, cheaply — it is live on `/office/reorder` whenever no count has
 closed, which is the owner's current state.** Suggested as a separate task on

@@ -495,6 +495,25 @@ try {
     );
   }
 
+  // ---- open-item #33: no words glued together by the build ------------------
+  // SWC drops the leading space of a multi-line JSX text run that contains an
+  // HTML entity (tests/jsx-entity-spacing.test.ts). This sentence shipped as
+  // "closedcount, and there isn't one" and shows whenever no count has closed.
+  {
+    await page.goto(`${BASE}/office/reorder`, { waitUntil: "networkidle" });
+    const text = (await page.locator("main").innerText()).replace(/\s+/g, " ");
+    if (!/on-hand comes from the most recent/.test(text)) {
+      skip("the reorder page's no-closed-count sentence reads correctly", "a count has closed, so that sentence is not shown");
+      skipped.push("open item 33 — reorder no-closed-count sentence: only shown before any count closes");
+    } else {
+      record(
+        "the reorder page's no-closed-count sentence reads correctly",
+        /most recent closed count, and there isn.t one/i.test(text) && !/closedcount/i.test(text),
+        (text.match(/most recent .{0,40}/i) ?? [""])[0],
+      );
+    }
+  }
+
   // ---- slice 4: per-cell cost editing, and no navigation per save --------
   await page.goto(`${BASE}/office/catalog`, { waitUntil: "networkidle" });
   await waitForHydration(page, "table");
