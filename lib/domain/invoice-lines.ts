@@ -56,7 +56,7 @@ import { invoice, invoiceLine, product } from "@/db/schema";
 import type { invoiceLineTypeEnum, invoiceLineUomEnum, invoiceMatchMethodEnum } from "@/db/enums";
 import type { Actor } from "@/lib/authz";
 import { withLockRetry } from "@/lib/domain/db-errors";
-import { NotFoundError } from "@/lib/domain/errors";
+import { DomainError, NotFoundError } from "@/lib/domain/errors";
 import {
   assertInvoiceHasLinesTx,
   updateInvoiceStatusTx,
@@ -65,6 +65,7 @@ import {
   type HeaderCorrection,
 } from "@/lib/domain/invoices";
 import { upsertAliasTx } from "@/lib/domain/matching";
+import { isValidPackSize } from "@/lib/domain/cost-derivation";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -318,6 +319,8 @@ export interface LineCorrection {
   rawDiscount?: string | null;
   rawNet?: string | null;
   matchedProductId?: number | null;
+  /** Units per case: integer 1-9999, or null to clear. Undefined leaves it alone. */
+  packSize?: number | null;
 }
 
 /**
@@ -409,6 +412,11 @@ export async function applyLineReviewTx(
     // distinguish "belongs to someone else" from "doesn't exist" (invariant 9).
     throw new NotFoundError("Invoice line");
   }
+  for (const c of corrections) {
+    if (c.packSize != null && !isValidPackSize(c.packSize)) {
+      throw new DomainError("INVALID_PACK_SIZE", "Units per case must be a whole number from 1 to 9999.");
+    }
+  }
   const ownedLinesById = new Map(ownedLines.map((row) => [row.id, row]));
 
   const uniqueProductIds = Array.from(
@@ -434,6 +442,7 @@ export async function applyLineReviewTx(
     if (correction.rawGross !== undefined) setValues.rawGross = correction.rawGross;
     if (correction.rawDiscount !== undefined) setValues.rawDiscount = correction.rawDiscount;
     if (correction.rawNet !== undefined) setValues.rawNet = correction.rawNet;
+    if (correction.packSize !== undefined) setValues.packSize = correction.packSize;
 
     if (correction.matchedProductId !== undefined) {
       setValues.matchedProductId = correction.matchedProductId;
@@ -460,8 +469,25 @@ export async function applyLineReviewTx(
           ownedInvoice.vendorId,
           current.vendorItemCode,
           correction.matchedProductId,
+          correction.packSize ?? null,
         );
       }
+    } else if (
+      // Pack size changed on a line that already has a product: remember it on
+      // the alias too. (Slice 5 moves alias learning into one pass on submit.)
+      correction.packSize != null &&
+      current.matchedProductId != null &&
+      ownedInvoice.vendorId != null &&
+      current.vendorItemCode != null
+    ) {
+      await upsertAliasTx(
+        tx,
+        actor.organizationId,
+        ownedInvoice.vendorId,
+        current.vendorItemCode,
+        current.matchedProductId,
+        correction.packSize,
+      );
     }
 
     await tx

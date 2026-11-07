@@ -7,6 +7,7 @@
  * `lib/storage/invoice-files.ts` itself, which imports `node:fs/promises`.
  */
 import { z } from "zod";
+import { MAX_PACK_SIZE } from "@/lib/domain/cost-derivation";
 import { invoiceStatusEnum, invoiceSourceEnum } from "@/db/enums";
 import {
   ACCEPTED_INVOICE_CONTENT_TYPES,
@@ -100,6 +101,8 @@ export const lineCorrectionSchema = z.object({
   rawDiscount: moneyStringSchema.nullable().optional(),
   rawNet: moneyStringSchema.nullable().optional(),
   matchedProductId: z.number().int().positive().nullable().optional(),
+  /** Units per case: a whole number 1-9999, or null to clear. */
+  packSize: z.number().int().min(1).max(MAX_PACK_SIZE).nullable().optional(),
 });
 
 /**
@@ -196,6 +199,12 @@ export const approveInvoiceSchema = z.object({
   invoiceId: z.number().int().positive(),
 });
 export type ApproveInvoiceInput = z.infer<typeof approveInvoiceSchema>;
+
+/** `getInvoicePostingReportAction`'s input: which invoice to report on. */
+export const getInvoicePostingReportSchema = z.object({
+  invoiceId: z.number().int().positive(),
+});
+export type GetInvoicePostingReportInput = z.infer<typeof getInvoicePostingReportSchema>;
 
 /**
  * Phase 2.5, Slice 5 — `createAuditPacketAction`'s date-range input. Same

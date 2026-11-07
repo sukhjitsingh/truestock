@@ -53,17 +53,15 @@
  *
  * ## Per-line cost writes
  *
- * Only lines with `line_type = 'product'` AND a non-null `matched_product_id`
- * are considered — deposit/freight/tax/fee/discount/unknown lines never
- * reach `deriveUnitCost` at all, and an unmatched product line has nothing
- * to write a cost onto. Processed in `line_number` order (deterministic, and
- * what lets a test induce "the failure is on line 3 of 5").
+ * Every line is classified by `classifyLineForPosting`
+ * (lib/domain/cost-derivation.ts). Lines that post get the writes below;
+ * the rest are skipped without failing approval and are named, with a reason,
+ * in the returned `report`. Processed in `line_number` order (deterministic,
+ * and what lets a test induce "the failure is on line 3 of 5").
  *
  * For each such line:
- *   1. `lib/domain/cost-derivation.ts:deriveUnitCost(line)` — `null` means
- *      "not confidently priceable" (a deposit line that slipped through this
- *      loop's own filter can't happen, but a missing quantity/pack-size/
- *      raw-net can) and the line is SKIPPED, not defaulted to any number.
+ *   1. The classifier's verdict — a line that cannot be confidently priced
+ *      is SKIPPED, never defaulted to any number.
  *   2. [AR-2] `SELECT current_unit_cost ... FOR UPDATE` on
  *      `product` scoped to `(id = matchedProductId, organizationId =
  *      actor.organizationId)` — INSIDE this transaction, not before it
@@ -97,14 +95,24 @@
  *      not exist on this schema), tenant-scoped in its own `WHERE` too, not
  *      just via the lock read above.
  */
-import { and, asc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { invoice, invoiceLine, product, productCostHistory } from "@/db/schema";
-import type { Actor } from "@/lib/authz";
+import { AuthzError, canSeeCost, type Actor } from "@/lib/authz";
 import { withLockRetry } from "@/lib/domain/db-errors";
-import { deriveUnitCost } from "@/lib/domain/cost-derivation";
+import {
+  classifyLineForPosting,
+  type PostingSkipReason,
+} from "@/lib/domain/cost-derivation";
 import { InvalidInvoiceTransitionError, NotFoundError } from "@/lib/domain/errors";
-import { assertInvoiceHasLinesTx, toInvoiceRow, type InvoiceRow } from "@/lib/domain/invoices";
+import {
+  assertInvoiceHasLinesTx,
+  toInvoiceRow,
+  type InvoiceRow,
+  type InvoiceStatus,
+} from "@/lib/domain/invoices";
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 export interface ApproveInvoiceResult {
   invoice: InvoiceRow;
@@ -117,6 +125,8 @@ export interface ApproveInvoiceResult {
    * expected, not rely on this count alone.
    */
   costLinesApplied: number;
+  /** True numbers on a replay too: built from the rows that exist. */
+  report: PostingReport;
 }
 
 export async function approveInvoice(actor: Actor, invoiceId: number): Promise<ApproveInvoiceResult> {
@@ -135,7 +145,8 @@ export async function approveInvoice(actor: Actor, invoiceId: number): Promise<A
         // Replay, or the losing side of a concurrent race that unblocked
         // after the winner committed — see this file's header. The original
         // success, not an error, and no re-entry into the cost-writing loop.
-        return { invoice: toInvoiceRow(row), costLinesApplied: 0 };
+        const report = await buildPostingReportTx(tx, actor, invoiceId, "approved");
+        return { invoice: toInvoiceRow(row), costLinesApplied: 0, report };
       }
       if (row.status !== "reviewed") {
         throw new InvalidInvoiceTransitionError(
@@ -154,37 +165,31 @@ export async function approveInvoice(actor: Actor, invoiceId: number): Promise<A
         .set({ status: "approved", approvedAt: now, approvedBy: actor.userId })
         .where(and(eq(invoice.id, invoiceId), eq(invoice.organizationId, actor.organizationId)));
 
-      const priceableLines = await tx
+      const invoiceLines = await tx
         .select({
           id: invoiceLine.id,
           lineType: invoiceLine.lineType,
+          uom: invoiceLine.uom,
           quantity: invoiceLine.quantity,
           packSize: invoiceLine.packSize,
           rawNet: invoiceLine.rawNet,
           matchedProductId: invoiceLine.matchedProductId,
         })
         .from(invoiceLine)
-        .where(
-          and(
-            eq(invoiceLine.organizationId, actor.organizationId),
-            eq(invoiceLine.invoiceId, invoiceId),
-            eq(invoiceLine.lineType, "product"),
-            isNotNull(invoiceLine.matchedProductId),
-          ),
-        )
+        .where(and(eq(invoiceLine.organizationId, actor.organizationId), eq(invoiceLine.invoiceId, invoiceId)))
         .orderBy(asc(invoiceLine.lineNumber));
 
       let applied = 0;
-      for (const line of priceableLines) {
-        // `matchedProductId` is provably non-null by the query's own
-        // `isNotNull` filter above; TypeScript can't narrow a query result's
-        // column type from a WHERE clause, hence this local assertion rather
-        // than a redundant runtime `continue`.
-        const matchedProductId = line.matchedProductId as number;
-        const unitCost = deriveUnitCost(line);
-        if (unitCost == null) {
+      for (const line of invoiceLines) {
+        // Every line is classified; a line that does not post is skipped
+        // without failing the approval, and the report says why.
+        const verdict = classifyLineForPosting(line);
+        if (!verdict.posts) {
           continue;
         }
+        const unitCost = verdict.unitCost;
+        // A posting verdict implies a matched product.
+        const matchedProductId = line.matchedProductId as number;
 
         // [AR-2] Ownership-checked here, INSIDE this transaction, regardless
         // of whatever `applyLineReviewTx` already verified at review time —
@@ -231,7 +236,129 @@ export async function approveInvoice(actor: Actor, invoiceId: number): Promise<A
         throw new NotFoundError("Invoice");
       }
 
-      return { invoice: toInvoiceRow(updated), costLinesApplied: applied };
+      const report = await buildPostingReportTx(tx, actor, invoiceId, "approved");
+      return { invoice: toInvoiceRow(updated), costLinesApplied: applied, report };
     }),
   );
+}
+
+export interface PostingReportLine {
+  lineId: number;
+  lineNumber: number;
+  description: string | null;
+  productId: number | null;
+  productName: string | null;
+  posted: boolean;
+  unitCost: string | null;
+  /** Null when posted. `not_posted_at_approval`: see Gate 3, least confident #4. */
+  reason: PostingSkipReason | "not_posted_at_approval" | null;
+}
+
+export interface PostingReport {
+  /** True only once approved: `posted` then means rows that exist. */
+  final: boolean;
+  totalLines: number;
+  postedLines: number;
+  lines: PostingReportLine[];
+}
+
+/**
+ * Which lines of one invoice post a cost (or did). Owner only, since it carries
+ * unit costs (invariant 8); the invoice is looked up inside the caller's
+ * organization, so another tenant's id is NotFound (invariant 9).
+ */
+export async function getInvoicePostingReport(actor: Actor, invoiceId: number): Promise<PostingReport> {
+  if (!canSeeCost(actor.role)) {
+    throw new AuthzError(403, "You do not have permission to view cost data.");
+  }
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ status: invoice.status })
+      .from(invoice)
+      .where(and(eq(invoice.id, invoiceId), eq(invoice.organizationId, actor.organizationId)));
+    if (!row) {
+      throw new NotFoundError("Invoice");
+    }
+    return buildPostingReportTx(tx, actor, invoiceId, row.status);
+  });
+}
+
+// Before approval `posted` is the classifier's prediction. Once approved
+// (`final`), `posted` means a product_cost_history row exists for the line and
+// unitCost comes from that row, never from re-deriving. The caller has already
+// ownership-checked the invoice.
+async function buildPostingReportTx(
+  tx: Tx,
+  actor: Actor,
+  invoiceId: number,
+  status: InvoiceStatus,
+): Promise<PostingReport> {
+  const final = status === "approved";
+  const rows = await tx
+    .select({
+      id: invoiceLine.id,
+      lineNumber: invoiceLine.lineNumber,
+      description: invoiceLine.description,
+      lineType: invoiceLine.lineType,
+      uom: invoiceLine.uom,
+      quantity: invoiceLine.quantity,
+      packSize: invoiceLine.packSize,
+      rawNet: invoiceLine.rawNet,
+      matchedProductId: invoiceLine.matchedProductId,
+      productName: product.name,
+    })
+    .from(invoiceLine)
+    .leftJoin(
+      product,
+      and(eq(product.id, invoiceLine.matchedProductId), eq(product.organizationId, actor.organizationId)),
+    )
+    .where(and(eq(invoiceLine.organizationId, actor.organizationId), eq(invoiceLine.invoiceId, invoiceId)))
+    .orderBy(asc(invoiceLine.lineNumber));
+
+  const written = new Map<number, string>();
+  if (final) {
+    const history = await tx
+      .select({ lineId: productCostHistory.sourceInvoiceLineId, unitCost: productCostHistory.unitCost })
+      .from(productCostHistory)
+      .where(
+        and(
+          eq(productCostHistory.organizationId, actor.organizationId),
+          eq(productCostHistory.sourceInvoiceId, invoiceId),
+        ),
+      );
+    for (const h of history) {
+      if (h.lineId != null) written.set(h.lineId, h.unitCost);
+    }
+  }
+
+  const lines: PostingReportLine[] = rows.map((r) => {
+    const verdict = classifyLineForPosting(r);
+    const base = {
+      lineId: r.id,
+      lineNumber: r.lineNumber,
+      description: r.description,
+      productId: r.matchedProductId,
+      productName: r.productName,
+    };
+    if (!final) {
+      return verdict.posts
+        ? { ...base, posted: true, unitCost: verdict.unitCost, reason: null }
+        : { ...base, posted: false, unitCost: null, reason: verdict.reason };
+    }
+    const cost = written.get(r.id);
+    if (cost !== undefined) return { ...base, posted: true, unitCost: cost, reason: null };
+    return {
+      ...base,
+      posted: false,
+      unitCost: null,
+      reason: verdict.posts ? ("not_posted_at_approval" as const) : verdict.reason,
+    };
+  });
+
+  return {
+    final,
+    totalLines: lines.length,
+    postedLines: lines.filter((l) => l.posted).length,
+    lines,
+  };
 }

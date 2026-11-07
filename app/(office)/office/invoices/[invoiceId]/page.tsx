@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireOfficeUser } from "@/lib/current-user";
+import { canSeeCost } from "@/lib/authz";
 import {
   getInvoiceAction,
   getInvoiceLinesAction,
@@ -47,7 +48,7 @@ export default async function InvoiceReviewPage({
 }: {
   params: Promise<{ invoiceId: string }>;
 }) {
-  await requireOfficeUser();
+  const viewer = await requireOfficeUser();
   const invoiceId = Number((await params).invoiceId);
   if (!Number.isInteger(invoiceId) || invoiceId <= 0) notFound();
 
@@ -143,6 +144,7 @@ export default async function InvoiceReviewPage({
           invoice={invoice}
           lines={linesResult.data}
           products={products}
+          canSeeCost={canSeeCost(viewer.role)}
           outcome={outcomeResult?.ok ? outcomeResult.data : null}
         />
       )}

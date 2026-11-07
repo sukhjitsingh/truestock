@@ -39,7 +39,7 @@
  * one arithmetic step, never stored or returned as a JS number.
  */
 
-import type { InvoiceLineType } from "@/lib/domain/invoice-lines";
+import type { InvoiceLineType, InvoiceLineUom } from "@/lib/domain/invoice-lines";
 
 /**
  * The subset of an `invoice_line` row `deriveUnitCost` needs. Deliberately
@@ -95,4 +95,67 @@ export function deriveUnitCost(line: DerivableCostLine): string | null {
   if (!Number.isFinite(unitCost)) return null;
 
   return unitCost.toFixed(4);
+}
+
+/** Largest units-per-case a reviewer may enter. Shared by the Zod schema and the domain check. */
+export const MAX_PACK_SIZE = 9999;
+
+/** Whole number 1..MAX_PACK_SIZE. Zero, negative, decimal, NaN and over-range are all refused. */
+export function isValidPackSize(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= MAX_PACK_SIZE;
+}
+
+/** Why a line does not post a cost. First match wins, in this order. */
+export type PostingSkipReason =
+  | "not_product_line"
+  | "not_matched"
+  | "no_net"
+  | "free_goods"
+  | "credit"
+  | "no_quantity"
+  | "no_units_per_case";
+
+export interface PostingCandidateLine extends DerivableCostLine {
+  uom: InvoiceLineUom | null;
+  matchedProductId: number | null;
+}
+
+export type LinePosting =
+  | { posts: true; unitCost: string; packSizeUsed: number }
+  | { posts: false; reason: PostingSkipReason };
+
+/** `each` and `keg` give 1 and ignore any parsed pack size. Anything else gives line.packSize, which may be null. */
+export function effectivePackSize(line: Pick<PostingCandidateLine, "uom" | "packSize">): number | null {
+  if (line.uom === "each" || line.uom === "keg") return 1;
+  return line.packSize;
+}
+
+/**
+ * Whether a line would post a cost, and why not if it would not. First match
+ * wins, in the order of `PostingSkipReason`. Reuses `deriveUnitCost` for the
+ * arithmetic; never reads product.case_size.
+ */
+export function classifyLineForPosting(line: PostingCandidateLine): LinePosting {
+  if (line.lineType !== "product") return { posts: false, reason: "not_product_line" };
+  if (line.matchedProductId == null) return { posts: false, reason: "not_matched" };
+
+  const netText = line.rawNet == null ? "" : line.rawNet.trim();
+  const net = netText === "" ? Number.NaN : Number(netText);
+  if (!Number.isFinite(net)) return { posts: false, reason: "no_net" };
+  if (net === 0) return { posts: false, reason: "free_goods" };
+  if (net < 0) return { posts: false, reason: "credit" };
+
+  const qtyText = line.quantity == null ? "" : line.quantity.trim();
+  const qty = qtyText === "" ? Number.NaN : Number(qtyText);
+  if (!Number.isFinite(qty) || qty <= 0) return { posts: false, reason: "no_quantity" };
+
+  const pack = effectivePackSize(line);
+  if (pack == null || !Number.isFinite(pack) || pack <= 0) {
+    return { posts: false, reason: "no_units_per_case" };
+  }
+
+  const unitCost = deriveUnitCost({ ...line, packSize: pack });
+  // Unreachable for finite positive inputs short of overflow; refuse rather than guess.
+  if (unitCost == null) return { posts: false, reason: "no_net" };
+  return { posts: true, unitCost, packSizeUsed: pack };
 }

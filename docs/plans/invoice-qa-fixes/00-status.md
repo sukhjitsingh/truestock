@@ -6,10 +6,10 @@
 - Gate 4 — Slice plan: APPROVED 2026-11-06
 
 ## Slices
-- [ ] Slice 1 — tracer bullet: "N of M will post" panel, report action, stub classifier
-- [ ] Slice 2 — F1 happy path: real classifier, `each` and `keg` post, final counts
-- [ ] Slice 3 — F1 skip reasons, live panel, `not_posted_at_approval`
-- [ ] Slice 4 — F1 units per case, migration 0010
+- [x] Slice 1 — tracer bullet: "N of M will post" panel, report action, stub classifier
+- [x] Slice 2 — F1 happy path: real classifier, `each` and `keg` post, final counts
+- [x] Slice 3 — F1 skip reasons, live panel, `not_posted_at_approval`
+- [x] Slice 4 — F1 units per case, migration 0010
 - [ ] Slice 5 — F6 happy path: alias without item code, pre-match by description
 - [ ] Slice 6 — F6 rules: confidence, scoping, deposits, shared keys
 - [ ] Slice 7 — F7 happy path: migration 0011, claim, named refusal

@@ -89,7 +89,7 @@ describe("findAlias", () => {
   });
 
   test("returns the row upsertAlias created, with the schema's own 0.500 starting confidence", async () => {
-    await upsertAlias(fx.organizationId, fx.vendorId, "SKU-1", fx.pricedProductId);
+    await upsertAlias(fx.organizationId, fx.vendorId, "SKU-1", fx.pricedProductId, null);
     const found = await findAlias(fx.organizationId, fx.vendorId, "SKU-1");
     expect(found?.productId).toBe(fx.pricedProductId);
     expect(found?.matchConfidence).toBe("0.500");
@@ -101,8 +101,8 @@ describe("upsertAlias — idempotency and the confidence rule", () => {
     "AC: upsertAlias is idempotent — calling it twice with the same (vendor_id, vendor_item_code) produces the SAME row, checked directly against the DB (one row, not two), not just a repeated return value. " +
       "MUTATION-CHECKED reasoning: a select-then-branch implementation (read, then insert-if-absent) can race two callers into inserting twice before either observes the other's row; asserting the DB's row COUNT catches that shape of bug in a way asserting only the returned object's fields would not.",
     async () => {
-      const first = await upsertAlias(fx.organizationId, fx.vendorId, "SKU-2", fx.pricedProductId);
-      const second = await upsertAlias(fx.organizationId, fx.vendorId, "SKU-2", fx.pricedProductId);
+      const first = await upsertAlias(fx.organizationId, fx.vendorId, "SKU-2", fx.pricedProductId, null);
+      const second = await upsertAlias(fx.organizationId, fx.vendorId, "SKU-2", fx.pricedProductId, null);
       expect(second.id).toBe(first.id);
 
       const rows = await selectAliasRows(fx.organizationId, fx.vendorId, "SKU-2");
@@ -111,18 +111,18 @@ describe("upsertAlias — idempotency and the confidence rule", () => {
   );
 
   test("reconfirming the SAME productId moves matchConfidence toward 1.000 without reaching it: 0.500 -> 0.750 -> 0.875", async () => {
-    const first = await upsertAlias(fx.organizationId, fx.vendorId, "SKU-3", fx.pricedProductId);
+    const first = await upsertAlias(fx.organizationId, fx.vendorId, "SKU-3", fx.pricedProductId, null);
     expect(first.matchConfidence).toBe("0.500");
-    const second = await upsertAlias(fx.organizationId, fx.vendorId, "SKU-3", fx.pricedProductId);
+    const second = await upsertAlias(fx.organizationId, fx.vendorId, "SKU-3", fx.pricedProductId, null);
     expect(second.matchConfidence).toBe("0.750");
-    const third = await upsertAlias(fx.organizationId, fx.vendorId, "SKU-3", fx.pricedProductId);
+    const third = await upsertAlias(fx.organizationId, fx.vendorId, "SKU-3", fx.pricedProductId, null);
     expect(third.matchConfidence).toBe("0.875");
   });
 
   test("submitting a DIFFERENT productId for an already-aliased code overwrites productId and resets matchConfidence to 0.500 — a changed mapping is a fresh, unproven confirmation, not a continuation of the old one's trust", async () => {
-    await upsertAlias(fx.organizationId, fx.vendorId, "SKU-4", fx.pricedProductId);
-    await upsertAlias(fx.organizationId, fx.vendorId, "SKU-4", fx.pricedProductId); // -> 0.750
-    const corrected = await upsertAlias(fx.organizationId, fx.vendorId, "SKU-4", fx.secondProductId);
+    await upsertAlias(fx.organizationId, fx.vendorId, "SKU-4", fx.pricedProductId, null);
+    await upsertAlias(fx.organizationId, fx.vendorId, "SKU-4", fx.pricedProductId, null); // -> 0.750
+    const corrected = await upsertAlias(fx.organizationId, fx.vendorId, "SKU-4", fx.secondProductId, null);
     expect(corrected.productId).toBe(fx.secondProductId);
     expect(corrected.matchConfidence).toBe("0.500");
   });
@@ -164,7 +164,7 @@ describe("matchLinesToProducts — the two-invoice acceptance criterion", () => 
   test(
     "AC: second invoice from the SAME vendor with the SAME vendor_item_code arrives pre-matched — matchLinesToProducts resolves matchedProductId/matchedVendorAliasId/matchConfidence from the alias a prior review created, and the line never needs the 'unmatched item' badge",
     async () => {
-      const alias = await upsertAlias(fx.organizationId, fx.vendorId, "SKU-REPEAT", fx.pricedProductId);
+      const alias = await upsertAlias(fx.organizationId, fx.vendorId, "SKU-REPEAT", fx.pricedProductId, null);
 
       const lines = [draftLine({ vendorItemCode: "SKU-REPEAT", lineNumber: 1 })];
       await matchLinesToProducts(lines, fx.organizationId, fx.vendorId);
@@ -187,8 +187,8 @@ describe("matchLinesToProducts — the two-invoice acceptance criterion", () => 
   );
 
   test("a batch of several lines only matches the ones whose vendorItemCode has an alias — one query, mixed outcomes", async () => {
-    await upsertAlias(fx.organizationId, fx.vendorId, "SKU-A", fx.pricedProductId);
-    await upsertAlias(fx.organizationId, fx.vendorId, "SKU-B", fx.secondProductId);
+    await upsertAlias(fx.organizationId, fx.vendorId, "SKU-A", fx.pricedProductId, null);
+    await upsertAlias(fx.organizationId, fx.vendorId, "SKU-B", fx.secondProductId, null);
 
     const lines = [
       draftLine({ lineNumber: 1, vendorItemCode: "SKU-A" }),
@@ -271,14 +271,14 @@ describe("tenant isolation [invariant 9]", () => {
     "an alias created under org A's own vendorId is invisible to a caller passing org B's organizationId with that SAME vendorId value — findAlias must filter on organizationId, not vendorId alone. " +
       "MUTATION-CHECKED reasoning: if findAlias's WHERE clause dropped the organizationId predicate, this call would return org A's real alias (which product org A maps a vendor SKU to) to a caller acting as org B.",
     async () => {
-      await upsertAlias(fx.organizationId, fx.vendorId, "SKU-SHARED", fx.pricedProductId);
+      await upsertAlias(fx.organizationId, fx.vendorId, "SKU-SHARED", fx.pricedProductId, null);
       const leaked = await findAlias(fx.otherOrganizationId, fx.vendorId, "SKU-SHARED");
       expect(leaked).toBeNull();
     },
   );
 
   test("matchLinesToProducts scoped to org B never resolves a line against org A's alias, even when both are queried with the SAME vendorId value and vendor_item_code string", async () => {
-    await upsertAlias(fx.organizationId, fx.vendorId, "SKU-SHARED-2", fx.pricedProductId);
+    await upsertAlias(fx.organizationId, fx.vendorId, "SKU-SHARED-2", fx.pricedProductId, null);
 
     const lines = [draftLine({ vendorItemCode: "SKU-SHARED-2" })];
     await matchLinesToProducts(lines, fx.otherOrganizationId, fx.vendorId);
@@ -286,8 +286,8 @@ describe("tenant isolation [invariant 9]", () => {
   });
 
   test("two unrelated tenants can independently alias the SAME vendor_item_code string to their own different products with no collision (each keyed by its own organizationId + vendorId)", async () => {
-    const orgAlias = await upsertAlias(fx.organizationId, fx.vendorId, "SKU-COMMON", fx.pricedProductId);
-    const otherAlias = await upsertAlias(fx.otherOrganizationId, fx.otherVendorId, "SKU-COMMON", fx.otherProductId);
+    const orgAlias = await upsertAlias(fx.organizationId, fx.vendorId, "SKU-COMMON", fx.pricedProductId, null);
+    const otherAlias = await upsertAlias(fx.otherOrganizationId, fx.otherVendorId, "SKU-COMMON", fx.otherProductId, null);
 
     expect(orgAlias.productId).toBe(fx.pricedProductId);
     expect(otherAlias.productId).toBe(fx.otherProductId);
@@ -328,9 +328,9 @@ describe("concurrent upserts of the same alias key — the lock-conflict retry f
       "That final value is deterministic regardless of which call wins the INSERT race or how withLockRetry's retries interleave: exactly one call ever inserts (0.500 default), and the other two are forced through the SAME row lock in upsertAliasCore's `SELECT ... FOR UPDATE` recovery branch one at a time, each reconfirming whatever the immediately-prior commit left behind.",
     async () => {
       const results = await Promise.all([
-        upsertAlias(fx.organizationId, fx.vendorId, "SKU-CONCURRENT", fx.pricedProductId),
-        upsertAlias(fx.organizationId, fx.vendorId, "SKU-CONCURRENT", fx.pricedProductId),
-        upsertAlias(fx.organizationId, fx.vendorId, "SKU-CONCURRENT", fx.pricedProductId),
+        upsertAlias(fx.organizationId, fx.vendorId, "SKU-CONCURRENT", fx.pricedProductId, null),
+        upsertAlias(fx.organizationId, fx.vendorId, "SKU-CONCURRENT", fx.pricedProductId, null),
+        upsertAlias(fx.organizationId, fx.vendorId, "SKU-CONCURRENT", fx.pricedProductId, null),
       ]);
 
       for (const row of results) {

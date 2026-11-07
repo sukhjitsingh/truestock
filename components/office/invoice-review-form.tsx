@@ -87,7 +87,7 @@
  * component's own role gate is belt, not buckle — `approveInvoiceAction`
  * re-checks `requireRole("owner")` itself, same as every other action here.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FileText, ExternalLink } from "lucide-react";
 import {
@@ -95,7 +95,17 @@ import {
   rejectInvoiceAction,
   resendToExtractionAction,
   approveInvoiceAction,
+  getInvoicePostingReportAction,
 } from "@/app/actions/invoices";
+import type { PostingReport } from "@/lib/domain/invoice-approval";
+import {
+  postingHeadline,
+  describeSkipReason,
+  livePanelModel,
+  panelModelFromReport,
+  showsPackSizeInput,
+  parsePackSizeInput,
+} from "@/lib/invoice-posting-view";
 import type { InvoiceRow, InvoiceExtractionOutcome } from "@/lib/domain/invoices";
 import { previewKind } from "@/lib/invoice-preview";
 import { reviewOutcomeView } from "@/lib/invoice-review-outcome";
@@ -133,6 +143,8 @@ import { formatCostForInput, formatCalendarDate } from "@/lib/utils";
  * comment above. */
 type LineCorrectionInput = ReviewInvoiceInput["corrections"][number];
 
+const PACK_SIZE_MESSAGE = "Enter a whole number from 1 to 9999.";
+
 const UOM_LABEL: Record<InvoiceLineUom, string> = {
   each: "Each",
   case: "Case",
@@ -151,6 +163,8 @@ interface LineFieldState {
   rawDiscount: string;
   rawNet: string;
   matchedProductId: string;
+  /** Units per case as typed; "" is none. Only used on lines that show the input. */
+  packSize: string;
 }
 
 function initialFieldState(line: InvoiceLineRow): LineFieldState {
@@ -159,6 +173,7 @@ function initialFieldState(line: InvoiceLineRow): LineFieldState {
     rawDiscount: formatCostForInput(line.rawDiscount),
     rawNet: formatCostForInput(line.rawNet),
     matchedProductId: line.matchedProductId == null ? "" : String(line.matchedProductId),
+    packSize: line.packSize == null ? "" : String(line.packSize),
   };
 }
 
@@ -216,7 +231,12 @@ export function InvoiceReviewForm({
   lines,
   products,
   outcome = null,
+  canSeeCost,
 }: {
+  /** From the server page (`canSeeCost(role)`). The posting panel carries unit
+   * costs and is owner-only (invariant 8); the report action refuses anyone
+   * else regardless of this prop. */
+  canSeeCost: boolean;
   invoice: InvoiceRow;
   lines: InvoiceLineRow[];
   products: ProductSummary[];
@@ -235,7 +255,7 @@ export function InvoiceReviewForm({
     Object.fromEntries(orderedLines.map((line) => [line.id, initialFieldState(line)])),
   );
   const [lineErrors, setLineErrors] = useState<
-    Record<number, Partial<Record<"rawGross" | "rawDiscount" | "rawNet", string>>>
+    Record<number, Partial<Record<"rawGross" | "rawDiscount" | "rawNet" | "packSize", string>>>
   >({});
 
   const [headerFields, setHeaderFields] = useState<HeaderFieldState>(() =>
@@ -284,8 +304,18 @@ export function InvoiceReviewForm({
       // field is validated by `lineCorrectionSchema` itself — the SAME
       // schema `reviewInvoiceAction` parses with, so this can never accept
       // something the server would then reject (or vice versa).
+      // Units per case: always sent for a line that shows the input (a number,
+      // or null when blank), so a correction that carries a match never clears
+      // the alias's remembered value by omission. Typed text that is not a
+      // valid whole number goes through as NaN so the shared schema refuses it
+      // and the message shows on the line.
+      const packText = state.packSize.trim();
+      const packField = showsPackSizeInput(line)
+        ? { packSize: packText === "" ? null : (parsePackSizeInput(packText) ?? Number.NaN) }
+        : {};
       const candidate = {
         id: line.id,
+        ...packField,
         rawGross: state.rawGross.trim() === "" ? null : state.rawGross.trim(),
         rawDiscount: state.rawDiscount.trim() === "" ? null : state.rawDiscount.trim(),
         rawNet: state.rawNet.trim() === "" ? null : state.rawNet.trim(),
@@ -293,11 +323,13 @@ export function InvoiceReviewForm({
       };
       const parsed = lineCorrectionSchema.safeParse(candidate);
       if (!parsed.success) {
-        const rowErrors: Partial<Record<"rawGross" | "rawDiscount" | "rawNet", string>> = {};
+        const rowErrors: Partial<Record<"rawGross" | "rawDiscount" | "rawNet" | "packSize", string>> = {};
         for (const issue of parsed.error.issues) {
           const key = issue.path[0];
           if (key === "rawGross" || key === "rawDiscount" || key === "rawNet") {
             rowErrors[key] = issue.message;
+          } else if (key === "packSize") {
+            rowErrors.packSize = PACK_SIZE_MESSAGE;
           }
         }
         nextLineErrors[line.id] = rowErrors;
@@ -367,6 +399,37 @@ export function InvoiceReviewForm({
   // `editable`, so that outer submit is a no-op for this status regardless,
   // but a NESTED `<form>` here would be invalid HTML). `type="button"` plus
   // `onClick` avoids that, matching the "Return" button a few lines below.
+  // Posting report, fetched on page load. `undefined` = loading, `null` =
+  // failed (plain message shown; no count is invented).
+  // Not fetched while the lines are editable: the panel then follows the form's
+  // own values, through the same classifier the server runs. Not fetched at all
+  // for a viewer who cannot see cost (invariant 8).
+  const [report, setReport] = useState<PostingReport | null | undefined>(undefined);
+  const showPostingPanel = canSeeCost && invoice.status !== "rejected";
+  const needsServerReport = showPostingPanel && !editable;
+  useEffect(() => {
+    if (!needsServerReport) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await getInvoicePostingReportAction({ invoiceId: invoice.id });
+        if (!cancelled) setReport(result.ok ? result.data : null);
+      } catch {
+        if (!cancelled) setReport(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [invoice.id, invoice.status, needsServerReport]);
+
+  const livePanel = useMemo(
+    () => (showPostingPanel && editable ? livePanelModel(orderedLines, fields) : null),
+    [showPostingPanel, editable, orderedLines, fields],
+  );
+  const serverPanel = report ? panelModelFromReport(report) : null;
+  const panel = editable ? livePanel : serverPanel;
+
   async function handleApproveCosts() {
     setApprovingCosts(true);
     setError(null);
@@ -429,12 +492,12 @@ export function InvoiceReviewForm({
     }
   }
 
-  // 7 columns always render (Description, Qty, UOM, Pack, Vendor code,
+  // 8 columns always render (Description, Qty, UOM, Pack, Units per case, Vendor code,
   // Matched product, Gross/Discount/Net) — `editable` only changes what's
   // rendered INSIDE the last two cells, never how many columns exist. A
   // conditional count here previously gave the empty-lines row colSpan={6}
   // against a 7-column table for any non-editable status.
-  const columnCount = 7;
+  const columnCount = 8;
 
   // What the stored file actually is decides how the pane shows it (see
   // `previewKind`): an <iframe> over a photo has no fit-to-width and is clumsy
@@ -664,6 +727,7 @@ export function InvoiceReviewForm({
                     <TableHead numeric>Qty</TableHead>
                     <TableHead>UOM</TableHead>
                     <TableHead>Pack</TableHead>
+                    <TableHead>Units per case</TableHead>
                     <TableHead>Vendor code</TableHead>
                     <TableHead>Matched product</TableHead>
                     <TableHead>Gross / Discount / Net</TableHead>
@@ -704,7 +768,10 @@ export function InvoiceReviewForm({
                       return (
                         <TableRow key={line.id} interactive={false} className="align-top">
                           <TableCell>
-                            <div className="flex flex-col gap-1.5">
+                            {/* The table is min-w-max, so a long sentence here used to
+                                widen the column off-screen and read as clipped on a
+                                phone. A capped width makes it wrap instead. */}
+                            <div className="flex w-64 max-w-[70vw] flex-col gap-1.5 whitespace-normal">
                               <span className="font-medium">
                                 {line.description ?? <NullValue reason="not-entered" />}
                               </span>
@@ -733,6 +800,44 @@ export function InvoiceReviewForm({
                           </TableCell>
                           <TableCell className="text-muted-foreground">
                             {line.packDescription ?? <NullValue reason="not-entered" />}
+                          </TableCell>
+                          <TableCell>
+                            {showsPackSizeInput(line) ? (
+                              editable ? (
+                                <div className="flex w-28 flex-col gap-1">
+                                  <Input
+                                    id={`line-${line.id}-pack-size`}
+                                    aria-label={`Units per case for line ${line.lineNumber}`}
+                                    aria-invalid={rowErrors?.packSize ? true : undefined}
+                                    aria-describedby={
+                                      rowErrors?.packSize ? `line-${line.id}-pack-size-error` : undefined
+                                    }
+                                    inputMode="numeric"
+                                    value={state.packSize}
+                                    onChange={(e) => updateField(line.id, "packSize", e.target.value)}
+                                    placeholder="?"
+                                    className="min-h-9 w-full"
+                                  />
+                                  {rowErrors?.packSize ? (
+                                    <p
+                                      id={`line-${line.id}-pack-size-error`}
+                                      className="whitespace-normal text-caption text-negative"
+                                      role="alert"
+                                    >
+                                      {rowErrors.packSize}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              ) : (
+                                <span className="tabular-nums text-card-foreground">
+                                  {line.packSize ?? <NullValue reason="not-entered" />}
+                                </span>
+                              )
+                            ) : (
+                              <span className="tabular-nums text-muted-foreground">
+                                {line.uom === "each" || line.uom === "keg" ? "1" : "—"}
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell className="text-muted-foreground">
                             {line.vendorItemCode ?? <NullValue reason="not-entered" />}
@@ -834,6 +939,39 @@ export function InvoiceReviewForm({
                   Reload this invoice
                 </button>
               </p>
+            ) : null}
+
+            {showPostingPanel ? (
+              <div
+                className={`flex flex-col gap-2 rounded-xl border p-3 ${
+                  panel && panel.skipped.length > 0 ? "border-warning/50" : "border-border/80"
+                } bg-card/85`}
+                role="status"
+              >
+                <p className="text-body font-semibold">
+                  {editable
+                    ? panel
+                      ? postingHeadline(panel.postedLines, panel.totalLines, false)
+                      : null
+                    : report === undefined
+                      ? "Checking which lines will post…"
+                      : report === null
+                        ? "Could not load the posting count. Reload the page to try again."
+                        : postingHeadline(report.postedLines, report.totalLines, report.final)}
+                </p>
+                {panel && panel.skipped.length > 0 ? (
+                  <ul className="flex list-disc flex-col gap-1 pl-5 text-caption text-foreground">
+                    {panel.skipped.map((s) => (
+                      <li key={s.lineNumber}>
+                        {describeSkipReason(s.reason, s.lineNumber)}
+                        {s.description ? (
+                          <span className="text-muted-foreground"> ({s.description})</span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
             ) : null}
 
             {editable || canReturn || canApproveCosts ? (

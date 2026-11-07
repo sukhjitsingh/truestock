@@ -71,6 +71,13 @@
       "when": 1787257993576,
       "tag": "0009_pink_luke_cage",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1794033163874,
+      "tag": "0010_first_hydra",
+      "breakpoints": true
     }
   ]
 }

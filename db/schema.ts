@@ -1449,6 +1449,14 @@ export const vendorAlias = mysqlTable(
     matchConfidence: decimal("match_confidence", { precision: 4, scale: 3 })
       .notNull()
       .default("0.500"),
+    // Units per case remembered for this vendor item (invoice QA fix F1).
+    // NULL means "not known", never 1: an `each` line counts as 1 when the
+    // cost is derived and is not stored here. It lives on the alias, not on
+    // product.case_size, because case_size is NULL for liquor by design. When
+    // the alias moves to a different product the value is replaced or cleared
+    // (a case size must not follow an item code onto another product); that
+    // rule is enforced in upsertAliasCore, not by the schema.
+    packSize: int("pack_size"),
     ...auditColumns,
   },
   (table) => [

@@ -26,7 +26,12 @@ import { requireRole } from "@/lib/authz";
 import { runAction, type ActionResult } from "@/lib/action-result";
 import * as invoices from "@/lib/domain/invoices";
 import * as invoiceLines from "@/lib/domain/invoice-lines";
-import { approveInvoice, type ApproveInvoiceResult } from "@/lib/domain/invoice-approval";
+import {
+  approveInvoice,
+  getInvoicePostingReport,
+  type ApproveInvoiceResult,
+  type PostingReport,
+} from "@/lib/domain/invoice-approval";
 import {
   createAuditPacket,
   buildAuditPacketJob,
@@ -45,6 +50,7 @@ import {
   rejectInvoiceSchema,
   resendToExtractionSchema,
   approveInvoiceSchema,
+  getInvoicePostingReportSchema,
   createAuditPacketSchema,
   getAuditPacketSchema,
 } from "@/lib/validation/invoices";
@@ -243,6 +249,20 @@ export async function approveInvoiceAction(
     const actor = await requireRole("owner");
     const parsed = approveInvoiceSchema.parse(input);
     return approveInvoice(actor, parsed.invoiceId);
+  });
+}
+
+/**
+ * Which lines of an invoice will post (or did post) a cost. Owner-only: the
+ * report carries unit costs (invariant 8). Org-scoped in the domain layer.
+ */
+export async function getInvoicePostingReportAction(
+  input: unknown,
+): Promise<ActionResult<PostingReport>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = getInvoicePostingReportSchema.parse(input);
+    return getInvoicePostingReport(actor, parsed.invoiceId);
   });
 }
 

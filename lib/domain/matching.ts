@@ -33,6 +33,8 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { vendorAlias } from "@/db/schema";
 import { isDuplicateKeyError, withLockRetry } from "@/lib/domain/db-errors";
+import { DomainError } from "@/lib/domain/errors";
+import { isValidPackSize } from "@/lib/domain/cost-derivation";
 import type { DraftInvoiceLine } from "@/lib/domain/invoice-lines";
 
 /** Mirrors every other domain file's `Tx` extraction — see e.g. `lib/domain/extraction.ts`. */
@@ -46,6 +48,8 @@ export interface VendorAliasRow {
   productId: number;
   /** DECIMAL(4,3) as the string mysql2 round-trips — this file's usual precision convention, never a JS number. */
   matchConfidence: string;
+  /** Units per case remembered for this vendor item, or null when not known (never 1). */
+  packSize: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -58,6 +62,7 @@ function toVendorAliasRow(row: typeof vendorAlias.$inferSelect): VendorAliasRow 
     vendorItemCode: row.vendorItemCode,
     productId: row.productId,
     matchConfidence: row.matchConfidence,
+    packSize: row.packSize,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -170,7 +175,13 @@ async function upsertAliasCore(
   vendorId: number,
   vendorItemCode: string,
   productId: number,
+  packSize: number | null,
 ): Promise<VendorAliasRow> {
+  // Enforced here, not only in Zod: every writer of vendor_alias.pack_size
+  // goes through this function.
+  if (packSize !== null && !isValidPackSize(packSize)) {
+    throw new DomainError("INVALID_PACK_SIZE", "Units per case must be a whole number from 1 to 9999.");
+  }
   try {
     const [inserted] = await tx
       .insert(vendorAlias)
@@ -179,6 +190,7 @@ async function upsertAliasCore(
         vendorId,
         vendorItemCode,
         productId,
+        packSize,
         // matchConfidence omitted on the INSERT branch — takes the column's
         // own default (0.500), same discipline as
         // lib/domain/invoice-lines.ts:writeExtractedLines relying on
@@ -222,9 +234,14 @@ async function upsertAliasCore(
     }
     const nextConfidence =
       existing.productId === productId ? computeReconfirmedConfidence(existing.matchConfidence) : "0.500";
+    // Pack size: same product, a non-null value replaces and null keeps what
+    // is remembered. A different product always takes the submitted value, so
+    // null clears: a case size must not follow an item code onto another
+    // product.
+    const nextPackSize = existing.productId === productId ? (packSize ?? existing.packSize) : packSize;
     await tx
       .update(vendorAlias)
-      .set({ productId, matchConfidence: nextConfidence })
+      .set({ productId, matchConfidence: nextConfidence, packSize: nextPackSize })
       .where(eq(vendorAlias.id, existing.id));
     const [updated] = await tx.select().from(vendorAlias).where(eq(vendorAlias.id, existing.id)).limit(1);
     if (!updated) {
@@ -263,8 +280,9 @@ export async function upsertAliasTx(
   vendorId: number,
   vendorItemCode: string,
   productId: number,
+  packSize: number | null,
 ): Promise<VendorAliasRow> {
-  return upsertAliasCore(tx, orgId, vendorId, vendorItemCode, productId);
+  return upsertAliasCore(tx, orgId, vendorId, vendorItemCode, productId, packSize);
 }
 
 /**
@@ -287,8 +305,11 @@ export async function upsertAlias(
   vendorId: number,
   vendorItemCode: string,
   productId: number,
+  packSize: number | null,
 ): Promise<VendorAliasRow> {
-  return withLockRetry(() => db.transaction((tx) => upsertAliasCore(tx, orgId, vendorId, vendorItemCode, productId)));
+  return withLockRetry(() =>
+    db.transaction((tx) => upsertAliasCore(tx, orgId, vendorId, vendorItemCode, productId, packSize)),
+  );
 }
 
 /**
@@ -365,5 +386,10 @@ export async function matchLinesToProducts(
     line.matchedVendorAliasId = alias.id;
     line.matchMethod = "vendor_alias_code";
     line.matchConfidence = alias.matchConfidence;
+    // A pack size printed on this invoice line came from this document and
+    // beats the remembered one; only a missing one is filled in.
+    if (line.packSize == null && alias.packSize != null) {
+      line.packSize = alias.packSize;
+    }
   }
 }
