@@ -1064,6 +1064,15 @@ describe("repairShiftedNetCells — a net that slid into the discount column", (
     expect(arithmeticCheck(parsed.lines, 195).pass).toBe(false);
   });
 
+  test("refused when the moved nets match the net total but the discounts then miss the discount total", () => {
+    // Moving BETA gives net 100+75=175, which matches; discount falls to 20.00, not the printed 25.00.
+    const parsed = parseLinesFromMarkdown(
+      invoiceWith([ALPHA, BETA_SHIFTED], { gross: "$195.00", discount: "$25.00", net: "$175.00" }),
+    );
+    expect(cells(parsed.lines[1])).toEqual(["75.00", "75.00", null]);
+    expect(arithmeticCheck(parsed.lines, 195).pass).toBe(false);
+  });
+
   test("refused when only moving a subset of the candidates would balance (all or none)", () => {
     // Moving BETA alone would balance (discount 20+40=60, net 100+75=175); moving both does not.
     const parsed = parseLinesFromMarkdown(
