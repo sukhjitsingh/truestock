@@ -16,8 +16,15 @@ import { isValidPackSize } from "@/lib/domain/cost-derivation";
 
 const SEPARATOR = "•";
 
-/** All digits, 5 or more. `80` (a proof) and 4-digit numbers are never codes. */
+/** All digits, 5 or more. `80` (a proof) is never a code. */
 const ITEM_CODE = /^\d{5,64}$/;
+/**
+ * Real codes also run to 4 digits, but so does a vintage, and a vintage read as
+ * a code would key every wine of that year to one product. So 4 digits count
+ * only straight after a 2-3 digit proof, the `<proof> <code>` shape.
+ */
+const SHORT_ITEM_CODE = /^\d{4}$/;
+const PROOF = /^\d{2,3}$/;
 /** A whole segment: "12 Case". Not "12 Cases", not "Case of 12". */
 const CASE_PACK = /^(\d+)\s*case$/i;
 /** A whole segment naming one volume: "1.75L", "750ML", "750 ml", "1.0L". */
@@ -43,14 +50,21 @@ function onlyOne<T>(values: T[]): T | null {
   return values.length === 1 ? values[0] : null;
 }
 
+function readItemCode(tokens: string[]): string | null {
+  if (tokens.length < 2) return null;
+  const last = tokens[tokens.length - 1];
+  if (ITEM_CODE.test(last)) return last;
+  const followsProof = tokens.length > 2 && PROOF.test(tokens[tokens.length - 2]);
+  return followsProof && SHORT_ITEM_CODE.test(last) ? last : null;
+}
+
 export function readItemName(description: string | null | undefined): ItemNameReading {
   if (!description || !description.includes(SEPARATOR)) return EMPTY;
   const segments = description.split(SEPARATOR).map((s) => s.trim());
 
   // Code: last whitespace token of the first segment, which must follow a name.
   const tokens = segments[0].split(/\s+/).filter(Boolean);
-  const last = tokens.length > 1 ? tokens[tokens.length - 1] : null;
-  const vendorItemCode = last && ITEM_CODE.test(last) ? last : null;
+  const vendorItemCode = readItemCode(tokens);
 
   const packs: number[] = [];
   const volumes: string[] = [];

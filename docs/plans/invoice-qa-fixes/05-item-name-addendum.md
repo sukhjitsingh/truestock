@@ -15,7 +15,7 @@ A pure function reads three things from that shape:
 
 | Read | Stored in | Rule |
 |---|---|---|
-| Item code | `vendorItemCode` | Last token of the first segment, all digits, 5 or more digits. A proof such as `80` is never a code. |
+| Item code | `vendorItemCode` | Last token of the first segment, all digits: 5 or more, or exactly 4 straight after a 2-3 digit proof (`80 1234`). A proof such as `80` is never a code, and neither is a lone 4-digit number such as a vintage. |
 | Case pack | `packSize` | A whole segment reading `<n> Case`. |
 | Bottle size | `packDescription` as `12/1.0L` | A whole segment naming a volume in ml or litres. |
 

@@ -24,9 +24,29 @@ describe("readItemName", () => {
     expect(readItemName("SAMPLE VODKA 80 111111 • 1.0L • 12 Case").vendorItemCode).toBe("111111");
   });
 
-  test("a 4-digit trailing number is not a code, a 5-digit one is", () => {
+  test("a lone 4-digit trailing number is not a code, a 5-digit one is", () => {
     expect(readItemName("SAMPLE RYE 1234 • 1.0L • 12 Case").vendorItemCode).toBeNull();
     expect(readItemName("SAMPLE RYE 12345 • 1.0L • 12 Case").vendorItemCode).toBe("12345");
+  });
+
+  test("4 digits straight after a proof are a code", () => {
+    expect(readItemName("SAMPLE RYE 80 1234 • 1.0L • 12 Case").vendorItemCode).toBe("1234");
+    expect(readItemName("SAMPLE RYE 101 1234 • 1.0L • 12 Case").vendorItemCode).toBe("1234");
+  });
+
+  test("a vintage is never a code", () => {
+    expect(readItemName("SAMPLE MERLOT 2019 • 750ML • 12 Case").vendorItemCode).toBeNull();
+    expect(readItemName("SAMPLE RESERVE MERLOT 2019 • 750ML").vendorItemCode).toBeNull();
+  });
+
+  test("only a 2-3 digit number counts as a proof before 4 digits", () => {
+    expect(readItemName("SAMPLE RYE 8 1234 • 1.0L").vendorItemCode).toBeNull();
+    expect(readItemName("SAMPLE RYE 8000 1234 • 1.0L").vendorItemCode).toBeNull();
+    expect(readItemName("SAMPLE RYE 80 123 • 1.0L").vendorItemCode).toBeNull();
+  });
+
+  test("a proof and 4 digits with no name before them are not a code", () => {
+    expect(readItemName("80 1234 • 1.0L").vendorItemCode).toBeNull();
   });
 
   test("a code must be all digits and the last token of the first segment", () => {
