@@ -22,6 +22,7 @@ import {
   arithmeticCheck,
   pdfInspectorCrossCheck,
   repairShiftedNetCells,
+  linesFlaggedDoesntAddUp,
   processExtractionQueue,
 } from "@/lib/domain/extraction-pipeline";
 import { writeExtractedLines, type DraftInvoiceLine } from "@/lib/domain/invoice-lines";
@@ -1092,6 +1093,110 @@ describe("repairShiftedNetCells — a net that slid into the discount column", (
     expect(repairShiftedNetCells(lines, 20, 175)).toBe(1);
     expect(cells(lines[1])).toEqual(["75.00", null, "75.00"]);
     expect(cells(lines[0])).toEqual(["120.00", "20.00", "100.00"]);
+  });
+});
+
+describe("linesFlaggedDoesntAddUp — only the line that failed", () => {
+  const three = () => [1, 2, 3].map((lineNumber) => draftLine({ lineNumber }));
+  const numbers = (lines: DraftInvoiceLine[]) => lines.map((line) => line.lineNumber);
+  const netless = (lineNumber: number) =>
+    draftLine({ lineNumber, rawGross: "50.00", rawDiscount: "50.00", rawNet: null });
+  const withNets = (lines: DraftInvoiceLine[]) =>
+    lines.map((line) => (line.rawNet == null && line.rawGross == null ? { ...line, rawGross: "10.00", rawDiscount: "0.00", rawNet: "10.00" } : line));
+
+  test("arithmeticCheck names the failing line numbers and says the sum held", () => {
+    const lines = withNets(three());
+    lines[1] = netless(2);
+    const result = arithmeticCheck(lines, null);
+    expect(result).toMatchObject({ pass: false, failedLineNumbers: [2], sumFailed: false });
+  });
+
+  test("arithmeticCheck reports sumFailed when the gross sum misses the printed total", () => {
+    const result = arithmeticCheck(withNets(three()), 999);
+    expect(result).toMatchObject({ pass: false, failedLineNumbers: [], sumFailed: true });
+  });
+
+  test("a line-only failure flags just that line", () => {
+    const lines = withNets(three());
+    lines[1] = netless(2);
+    const arithmetic = arithmeticCheck(lines, null);
+    expect(numbers(linesFlaggedDoesntAddUp(lines, arithmetic, { pass: true }))).toEqual([2]);
+  });
+
+  test("a failed sum against the printed total flags every line", () => {
+    const lines = withNets(three());
+    const arithmetic = arithmeticCheck(lines, 999);
+    expect(numbers(linesFlaggedDoesntAddUp(lines, arithmetic, { pass: true }))).toEqual([1, 2, 3]);
+  });
+
+  test("a failed pdf-inspector cross-check flags every line even when arithmetic passed", () => {
+    const lines = three();
+    expect(numbers(linesFlaggedDoesntAddUp(lines, { pass: true }, { pass: false, droppedLines: ["dropped"] }))).toEqual([1, 2, 3]);
+  });
+
+  test("a line failure together with a sum failure flags every line", () => {
+    const lines = withNets(three());
+    lines[1] = netless(2);
+    const arithmetic = arithmeticCheck(lines, 999);
+    expect(arithmetic).toMatchObject({ pass: false, failedLineNumbers: [2], sumFailed: true });
+    expect(numbers(linesFlaggedDoesntAddUp(lines, arithmetic, { pass: true }))).toEqual([1, 2, 3]);
+  });
+
+  test("nothing is flagged when both checks pass", () => {
+    expect(linesFlaggedDoesntAddUp(three(), { pass: true }, { pass: true })).toEqual([]);
+  });
+
+  describe("wired through the queue (text PDF)", () => {
+    const markdown = (totalRow: string[]) =>
+      [
+        ...totalRow,
+        "",
+        "|Item Name|Quantity|Gross Amount|Discount Amount|Net Amount|",
+        "|---|---|---|---|---|",
+        "|WIDGET ALPHA 700001|1 Cases|$120.00|$20.00|$100.00|",
+        "|GADGET BETA 700002|4 Units|$75.00|$75.00||",
+        "|GIZMO DELTA 700003|2 Units|$40.00|$0.00|$40.00|",
+        "",
+      ].join("\n");
+
+    async function runText(workerId: string, md: string) {
+      await db.update(invoice).set({ status: "uploaded" }).where(eq(invoice.id, fx.invoiceId));
+      await db
+        .update(extractionJob)
+        .set({ status: "queued", phase: null, pdfType: null, completedAt: null })
+        .where(eq(extractionJob.id, fx.extractionJobId));
+      const result = await processExtractionQueue(workerId, {
+        classifyPdf: async () => ({ pdfType: "text", pageCount: 1, confidence: 1, pagesNeedingOcr: [] }),
+        processPdf: async () => ({ markdown: md, pagesWithTables: [1], hasEncodingIssues: false }),
+        readPdfFile: async () => Buffer.from("%PDF-1.4 test fixture"),
+        extractInvoice: async () => {
+          throw new Error("Claude must not be called for a text PDF");
+        },
+      });
+      expect(result).toMatchObject({ outcome: "done" });
+      const saved = await db.query.invoiceLine.findMany({
+        where: (row, { eq }) => eq(row.invoiceId, fx.invoiceId),
+        orderBy: (row, { asc }) => asc(row.lineNumber),
+      });
+      return saved.map((line) => (line.exceptionFlags ?? []).includes("doesn't add up"));
+    }
+
+    test("a per-line failure alone persists the flag on the failing line only", async () => {
+      // Gross sum 120 + 75 + 40 = 235 matches the printed total; BETA is the only netless line, and no totals row lets the repair run.
+      const flags = await runText(
+        "flag-line-only",
+        markdown(["|Total Cases|Total Units|Gross Total|", "|---|---|---|", "|1|7|$235.00|"]),
+      );
+      expect(flags).toEqual([false, true, false]);
+    });
+
+    test("a sum failure persists the flag on every line", async () => {
+      const flags = await runText(
+        "flag-sum-failure",
+        markdown(["|Total Cases|Total Units|Gross Total|", "|---|---|---|", "|1|7|$999.00|"]),
+      );
+      expect(flags).toEqual([true, true, true]);
+    });
   });
 });
 

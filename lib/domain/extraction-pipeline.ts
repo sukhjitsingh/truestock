@@ -23,7 +23,8 @@
  * `invoice_line.exceptionFlags` can carry ("price jump", "duplicate",
  * "doesn't add up", "unmatched item"), this pipeline only ever emits two:
  * "unmatched item" and "doesn't add up" (from `arithmeticCheck`/
- * `pdfInspectorCrossCheck` failing). "price jump" needs `product_cost_history`
+ * `pdfInspectorCrossCheck` failing; only the failing line for a per-line
+ * failure, every line when the invoice-level sum or cross-check failed). "price jump" needs `product_cost_history`
  * (Slice 4) and "duplicate" needs cross-invoice comparison — neither exists
  * yet, so neither is invented here.
  *
@@ -1137,7 +1138,15 @@ export function parseLinesFromVision(raw: unknown): ParsedExtraction {
 
 export type ArithmeticCheckResult =
   | { pass: true; overage?: number; shortfall?: number }
-  | { pass: false; mismatch: number; details: string[] };
+  | {
+      pass: false;
+      mismatch: number;
+      details: string[];
+      /** Line numbers that failed the per-line net check (F4). */
+      failedLineNumbers: number[];
+      /** True when the sum of line gross amounts missed the printed total. */
+      sumFailed: boolean;
+    };
 
 /** Rounding/printed-cents slack — real invoices round per line before summing. */
 const ARITHMETIC_TOLERANCE_USD = 0.02;
@@ -1173,10 +1182,12 @@ export function arithmeticCheck(lines: DraftInvoiceLine[], expectedTotal: number
 
   const invoicePrintsLineNet = lines.some((line) => line.rawNet != null);
   let lineFailed = false;
+  const failedLineNumbers: number[] = [];
   if (invoicePrintsLineNet) {
     for (const line of lines) {
       if (line.rawGross != null && line.rawNet == null) {
         lineFailed = true;
+        failedLineNumbers.push(line.lineNumber);
         details.push(
           `Line ${line.lineNumber}: has a gross amount (${line.rawGross}) but no net amount, though other lines print one. A cell may have been read into the wrong column.`,
         );
@@ -1185,7 +1196,7 @@ export function arithmeticCheck(lines: DraftInvoiceLine[], expectedTotal: number
   }
 
   if (expectedTotal == null) {
-    return lineFailed ? { pass: false, mismatch: 0, details } : { pass: true };
+    return lineFailed ? { pass: false, mismatch: 0, details, failedLineNumbers, sumFailed: false } : { pass: true };
   }
 
   let sum = 0;
@@ -1199,7 +1210,7 @@ export function arithmeticCheck(lines: DraftInvoiceLine[], expectedTotal: number
 
   const diff = Math.round((sum - expectedTotal) * 100) / 100;
   if (Math.abs(diff) <= ARITHMETIC_TOLERANCE_USD) {
-    if (lineFailed) return { pass: false, mismatch: diff, details };
+    if (lineFailed) return { pass: false, mismatch: diff, details, failedLineNumbers, sumFailed: false };
     if (diff > 0) return { pass: true, overage: diff };
     if (diff < 0) return { pass: true, shortfall: -diff };
     return { pass: true };
@@ -1208,7 +1219,26 @@ export function arithmeticCheck(lines: DraftInvoiceLine[], expectedTotal: number
   details.push(
     `Sum of line gross amounts (${sum.toFixed(2)}) does not match the invoice's printed total (${expectedTotal.toFixed(2)}).`,
   );
-  return { pass: false, mismatch: diff, details };
+  return { pass: false, mismatch: diff, details, failedLineNumbers, sumFailed: true };
+}
+
+/**
+ * Decides which lines carry the "doesn't add up" flag. The flag is the only
+ * persisted record that a check failed, so it must never be lost:
+ *  - a failed sum against the printed total, or a failed pdf-inspector
+ *    cross-check, cannot be pinned on one line, so every line keeps the flag;
+ *  - when only per-line failures occurred, only those lines are flagged, so the
+ *    reviewer can see which line to fix and correct lines are not painted wrong.
+ */
+export function linesFlaggedDoesntAddUp(
+  lines: DraftInvoiceLine[],
+  arithmetic: ArithmeticCheckResult,
+  crossCheck: CrossCheckResult,
+): DraftInvoiceLine[] {
+  if (arithmetic.pass && crossCheck.pass) return [];
+  if (!crossCheck.pass || (!arithmetic.pass && arithmetic.sumFailed)) return lines;
+  const failed = new Set(arithmetic.pass ? [] : arithmetic.failedLineNumbers);
+  return lines.filter((line) => failed.has(line.lineNumber));
 }
 
 export type CrossCheckResult = { pass: true } | { pass: false; droppedLines: string[] };
@@ -1539,8 +1569,8 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
   );
   if (!arithmetic.pass || !crossCheck.pass) {
     if (lines.length === 0) {
-      // A check failure is normally surfaced by flagging every line
-      // "doesn't add up" — but there are no lines to flag here, and writing
+      // A check failure is normally surfaced by flagging lines
+      // "doesn't add up" (see linesFlaggedDoesntAddUp) — but there are no lines to flag here, and writing
       // zero drafts to needs_review would silently strand the mismatch: an
       // empty line table looks identical whether the invoice genuinely had
       // nothing to extract or the pipeline dropped everything on the floor.
@@ -1556,7 +1586,7 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
         `Invoice ${job.invoiceId}: extraction produced zero lines but a check failed — ${reasons.join(" ")}`,
       );
     }
-    for (const line of lines) {
+    for (const line of linesFlaggedDoesntAddUp(lines, arithmetic, crossCheck)) {
       line.exceptionFlags = [...(line.exceptionFlags ?? []), "doesn't add up"];
     }
   }
