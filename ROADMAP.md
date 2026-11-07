@@ -450,8 +450,9 @@ the runbook — how a deploy happens. go-live is the decision of whether it shou
 
 Blocking items, none of which are construction:
 
-- A production database exists and the full chain `0000 → … → 0009` has applied
-  to it. All ten migrations apply clean from empty on MariaDB 11.8 in isolated
+- A production database exists and the full chain `0000 → … → 0011` has applied
+  to it (`docs/go-live.md` notes that `0010`–`0011` still need the clean-from-empty
+  re-run). The first ten migrations apply clean from empty on MariaDB 11.8 in isolated
   Docker verification; production remains unproven.
 - An owner account created via `scripts/create-user.ts` with the **hidden
   prompt**, never `--password`. There is no signup path, deliberately.

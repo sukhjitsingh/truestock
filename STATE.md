@@ -16,19 +16,21 @@ project has twice shipped something that looked finished and was not.
 
 ## One-line status
 
-**The eight invoice failures from the 2026-11-06 QA run are fixed locally on
-`feat/phase-2.5-invoice-automation` (2026-11-07, not pushed).** Each was proven with
-a real text invoice through the UI and confirmed in the database. Vision and
-scanned invoices remain unverified because there is no API key (open-item #47).
+**The eight invoice failures from the 2026-11-06 QA run are fixed on
+`feat/phase-2.5-invoice-automation`, pushed, and up for merge to `main` as PR #37
+(2026-11-07).** Each was proven with a real text invoice through the UI and
+confirmed in the database. Vision and scanned invoices remain unverified because
+there is no API key (open-item #47).
 
 **Phase 2.5 is implementation-complete on `feat/phase-2.5-invoice-automation`.**
 All five planned A–E slices are merged into that integration branch: secure
 invoice archive, extraction and review, vendor matching, atomic cost posting,
 and the limited audit-packet export. PR #26 merged Slice 5 into its prerequisite
 branch, then PR #25 merged the complete stack into the Phase 2.5 branch on
-2026-08-21. Current Linux CI: **449 tests across 31 files, 449 pass, 0 fail,
-1,278 assertions**, followed by a successful production build. The final merge
-to `main` is the remaining repository-integration step; auto-approval is deferred
+2026-08-21. Linux CI at that merge: **449 tests across 31 files, 449 pass, 0 fail,
+1,278 assertions**, followed by a successful production build (1384 tests pass
+locally as of 2026-11-07). The final merge to `main` is the remaining
+repository-integration step, open as PR #37; auto-approval is deferred
 by design until about 100 real invoices provide correction data.
 
 **MVP is built and not deployed, and as of 2026-08-12 every part of the
@@ -359,6 +361,13 @@ and the F9 path on Hostinger are unverified (open-item #47).
 
 ## Recent history
 
+- **2026-11-07** — **Pushed and opened for merge.** The QA fixes and the merged
+  count-queue fix are on `origin/feat/phase-2.5-invoice-automation`. PR #37 into
+  `main` is open and has no conflicts. The repo is public, so real supplier
+  invoice values in two docs, the open-items list and two agent-memory notes
+  were replaced with `[redacted]` (`93d5c28`). Earlier commits still hold them,
+  because history was deliberately not rewritten. `.claude/agent-memory/` stays
+  tracked: it was briefly untracked, then restored unchanged (`a954d17`).
 - **2026-11-07** — **Invoice QA failures fixed (docs/plans/invoice-qa-fixes, all four
   gates approved by the owner).** F1, F4, F5, F6, F7, F8, F9, F10 and three minor
   items, plus reading the item code, case pack and size from the Item Name column.
@@ -1309,12 +1318,12 @@ Phase 2.5's A–E implementation is complete on its integration branch. The orde
 below separates repository closeout from field evidence and deployment; a green
 suite proves the software contract, not the operating claims.
 
-1. **Close Phase 2.5 into `main`.** Reconcile the authority/status documents,
-   run the final branch-level review and ship gate, then merge
-   `feat/phase-2.5-invoice-automation`. PRs #25 and #26 are already merged into
-   that branch and current Linux CI is green: 449/449 tests, 1,278 assertions,
-   production build successful. Phase F auto-approval stays deferred until
-   about 100 real invoices provide correction data.
+1. **Close Phase 2.5 into `main`.** PR #37 is open
+   (`feat/phase-2.5-invoice-automation` → `main`, no conflicts). Before merging
+   it, run the final branch-level review and ship gate. After merging, apply
+   migrations `0004`–`0011` to every database, including the local dev volume.
+   Phase F auto-approval stays deferred until about 100 real invoices provide
+   correction data.
 2. **Phase 2.9 — owner data and field validation.** Use real supplier invoices
    to populate the remaining costs, case sizes, pars, vendors and wine producer
    names; measure Phase 2.5's Gate 1 target with 20–25 real invoices in one
@@ -1328,7 +1337,7 @@ suite proves the software contract, not the operating claims.
    that business data.
 3. **Phase 3 — go-live.** Only after Phase 2.9. Start the real standalone
    artifact with `node .next/standalone/server.js`, exercise `pdf-inspector`
-   from that artifact, run migrations `0000 → … → 0009` against production,
+   from that artifact, run migrations `0000 → … → 0011` against production,
    verify the real SendGrid path, choose whether local pilot invoices migrate or
    are discarded, establish offsite backup, schedule the session sweep, rehearse
    rollback, and run `docs/go-live.md` against the real origin. Open item #39's

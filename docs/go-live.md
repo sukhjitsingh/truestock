@@ -52,9 +52,11 @@ Blocking items. Each one is either done or the deploy waits.
       after the first real deploy anyway: this ran under `next start`, not the
       standalone server production actually uses.
 - [ ] **A production database exists and migrations have applied to it.**
-      The full chain is now `0000 → … → 0009`. All ten migrations apply clean
-      from empty on MariaDB 11.8 in isolated Docker verification; none has run
-      against production. `docs/deploy.md` §4 covers bootstrap order.
+      The full chain is now `0000 → … → 0011`. `0000`–`0009` apply clean
+      from empty on MariaDB 11.8 in isolated Docker verification. `0010` and
+      `0011` came with the 2026-11-07 invoice QA fixes and have run in the test
+      suites, but the clean-from-empty run has not been repeated for the full
+      chain of twelve. None has run against production. `docs/deploy.md` §4 covers bootstrap order.
 - [ ] **Phase 2.9's data and field gate is signed off.** This is a prerequisite
       phase, not an optional launch follow-up: real catalog costs/case sizes/
       pars/vendors are populated, 20–25 real invoices meet or revise the

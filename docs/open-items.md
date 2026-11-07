@@ -2146,7 +2146,8 @@ which.
 **Trigger:** before relying on offline counting in a real count. The first
 three bullets under "Still open" are small and can go in any count-screen work.
 
-**Fixed (local branch `fix/count-queue-order-and-retry`, not pushed).** Two
+**Fixed (branch `fix/count-queue-order-and-retry`, merged into
+`feat/phase-2.5-invoice-automation`, pushed 2026-11-07).** Two
 defects found on a real phone. A new write went straight to the server past
 queued ones, so a correction landed first and the older write replayed on top:
 the phone showed `4 ea` and Synced while the database held 6. And the queue
@@ -2189,7 +2190,7 @@ suggested order and decisions needed are in
 document's "Open findings" are closed or moved here individually.
 
 **Status, 2026-11-07: all eight findings and the three minor items are fixed
-locally on `feat/phase-2.5-invoice-automation`, not pushed. This item stays open
+on `feat/phase-2.5-invoice-automation`, pushed, and in PR #37 to `main`. This item stays open
 for the three unverified paths below.** The plan is `docs/plans/invoice-qa-fixes/`.
 
 **Proven on real invoice A, through the UI against a production build, with the
