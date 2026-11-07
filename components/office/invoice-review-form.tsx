@@ -100,6 +100,7 @@ import type { InvoiceRow, InvoiceExtractionOutcome } from "@/lib/domain/invoices
 import { previewKind } from "@/lib/invoice-preview";
 import { reviewOutcomeView } from "@/lib/invoice-review-outcome";
 import { initialCurrencyInput } from "@/lib/invoice-review-currency";
+import { lineSizeWarning } from "@/lib/invoice-line-size";
 import type { InvoiceLineRow, InvoiceLineUom } from "@/lib/domain/invoice-lines";
 import type { ProductSummary } from "@/lib/domain/catalog";
 import {
@@ -685,6 +686,16 @@ export function InvoiceReviewForm({
                       const rowErrors = lineErrors[line.id];
                       const matchedProduct =
                         line.matchedProductId != null ? productById.get(line.matchedProductId) : undefined;
+                      // Follows the dropdown while editing, so the warning appears
+                      // the moment the reviewer picks a different size.
+                      const sizeWarning = lineSizeWarning(
+                        line,
+                        editable
+                          ? state.matchedProductId === ""
+                            ? undefined
+                            : productById.get(Number(state.matchedProductId))
+                          : matchedProduct,
+                      );
                       const lineAlerts = computeLineAlerts(
                         editable ? state.rawGross : line.rawGross,
                         editable ? state.rawDiscount : line.rawDiscount,
@@ -698,6 +709,11 @@ export function InvoiceReviewForm({
                                 {line.description ?? <NullValue reason="not-entered" />}
                               </span>
                               <InvoiceExceptionBadges flags={line.exceptionFlags} />
+                              {sizeWarning ? (
+                                <p className="text-caption text-warning" role="status">
+                                  {sizeWarning}
+                                </p>
+                              ) : null}
                               {lineAlerts.length > 0 ? (
                                 <div className="flex flex-wrap gap-1.5">
                                   {lineAlerts.map((alert) => (
