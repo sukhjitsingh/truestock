@@ -66,7 +66,7 @@ no real invoice figures are reproduced here.)
 
 | Southern Glazer's column | `DraftInvoiceLine` field(s) | How |
 |---|---|---|
-| `Item Name` | `description` | Kept as the **full compound string**, not split. A cell looks like `SAMPLE VODKA 80 111111 • 1.0L • 12 Case • SCREW CAP` (fabricated — see §6) — product name, item code, size, case pack, and closure type, bullet-separated with a middle-dot (`•`). This is deliberately **not** parsed into separate fields: doing so would mean guessing which segment is the code versus the size versus the pack count from position alone, with no column header to confirm any of it. A wrong guess here is silently-wrong data, which this pipeline treats as worse than an unsplit string a human can read at a glance. |
+| `Item Name` | `description` (verbatim) + `vendorItemCode`, `packSize`, `packDescription` | `description` keeps the **full compound string**, always, so `desc:` alias keys and the size warning do not change. A cell looks like `SAMPLE VODKA 80 111111 • 1.0L • 12 Case • SCREW CAP` (fabricated — see §6): name and item code, size, case pack, and (optionally) closure, bullet-separated (`•`). `lib/invoice-item-name.ts` reads three things from it, and only from a cell that contains a `•`: the **item code** (last token of the first segment, all digits, 5 or more — so a proof such as `80` or a 4-digit number is never a code) into `vendorItemCode`; the **case pack** (a whole segment `<n> Case`) into `packSize`; the **size** (a whole segment naming one volume, `1.75L`, `750ML`, `750 ml`, `1.0L`) into `packDescription` as `12/1.0L`. `packDescription` is set only when both a pack and a size were read — a size alone is never turned into `n/size`; the size warning still reads it from `description`. Two pack segments or two volumes are ambiguous and read as nothing. A real column value (or one the model supplied) is never overwritten, field by field. Applied on both the markdown and the Vision path. The reviewer still confirms the prefilled pack size; `product.case_size` is not used, and `each`/`keg` lines stay at effective pack 1. |
 | `Quantity` | `quantity` + `uom` | A **compound cell** — `1 Cases`, `2 Units` — not a bare number. Needs a dedicated parser that splits the numeral from the unit word before either reaches `DraftInvoiceLine`; the unit word then normalizes through the same case/each vocabulary `inferUom` already uses elsewhere in this file (`cases` → `case`, `units` → `each`). |
 | `Gross Amount` | `rawGross` | Direct — already its own column, no parsing beyond the shared printed-number cleanup (`parsePrintedNumber`). |
 | `Discount Amount` | `rawDiscount` | Direct, same as above. |
@@ -76,7 +76,7 @@ no real invoice figures are reproduced here.)
 | `Gross Total` / `Discount Total` / `Net Total` | header `totalGross` / `totalDiscount` / `totalNet` | Table-header lookup (see §4 quirk below for why this must be table-scoped rather than the document-wide label search `findLabeledAmount` does today). |
 | `**Invoice Number: N**` | header `invoiceNumber` | Not a table value — needs the existing labeled-text extraction (`findLabeledText`, the same mechanism already used as a fallback when no table carries `invoice number`) to match `Invoice Number:` specifically, since there is no table column to look it up by header. |
 
-## 4. What this vendor's format never provides — do not invent it
+## 4. What this vendor's format never provides as its own column — do not invent it
 
 Southern Glazer's line-item table has exactly five columns, and none of the
 following exist anywhere in the document:
@@ -84,23 +84,22 @@ following exist anywhere in the document:
 - **No separate Unit Price column.** Only gross/discount/net amounts are printed
   per line — this is stated on the document itself as a Proof *pre-delivery*
   disclaimer ("refer to post-delivery invoice for additional details and final
-  pricing information"). Deriving a unit cost (gross ÷ quantity ÷ pack size) would
-  require parsing the pack size back out of the compound `Item Name` string — which
-  §3 above explicitly declines to do, for the same reason.
-- **No Item Number / SKU column.** The item code exists, but only embedded inside
-  the compound `Item Name` string (`111111` in the fabricated example above), not
-  as its own cell.
+  pricing information"). A unit cost is still not derived at extraction (the
+  pipeline leaves `unitCost` null); posting derives it later from net ÷ quantity ÷
+  the confirmed pack size.
+- **No Item Number / SKU column, and no pack column.** The item code, case pack and
+  bottle size exist only inside the compound `Item Name` string (`111111`, `12 Case`
+  and `1.0L` in the fabricated example above), not as their own cells. They are read
+  from it by the rule in §3, with the bullet and whole-segment guards that make a
+  miss read as blank rather than as a guess.
 - **No UOM column separate from Quantity.** The unit is inside the `Quantity` cell
   itself (`1 Cases`), not a sibling column.
 - **No Brand column.**
 
-Consequently, for every line item from this vendor: `unitCost`, `extendedCost`,
-`vendorItemCode`, and `packSize` are correctly `null`. This is not missing
-extraction — it is the pipeline doing exactly what its own header comment says
-("unknown fields remain null and every row still requires a human review"), and it
-matches this pipeline's stated conservative-review-draft philosophy: a human fills
-these in during review rather than the pipeline guessing them from a compound
-string with no column to confirm the guess against.
+Consequently, for every line item from this vendor `unitCost` and `extendedCost` are
+correctly `null`. `vendorItemCode`, `packSize` and `packDescription` are filled
+from `Item Name` when it has the bullet shape and are `null` when it does not;
+the reviewer confirms them. Nothing is guessed from a cell that lacks the shape.
 
 ## 5. A known data-quality quirk: the polluted totals-table cell
 
@@ -217,8 +216,9 @@ recognized as the description column and kept as the full compound string; a
 `Quantity` cell like `1 Cases` splits into `quantity: "1"` / `uom: "case"`;
 `Gross Total` / `Discount Total` / `Net Total` are read from the totals table by
 column header even when the adjacent `Total Cases` cell is polluted with a
-footnote fragment; and `unitCost` / `extendedCost` / `vendorItemCode` / `packSize`
-come back `null` for every line, per §4.
+footnote fragment; `unitCost` / `extendedCost` come back `null` for every line, per
+§4; and `vendorItemCode` / `packSize` / `packDescription` are read from `Item Name`
+by the §3 rule (`tests/invoice-item-name.test.ts` covers each rule).
 
 ## 9. Related open items
 

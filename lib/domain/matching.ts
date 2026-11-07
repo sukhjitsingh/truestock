@@ -84,10 +84,7 @@ interface AliasKey {
   method: "vendor_alias_code" | "vendor_alias_desc";
 }
 
-function resolveAliasKey(line: { vendorItemCode: string | null; description: string | null }): AliasKey | null {
-  if (line.vendorItemCode != null && line.vendorItemCode.trim() !== "") {
-    return { key: line.vendorItemCode, method: "vendor_alias_code" };
-  }
+function descriptionAliasKey(line: { description: string | null }): AliasKey | null {
   if (line.description != null) {
     const normalized = normalizeAliasDescription(line.description);
     if (normalized !== "") {
@@ -98,6 +95,28 @@ function resolveAliasKey(line: { vendorItemCode: string | null; description: str
     }
   }
   return null;
+}
+
+function codeAliasKey(line: { vendorItemCode: string | null }): AliasKey | null {
+  if (line.vendorItemCode != null && line.vendorItemCode.trim() !== "") {
+    return { key: line.vendorItemCode, method: "vendor_alias_code" };
+  }
+  return null;
+}
+
+/** The key a line is remembered by: its code when it has one, else its description. */
+function resolveAliasKey(line: { vendorItemCode: string | null; description: string | null }): AliasKey | null {
+  return codeAliasKey(line) ?? descriptionAliasKey(line);
+}
+
+/**
+ * Every key to look a line up by, in priority order: the code key, then the
+ * description key. A line that gained an item code read from its name
+ * (lib/invoice-item-name.ts) must still find an alias learned earlier under
+ * its description, before the code existed.
+ */
+function lookupAliasKeys(line: { vendorItemCode: string | null; description: string | null }): AliasKey[] {
+  return [codeAliasKey(line), descriptionAliasKey(line)].filter((k): k is AliasKey => k != null);
 }
 
 /**
@@ -398,8 +417,8 @@ export async function matchLinesToProducts(
   if (vendorId == null) {
     return;
   }
-  const resolved = lines.map((line) => resolveAliasKey(line));
-  const keys = Array.from(new Set(resolved.filter((r): r is AliasKey => r != null).map((r) => r.key)));
+  const resolved = lines.map((line) => lookupAliasKeys(line));
+  const keys = Array.from(new Set(resolved.flat().map((r) => r.key)));
   if (keys.length === 0) {
     return;
   }
@@ -417,12 +436,17 @@ export async function matchLinesToProducts(
   const aliasByKey = new Map(aliases.map((row) => [row.vendorItemCode, row]));
 
   lines.forEach((line, index) => {
-    const found = resolved[index];
-    if (!found) {
-      return;
+    // Code key first, description key as the fallback; the first hit wins.
+    let found: AliasKey | undefined;
+    let alias: (typeof aliases)[number] | undefined;
+    for (const candidate of resolved[index]) {
+      alias = aliasByKey.get(candidate.key);
+      if (alias) {
+        found = candidate;
+        break;
+      }
     }
-    const alias = aliasByKey.get(found.key);
-    if (!alias) {
+    if (!found || !alias) {
       return;
     }
     line.matchedProductId = alias.productId;

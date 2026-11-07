@@ -749,3 +749,51 @@ describe("concurrent upserts of the same alias key — the lock-conflict retry f
     },
   );
 });
+
+describe("code key first, description key as fallback (addendum 05)", () => {
+  const DESC = "SAMPLE VODKA 80 111111 • 1.0L • 12 Case • SCREW CAP";
+  const descKey = () => aliasKeyForLine({ vendorItemCode: null, description: DESC })!;
+
+  test("a line that gained a code still finds the alias learned under its description, reported as vendor_alias_desc", async () => {
+    await upsertAlias(fx.organizationId, fx.vendorId, descKey(), fx.pricedProductId, 12);
+    const lines = [draftLine({ lineType: "product", vendorItemCode: "111111", description: DESC })];
+    await matchLinesToProducts(lines, fx.organizationId, fx.vendorId);
+    expect(lines[0].matchedProductId).toBe(fx.pricedProductId);
+    expect(lines[0].matchMethod).toBe("vendor_alias_desc");
+    expect(lines[0].packSize).toBe(12);
+  });
+
+  test("the code key wins over the description key when both exist", async () => {
+    await upsertAlias(fx.organizationId, fx.vendorId, descKey(), fx.pricedProductId, null);
+    await upsertAlias(fx.organizationId, fx.vendorId, "111111", fx.secondProductId, null);
+    const lines = [draftLine({ lineType: "product", vendorItemCode: "111111", description: DESC })];
+    await matchLinesToProducts(lines, fx.organizationId, fx.vendorId);
+    expect(lines[0].matchedProductId).toBe(fx.secondProductId);
+    expect(lines[0].matchMethod).toBe("vendor_alias_code");
+  });
+
+  test("the fallback stays inside the org and vendor: another tenant's description alias never matches", async () => {
+    await upsertAlias(fx.otherOrganizationId, fx.otherVendorId, descKey(), fx.otherProductId, null);
+    const lines = [draftLine({ lineType: "product", vendorItemCode: "111111", description: DESC })];
+    await matchLinesToProducts(lines, fx.organizationId, fx.vendorId);
+    expect(lines[0].matchedProductId).toBeNull();
+    expect(lines[0].matchMethod).toBe("unmatched");
+  });
+
+  test("a line with a code and no alias under either key stays unmatched", async () => {
+    const lines = [draftLine({ lineType: "product", vendorItemCode: "111111", description: DESC })];
+    await matchLinesToProducts(lines, fx.organizationId, fx.vendorId);
+    expect(lines[0].matchMethod).toBe("unmatched");
+  });
+
+  test("approving a line that matched by description learns the code key and leaves the old description row", async () => {
+    await upsertAlias(fx.organizationId, fx.vendorId, descKey(), fx.pricedProductId, null);
+    await db
+      .update(invoiceLine)
+      .set({ vendorItemCode: "111111", description: DESC })
+      .where(eq(invoiceLine.id, fx.invoiceLineId));
+    await submitInvoiceReview(fx.owner, fx.invoiceId, [{ id: fx.invoiceLineId, matchedProductId: fx.pricedProductId }]);
+    expect((await findAlias(fx.organizationId, fx.vendorId, "111111"))?.productId).toBe(fx.pricedProductId);
+    expect((await findAlias(fx.organizationId, fx.vendorId, descKey()))?.productId).toBe(fx.pricedProductId);
+  });
+});

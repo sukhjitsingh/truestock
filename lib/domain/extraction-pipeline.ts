@@ -70,6 +70,7 @@ import {
   type InvoiceLineUom,
 } from "@/lib/domain/invoice-lines";
 import { matchLinesToProducts } from "@/lib/domain/matching";
+import { fillFromItemName } from "@/lib/invoice-item-name";
 import { resolveStoredPath } from "@/lib/storage/invoice-files";
 import {
   contentTypeForPath,
@@ -763,19 +764,27 @@ export function parseLinesFromMarkdown(markdown: string): ParsedExtraction {
       }
 
       const packDescription = boundedValue(cellAt(row, packIndex), 64);
+      // Bullet-separated "Item Name" cells carry the code, case pack and size;
+      // real columns win and `description` stays verbatim.
+      const fromName = fillFromItemName({
+        description,
+        vendorItemCode,
+        packDescription,
+        packSize: parsePackSize(packDescription),
+      });
       draftLines.push({
         lineNumber: draftLines.length + 1,
         rawText: row.filter(Boolean).join(" | "),
         lineType: rawDescription ? inferLineType(rawDescription) : "unknown",
-        vendorItemCode,
+        vendorItemCode: fromName.vendorItemCode,
         description,
-        packDescription,
+        packDescription: fromName.packDescription,
         quantity: toDecimalString(quantity, 3),
         // Never overwrite a legitimately-found separate UOM column — the
         // compound-cell fallback only fills in when that column found
         // nothing for this row.
         uom: inferUom(cellAt(row, uomIndex)) ?? compoundUom,
-        packSize: parsePackSize(packDescription),
+        packSize: fromName.packSize,
         unitCost: toDecimalString(unitCost, 4),
         extendedCost: toDecimalString(extension, 2),
         rawGross: toDecimalString(parsePrintedNumber(cellAt(row, grossIndex)), 2),
@@ -1106,16 +1115,18 @@ export function parseLinesFromVision(raw: unknown): ParsedExtraction {
     currency: parsed.currency && /^[A-Za-z]{3}$/.test(parsed.currency) ? parsed.currency.toUpperCase() : null,
   };
 
-  const lines: DraftInvoiceLine[] = parsed.lines.map((line, index) => ({
+  const lines: DraftInvoiceLine[] = parsed.lines.map((line, index) => {
+    const fromName = fillFromItemName(line);
+    return {
     lineNumber: index + 1,
     rawText: line.rawText,
     lineType: normalizeLineType(line.lineType),
-    vendorItemCode: line.vendorItemCode,
+    vendorItemCode: fromName.vendorItemCode,
     description: line.description,
-    packDescription: line.packDescription,
+    packDescription: fromName.packDescription,
     quantity: toDecimalString(line.quantity, 3),
     uom: normalizeUom(line.uom),
-    packSize: line.packSize,
+    packSize: fromName.packSize,
     unitCost: toDecimalString(line.unitCost, 4),
     extendedCost: toDecimalString(line.extendedCost, 2),
     rawGross: toDecimalString(line.rawGross, 2),
@@ -1127,7 +1138,8 @@ export function parseLinesFromVision(raw: unknown): ParsedExtraction {
     matchedVendorAliasId: null,
     matchMethod: "unmatched",
     matchConfidence: null,
-  }));
+    };
+  });
 
   return { header, lines };
 }

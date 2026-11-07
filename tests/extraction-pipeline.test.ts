@@ -224,15 +224,16 @@ describe("parseLinesFromMarkdown", () => {
       expect(parsed.lines.map((line) => line.rawDiscount)).toEqual(["36.00", "12.00", "12.00"]);
       expect(parsed.lines.map((line) => line.rawNet)).toEqual(["144.00", "48.00", "48.00"]);
 
-      // This vendor's format never prints unit cost, extension, a separate
-      // item code, or a pack size — asserting null (not a guess) is itself
-      // part of proving "no silent fabrication."
+      // This vendor's format never prints unit cost or extension: null, not
+      // a guess. The item code, case pack and size sit inside "Item Name"
+      // and are read from it (docs/plans/invoice-qa-fixes/05).
       for (const line of parsed.lines) {
         expect(line.unitCost).toBeNull();
         expect(line.extendedCost).toBeNull();
-        expect(line.vendorItemCode).toBeNull();
-        expect(line.packSize).toBeNull();
       }
+      expect(parsed.lines.map((line) => line.vendorItemCode)).toEqual(["111111", "222222", "333333"]);
+      expect(parsed.lines.map((line) => line.packSize)).toEqual([12, 6, 12]);
+      expect(parsed.lines.map((line) => line.packDescription)).toEqual(["12/1.0L", "6/1.0L", "12/1.0L"]);
     },
   );
 
@@ -776,7 +777,71 @@ describe("scans go straight to Vision (QA finding F9)", () => {
   }
 });
 
+describe("Item Name reader inside the pipeline (addendum 05)", () => {
+  const md = (cell: string) => `
+|Item Name|Quantity|Gross Amount|Discount Amount|Net Amount|
+|---|---|---|---|---|
+|${cell}|1 Cases|$10.00|$0.00|$10.00|
+`;
+
+  test("markdown path fills code, pack and size and keeps description verbatim", () => {
+    const [line] = parseLinesFromMarkdown(md("SAMPLE VODKA 80 111111 • 750ML • 12 Case • SCREW CAP")).lines;
+    expect(line.vendorItemCode).toBe("111111");
+    expect(line.packSize).toBe(12);
+    expect(line.packDescription).toBe("12/750ML");
+    expect(line.description).toBe("SAMPLE VODKA 80 111111 • 750ML • 12 Case • SCREW CAP");
+  });
+
+  test("markdown path: a cell with no bullet is untouched", () => {
+    const [line] = parseLinesFromMarkdown(md("SAMPLE VODKA 80 111111")).lines;
+    expect(line.vendorItemCode).toBeNull();
+    expect(line.packSize).toBeNull();
+    expect(line.packDescription).toBeNull();
+  });
+
+  test("markdown path: a real Pack column and Item Code column beat the name", () => {
+    const parsed = parseLinesFromMarkdown(`
+|Item Name|Item Number|Pack Size|Quantity|Net Amount|
+|---|---|---|---|---|
+|SAMPLE VODKA 80 111111 • 750ML • 12 Case|REAL-9|6/1.75L|1 Cases|$10.00|
+`);
+    const [line] = parsed.lines;
+    expect(line.vendorItemCode).toBe("REAL-9");
+    expect(line.packDescription).toBe("6/1.75L");
+    expect(line.packSize).toBe(6);
+  });
+});
+
 describe("parseLinesFromVision", () => {
+
+  const visionLine = (over: Record<string, unknown>) => ({
+    rawText: "r", lineType: "product", vendorItemCode: null, description: null, packDescription: null,
+    quantity: 1, uom: "case", packSize: null, unitCost: null, extendedCost: null, rawGross: null,
+    rawDiscount: null, rawNet: null, confidence: null, ...over,
+  });
+  const visionDoc = (lines: unknown[]) => ({
+    invoiceDate: null, invoiceNumber: null, totalGross: null, totalDiscount: null, totalNet: null, currency: null, lines,
+  });
+
+  test("Item Name reader applies to Vision lines too, and model-supplied values win", () => {
+    const { lines } = parseLinesFromVision(
+      visionDoc([
+        visionLine({ description: "SAMPLE VODKA 80 111111 • 1.0L • 12 Case • SCREW CAP" }),
+        visionLine({
+          description: "SAMPLE GIN 80 222222 • 1.0L • 12 Case",
+          vendorItemCode: "MODEL-1",
+          packDescription: "6/750ML",
+          packSize: 6,
+        }),
+        visionLine({ description: "SAMPLE RUM 80 333333 1.0L 12 Case" }),
+      ]),
+    );
+    expect(lines[0]).toMatchObject({ vendorItemCode: "111111", packSize: 12, packDescription: "12/1.0L" });
+    expect(lines[0].description).toBe("SAMPLE VODKA 80 111111 • 1.0L • 12 Case • SCREW CAP");
+    expect(lines[1]).toMatchObject({ vendorItemCode: "MODEL-1", packSize: 6, packDescription: "6/750ML" });
+    expect(lines[2]).toMatchObject({ vendorItemCode: null, packSize: null, packDescription: null });
+  });
+
   test(
     "re-validates raw Vision output against the schema independently of the SDK's own zodOutputFormat check, and rejects an out-of-bounds field the same way any other boundary input would be rejected. " +
       "MUTATION-CHECKED reasoning: if parseLinesFromVision skipped its own extractedInvoiceSchema.parse() and merely cast `raw`, a hallucinated 600-character description (over invoice_line.description's varchar(512)) would sail through this function and fail only much later as an opaque MariaDB 'Data too long' error inside writeExtractedLines's INSERT — not a clean, attributable Zod error at the AI/domain boundary this test is checking for.",
