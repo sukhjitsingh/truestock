@@ -35,6 +35,28 @@ export function isRememberedMatch(
   );
 }
 
+/** The dropdown's option text for a product: "Name — Brand", or just the name. */
+export function productOptionLabel(product: { name: string; brand: string | null }): string {
+  return product.brand ? `${product.name} — ${product.brand}` : product.name;
+}
+
+/**
+ * Text for the pill under a line's description, or null when the line is not
+ * (or no longer) a remembered match. Names the product so the reviewer can
+ * confirm it without scrolling to the Matched product column. Uses the same
+ * label as the dropdown option (no size, no cost), and falls back to the bare
+ * label when the product is not in the list, never a blank or an id.
+ */
+export function rememberedMatchText(
+  line: { matchMethod: string; matchedProductId: number | null },
+  currentProductId: string,
+  products: ReadonlyArray<{ id: number; name: string; brand: string | null }>,
+): string | null {
+  if (!isRememberedMatch(line, currentProductId)) return null;
+  const product = products.find((p) => String(p.id) === currentProductId);
+  return product ? `${REMEMBERED_MATCH_LABEL}: ${productOptionLabel(product)}` : REMEMBERED_MATCH_LABEL;
+}
+
 /** The sentence to show above the lines, or null when matches can be learned. */
 export function noVendorNote(invoice: { vendorId: number | null }, editable: boolean): string | null {
   return editable && invoice.vendorId == null ? NO_VENDOR_NOTE : null;

@@ -111,7 +111,7 @@ import { previewKind } from "@/lib/invoice-preview";
 import { reviewOutcomeView } from "@/lib/invoice-review-outcome";
 import { initialCurrencyInput } from "@/lib/invoice-review-currency";
 import { lineSizeWarning } from "@/lib/invoice-line-size";
-import { isRememberedMatch, noVendorNote, REMEMBERED_MATCH_LABEL } from "@/lib/invoice-remembered-match";
+import { noVendorNote, productOptionLabel, rememberedMatchText } from "@/lib/invoice-remembered-match";
 import type { InvoiceLineRow, InvoiceLineUom } from "@/lib/domain/invoice-lines";
 import type { ProductSummary } from "@/lib/domain/catalog";
 import {
@@ -178,9 +178,7 @@ function initialFieldState(line: InvoiceLineRow): LineFieldState {
   };
 }
 
-function productLabel(product: ProductSummary): string {
-  return product.brand ? `${product.name} — ${product.brand}` : product.name;
-}
+const productLabel = productOptionLabel;
 
 /**
  * Open item #32's fix: the six `REQUIRED_FOR_REVIEW` header columns
@@ -773,6 +771,11 @@ export function InvoiceReviewForm({
                         editable ? state.rawDiscount : line.rawDiscount,
                         editable ? state.rawNet : line.rawNet,
                       );
+                      const rememberedText = rememberedMatchText(
+                        line,
+                        editable ? state.matchedProductId : String(line.matchedProductId ?? ""),
+                        products,
+                      );
                       return (
                         <TableRow key={line.id} interactive={false} className="align-top">
                           <TableCell>
@@ -784,12 +787,14 @@ export function InvoiceReviewForm({
                                 {line.description ?? <NullValue reason="not-entered" />}
                               </span>
                               <InvoiceExceptionBadges flags={line.exceptionFlags} />
-                              {isRememberedMatch(
-                                line,
-                                editable ? state.matchedProductId : String(line.matchedProductId ?? ""),
-                              ) ? (
+                              {rememberedText ? (
                                 <div className="flex flex-wrap gap-1.5">
-                                  <StatusPill tone="neutral">{REMEMBERED_MATCH_LABEL}</StatusPill>
+                                  <StatusPill
+                                    tone="neutral"
+                                    className="max-w-full whitespace-normal break-words rounded-lg normal-case"
+                                  >
+                                    {rememberedText}
+                                  </StatusPill>
                                 </div>
                               ) : null}
                               {sizeWarning ? (
