@@ -111,6 +111,7 @@ import { previewKind } from "@/lib/invoice-preview";
 import { reviewOutcomeView } from "@/lib/invoice-review-outcome";
 import { initialCurrencyInput } from "@/lib/invoice-review-currency";
 import { lineSizeWarning } from "@/lib/invoice-line-size";
+import { isRememberedMatch, noVendorNote, REMEMBERED_MATCH_LABEL } from "@/lib/invoice-remembered-match";
 import type { InvoiceLineRow, InvoiceLineUom } from "@/lib/domain/invoice-lines";
 import type { ProductSummary } from "@/lib/domain/catalog";
 import {
@@ -275,6 +276,7 @@ export function InvoiceReviewForm({
   const [approvingCosts, setApprovingCosts] = useState(false);
 
   const editable = invoice.status === "needs_review";
+  const vendorNote = noVendorNote(invoice, editable);
   const canReturn = invoice.status === "needs_review" || invoice.status === "reviewed";
   const canRetry = invoice.status === "rejected";
   const canApproveCosts = invoice.status === "reviewed";
@@ -716,6 +718,12 @@ export function InvoiceReviewForm({
               )}
             </div>
 
+            {vendorNote ? (
+              <p className="text-body text-warning" role="status">
+                {vendorNote}
+              </p>
+            ) : null}
+
             <TableContainer className="glass-card">
               <Table>
                 <TableCaption>
@@ -776,6 +784,14 @@ export function InvoiceReviewForm({
                                 {line.description ?? <NullValue reason="not-entered" />}
                               </span>
                               <InvoiceExceptionBadges flags={line.exceptionFlags} />
+                              {isRememberedMatch(
+                                line,
+                                editable ? state.matchedProductId : String(line.matchedProductId ?? ""),
+                              ) ? (
+                                <div className="flex flex-wrap gap-1.5">
+                                  <StatusPill tone="neutral">{REMEMBERED_MATCH_LABEL}</StatusPill>
+                                </div>
+                              ) : null}
                               {sizeWarning ? (
                                 <p className="text-caption text-warning" role="status">
                                   {sizeWarning}

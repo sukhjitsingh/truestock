@@ -3,7 +3,7 @@
  * Slice 3 (docs/plans/phase-2.5-invoice-automation/04-slices.md, "Slice 3 —
  * Matching"). The "fix once" memory: a human maps a vendor's SKU to one of
  * our products exactly once (`upsertAlias`, called from
- * `lib/domain/invoice-lines.ts:applyLineReviewTx`), and every later invoice
+ * `lib/domain/invoice-lines.ts:learnAliasesTx` on review submit), and every later invoice
  * from that vendor with the same `vendor_item_code` arrives pre-matched
  * (`matchLinesToProducts`, called from
  * `lib/domain/extraction-pipeline.ts:runClaimedJob`, between parse and
@@ -23,12 +23,12 @@
  *     `getInvoice(actor, invoiceId)` — a row already tenant-scoped by that
  *     read, and itself only ever set from an ownership-checked value at
  *     `createInvoiceForUpload` time (`lib/domain/invoices.ts:assertVendorOwned`).
- *   - `applyLineReviewTx` calls `upsertAliasTx` with `ownedInvoice.vendorId`
- *     (same provenance as above, re-selected in that function's own
- *     tenant-scoped query) and `correction.matchedProductId`, which
- *     `applyLineReviewTx` has ALREADY batch-verified against
- *     `actor.organizationId` [AR-2] before this file is ever called.
+ *   - `learnAliasesTx` (`lib/domain/invoice-lines.ts`) calls `upsertAliasTx`
+ *     with `invoice.vendorId` (same provenance as above, re-selected in that
+ *     function's own tenant-scoped query) and each line's `matchedProductId`,
+ *     which it re-verifies against `actor.organizationId` in the same pass.
  */
+import { createHash } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { vendorAlias } from "@/db/schema";
@@ -66,6 +66,47 @@ function toVendorAliasRow(row: typeof vendorAlias.$inferSelect): VendorAliasRow 
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+/** Prefix of a description-derived alias key, kept apart from any real item code. */
+const DESCRIPTION_KEY_PREFIX = "desc:";
+
+/**
+ * Unicode NFKC, lower case, whitespace collapsed and trimmed. Punctuation and
+ * digits are kept on purpose: `750ml` and `1.75l` are different items.
+ */
+export function normalizeAliasDescription(description: string): string {
+  return description.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+interface AliasKey {
+  key: string;
+  method: "vendor_alias_code" | "vendor_alias_desc";
+}
+
+function resolveAliasKey(line: { vendorItemCode: string | null; description: string | null }): AliasKey | null {
+  if (line.vendorItemCode != null && line.vendorItemCode.trim() !== "") {
+    return { key: line.vendorItemCode, method: "vendor_alias_code" };
+  }
+  if (line.description != null) {
+    const normalized = normalizeAliasDescription(line.description);
+    if (normalized !== "") {
+      // Hashed because description is varchar(512) and the key column is
+      // varchar(64): "desc:" + 43 base64url characters = 48.
+      const digest = createHash("sha256").update(normalized, "utf8").digest("base64url");
+      return { key: `${DESCRIPTION_KEY_PREFIX}${digest}`, method: "vendor_alias_desc" };
+    }
+  }
+  return null;
+}
+
+/**
+ * What a line is remembered by: its item code when it has one, otherwise a
+ * hash of its normalised description. Null when it has neither. Always scoped
+ * by the caller to one vendor and one organization.
+ */
+export function aliasKeyForLine(line: { vendorItemCode: string | null; description: string | null }): string | null {
+  return resolveAliasKey(line)?.key ?? null;
 }
 
 /**
@@ -327,11 +368,13 @@ export async function upsertAlias(
  * function needs and that only its caller (which already resolved the
  * invoice) can provide.
  *
- * Mutates `lines` in place: for every line carrying a `vendorItemCode`, looks
- * up an existing alias for `(orgId, vendorId, vendorItemCode)` and, if found,
- * sets `matchedProductId`, `matchedVendorAliasId`, `matchMethod` (always
- * `"vendor_alias_code"` — the ONLY method this function ever produces) and
- * `matchConfidence` from that alias row. A line with no `vendorItemCode`, or
+ * Mutates `lines` in place: for every line with an alias key (`aliasKeyForLine`:
+ * its item code, else its hashed description), looks up an existing alias for
+ * `(orgId, vendorId, key)` and, if found, sets `matchedProductId`,
+ * `matchedVendorAliasId`, `matchMethod` (`"vendor_alias_code"` for an item-code
+ * key, `"vendor_alias_desc"` for a description key) and `matchConfidence` from
+ * that alias row, and fills `packSize` when the line has none. Never auto-approves:
+ * the reviewer still confirms. A line with neither a code nor a description, or
  * an invoice with `vendorId: null` (no vendor recorded on the upload), is
  * left completely untouched — not an error, just nothing this function can
  * match against; the caller (`lib/domain/extraction-pipeline.ts`) is
@@ -355,10 +398,9 @@ export async function matchLinesToProducts(
   if (vendorId == null) {
     return;
   }
-  const codes = Array.from(
-    new Set(lines.map((line) => line.vendorItemCode).filter((code): code is string => code != null)),
-  );
-  if (codes.length === 0) {
+  const resolved = lines.map((line) => resolveAliasKey(line));
+  const keys = Array.from(new Set(resolved.filter((r): r is AliasKey => r != null).map((r) => r.key)));
+  if (keys.length === 0) {
     return;
   }
 
@@ -369,27 +411,28 @@ export async function matchLinesToProducts(
       and(
         eq(vendorAlias.organizationId, orgId),
         eq(vendorAlias.vendorId, vendorId),
-        inArray(vendorAlias.vendorItemCode, codes),
+        inArray(vendorAlias.vendorItemCode, keys),
       ),
     );
-  const aliasByCode = new Map(aliases.map((row) => [row.vendorItemCode, row]));
+  const aliasByKey = new Map(aliases.map((row) => [row.vendorItemCode, row]));
 
-  for (const line of lines) {
-    if (line.vendorItemCode == null) {
-      continue;
+  lines.forEach((line, index) => {
+    const found = resolved[index];
+    if (!found) {
+      return;
     }
-    const alias = aliasByCode.get(line.vendorItemCode);
+    const alias = aliasByKey.get(found.key);
     if (!alias) {
-      continue;
+      return;
     }
     line.matchedProductId = alias.productId;
     line.matchedVendorAliasId = alias.id;
-    line.matchMethod = "vendor_alias_code";
+    line.matchMethod = found.method;
     line.matchConfidence = alias.matchConfidence;
     // A pack size printed on this invoice line came from this document and
     // beats the remembered one; only a missing one is filled in.
     if (line.packSize == null && alias.packSize != null) {
       line.packSize = alias.packSize;
     }
-  }
+  });
 }

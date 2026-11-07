@@ -19,7 +19,7 @@ import {
   type PostingCandidateLine,
 } from "@/lib/domain/cost-derivation";
 import { upsertAlias, matchLinesToProducts } from "@/lib/domain/matching";
-import { applyLineReview, type DraftInvoiceLine } from "@/lib/domain/invoice-lines";
+import { applyLineReview, submitInvoiceReview, type DraftInvoiceLine } from "@/lib/domain/invoice-lines";
 import { lineCorrectionSchema } from "@/lib/validation/invoices";
 import { migrateTestDatabase, resetDatabase, createFixtures, type Fixtures } from "./helpers/test-db";
 
@@ -434,16 +434,22 @@ function draft(over: Partial<DraftInvoiceLine>): DraftInvoiceLine {
 describe("units per case (F1, slice 4)", () => {
   test("review_saves_pack_size_on_line_and_alias", async () => {
     const { invoiceId, lineId } = await caseLine("PK-1", null);
-    await applyLineReview(fx.owner, invoiceId, [{ id: lineId, matchedProductId: fx.pricedProductId, packSize: 6 }]);
+    const submit = async (c: Parameters<typeof submitInvoiceReview>[2]) => {
+      await db.update(invoice).set({ status: "needs_review" }).where(eq(invoice.id, invoiceId));
+      await submitInvoiceReview(fx.owner, invoiceId, c);
+    };
+    await submit([{ id: lineId, matchedProductId: fx.pricedProductId, packSize: 6 }]);
     expect((await lineRow(lineId)).packSize).toBe(6);
     expect((await aliasRow("PK-1")).packSize).toBe(6);
 
-    // Pack-size-only edit on an already matched line reaches the alias too, and null clears the line.
-    await applyLineReview(fx.owner, invoiceId, [{ id: lineId, packSize: 12 }]);
+    // Pack-size-only edit on an already matched line reaches the alias too (learned on submit).
+    await submit([{ id: lineId, packSize: 12 }]);
     expect((await lineRow(lineId)).packSize).toBe(12);
     expect((await aliasRow("PK-1")).packSize).toBe(12);
-    await applyLineReview(fx.owner, invoiceId, [{ id: lineId, packSize: null }]);
+    // Clearing the line leaves what the alias remembers (null keeps).
+    await submit([{ id: lineId, packSize: null }]);
     expect((await lineRow(lineId)).packSize).toBeNull();
+    expect((await aliasRow("PK-1")).packSize).toBe(12);
   });
 
   test("review_rejects_zero_pack_size", async () => {

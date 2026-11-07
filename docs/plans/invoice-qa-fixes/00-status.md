@@ -10,8 +10,8 @@
 - [x] Slice 2 — F1 happy path: real classifier, `each` and `keg` post, final counts
 - [x] Slice 3 — F1 skip reasons, live panel, `not_posted_at_approval`
 - [x] Slice 4 — F1 units per case, migration 0010
-- [ ] Slice 5 — F6 happy path: alias without item code, pre-match by description
-- [ ] Slice 6 — F6 rules: confidence, scoping, deposits, shared keys
+- [x] Slice 5 — F6 happy path: alias without item code, pre-match by description
+- [x] Slice 6 — F6 rules: confidence, scoping, deposits, shared keys
 - [ ] Slice 7 — F7 happy path: migration 0011, claim, named refusal
 - [ ] Slice 8 — F7 edges: rejected copy, race, Retry and Return
 - [ ] Slice 9 — proof on real invoices, build, reviews, STATE.md, open item #47

@@ -50,7 +50,7 @@
  * is authoritative and prior matches are re-done on the new draft, not
  * silently preserved underneath it.
  */
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, notInArray } from "drizzle-orm";
 import { db } from "@/db";
 import { invoice, invoiceLine, product } from "@/db/schema";
 import type { invoiceLineTypeEnum, invoiceLineUomEnum, invoiceMatchMethodEnum } from "@/db/enums";
@@ -64,7 +64,7 @@ import {
   type InvoiceRow,
   type HeaderCorrection,
 } from "@/lib/domain/invoices";
-import { upsertAliasTx } from "@/lib/domain/matching";
+import { aliasKeyForLine, upsertAliasTx } from "@/lib/domain/matching";
 import { isValidPackSize } from "@/lib/domain/cost-derivation";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -348,34 +348,11 @@ export interface LineCorrection {
  * and `now()` — never accepted from the caller, the same discipline
  * `count_line`'s audit columns hold.
  *
- * ## Slice 3 — a manual match also teaches the alias table
- *
- * When a correction sets a REAL `matchedProductId` (not a clear-to-null) on
- * a line that has a `vendorItemCode`, this function also upserts a
- * `vendor_alias` for `(actor.organizationId, ownedInvoice.vendorId,
- * line.vendorItemCode) -> matchedProductId` via
- * `lib/domain/matching.ts:upsertAliasTx`, inside this SAME transaction — see
- * that function's own comment for why it must not open a second one. Two
- * cases deliberately do NOT create or touch an alias, and neither is an
- * error:
- *   - `line.vendorItemCode == null` — nothing to key an alias on; some
- *     vendors' invoices genuinely never print an item code.
- *   - `ownedInvoice.vendorId == null` — the upload has no vendor recorded at
- *     all (`vendor_alias.vendorId` is `NOT NULL` with a composite tenant FK
- *     to `vendor`, so there is no null-vendor row this could even become).
- * A clear-to-null correction (`matchedProductId: null`) never touches the
- * alias table either — undoing a mismatch on ONE invoice's line is not
- * evidence the vendor's mapping itself was wrong, and silently deleting a
- * `vendor_alias` that other invoices' lines still reference through
- * `matchedVendorAliasId` (ON DELETE SET NULL) would erase their match
- * history along with it.
- *
- * `matchedVendorAliasId` on the corrected LINE itself is deliberately left
- * untouched here — `db/schema.ts`'s own comment on that column names
- * `matchLinesToProducts` as its only legitimate setter (an automatic match,
- * not a human's manual one), and this function sets `matchMethod: "manual"`
- * on this same line a few lines below, which already records how this
- * particular line got its match.
+ * Alias learning is NOT done here. It happens once, on review submit, in
+ * `learnAliasesTx`, from the final matched lines (QA fixes F6, slice 5).
+ * `matchedVendorAliasId` on a corrected line is left untouched: its schema
+ * comment names `matchLinesToProducts` as the only setter, and
+ * `matchMethod: "manual"` already records how this line got its match.
  */
 export async function applyLineReviewTx(
   tx: Tx,
@@ -457,37 +434,6 @@ export async function applyLineReviewTx(
             ? currentFlags
             : [...currentFlags, UNMATCHED_ITEM_FLAG]
           : currentFlags.filter((flag) => flag !== UNMATCHED_ITEM_FLAG);
-
-      // Slice 3: teach the alias table from this human's manual match — see
-      // this function's own comment for the two cases that deliberately
-      // don't (no vendorItemCode on the line; no vendorId on the invoice)
-      // and why a clear-to-null never reaches here at all.
-      if (correction.matchedProductId != null && ownedInvoice.vendorId != null && current.vendorItemCode != null) {
-        await upsertAliasTx(
-          tx,
-          actor.organizationId,
-          ownedInvoice.vendorId,
-          current.vendorItemCode,
-          correction.matchedProductId,
-          correction.packSize ?? null,
-        );
-      }
-    } else if (
-      // Pack size changed on a line that already has a product: remember it on
-      // the alias too. (Slice 5 moves alias learning into one pass on submit.)
-      correction.packSize != null &&
-      current.matchedProductId != null &&
-      ownedInvoice.vendorId != null &&
-      current.vendorItemCode != null
-    ) {
-      await upsertAliasTx(
-        tx,
-        actor.organizationId,
-        ownedInvoice.vendorId,
-        current.vendorItemCode,
-        current.matchedProductId,
-        correction.packSize,
-      );
     }
 
     await tx
@@ -512,6 +458,79 @@ export async function applyLineReview(
   await db.transaction((tx) => applyLineReviewTx(tx, actor, invoiceId, corrections));
 }
 
+/** Line types that are never goods, so never worth remembering as a vendor item. */
+const NON_GOODS_LINE_TYPES: InvoiceLineType[] = ["deposit", "deposit_return", "freight", "tax", "fee", "discount"];
+
+/**
+ * Teaches `vendor_alias` from the invoice's final matched lines, once, on
+ * review submit (QA fixes F6, docs/plans/invoice-qa-fixes/03-program-design.md).
+ * Each goods line with a match and an alias key (`aliasKeyForLine`: item code,
+ * else hashed description) upserts `(org, vendor, key) -> product` and the
+ * line's own `pack_size` (null when unset or out of range; never 1).
+ * Deposits, freight, tax, fees and discounts never teach an alias.
+ *
+ * Two lines with one key collapse to one upsert, the later line winning. Keys
+ * are sorted before the writes so concurrent submits take the alias row locks
+ * in one order. An invoice with no vendor learns nothing and is not an error.
+ *
+ * Runs inside the submit transaction, after the status CAS, so a stale or
+ * replayed submit (ConflictError) rolls back with nothing learned. Product
+ * ids are re-verified against `actor.organizationId` [invariant 9].
+ */
+async function learnAliasesTx(tx: Tx, actor: Actor, invoiceId: number): Promise<void> {
+  const [owned] = await tx
+    .select({ vendorId: invoice.vendorId })
+    .from(invoice)
+    .where(and(eq(invoice.id, invoiceId), eq(invoice.organizationId, actor.organizationId)))
+    .limit(1);
+  if (!owned) {
+    throw new NotFoundError("Invoice");
+  }
+  if (owned.vendorId == null) {
+    return;
+  }
+
+  const lines = await tx
+    .select()
+    .from(invoiceLine)
+    .where(
+      and(
+        eq(invoiceLine.organizationId, actor.organizationId),
+        eq(invoiceLine.invoiceId, invoiceId),
+        notInArray(invoiceLine.lineType, NON_GOODS_LINE_TYPES),
+      ),
+    )
+    .orderBy(asc(invoiceLine.lineNumber));
+
+  const byKey = new Map<string, { productId: number; packSize: number | null }>();
+  for (const line of lines) {
+    if (line.matchedProductId == null) continue;
+    const key = aliasKeyForLine(line);
+    if (key == null) continue;
+    byKey.set(key, {
+      productId: line.matchedProductId,
+      packSize: line.packSize != null && isValidPackSize(line.packSize) ? line.packSize : null,
+    });
+  }
+  if (byKey.size === 0) {
+    return;
+  }
+
+  const productIds = Array.from(new Set(Array.from(byKey.values()).map((v) => v.productId)));
+  const ownedProducts = await tx
+    .select({ id: product.id })
+    .from(product)
+    .where(and(eq(product.organizationId, actor.organizationId), inArray(product.id, productIds)));
+  if (ownedProducts.length !== productIds.length) {
+    throw new NotFoundError("Product");
+  }
+
+  for (const key of Array.from(byKey.keys()).sort()) {
+    const { productId, packSize } = byKey.get(key)!;
+    await upsertAliasTx(tx, actor.organizationId, owned.vendorId, key, productId, packSize);
+  }
+}
+
 /**
  * The review screen's actual submit: applies the reviewer's line
  * corrections AND CAS's the invoice `needs_review -> reviewed`, in ONE
@@ -533,8 +552,8 @@ export async function applyLineReview(
  * `updateInvoiceStatusTx`'s own `SELECT ... FOR UPDATE` — so no new
  * ownership check is needed here beyond that existing one.
  *
- * `withLockRetry` (see db-errors.ts): a manual match inside
- * `applyLineReviewTx` calls `lib/domain/matching.ts:upsertAliasTx`, whose
+ * `withLockRetry` (see db-errors.ts): `learnAliasesTx` calls
+ * `lib/domain/matching.ts:upsertAliasTx`, whose
  * duplicate-key recovery branch takes a `SELECT ... FOR UPDATE` on the
  * existing `vendor_alias` row — so two reviewers submitting corrections that
  * both map the SAME `(organizationId, vendorId, vendorItemCode)` at once can
@@ -567,6 +586,7 @@ export async function submitInvoiceReview(
       // stale submit on an already-moved invoice still gets Conflict, and
       // inside the transaction so the refusal rolls the CAS back.
       await assertInvoiceHasLinesTx(tx, actor, invoiceId);
+      await learnAliasesTx(tx, actor, invoiceId);
       return reviewed;
     }),
   );
