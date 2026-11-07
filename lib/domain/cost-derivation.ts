@@ -62,6 +62,12 @@ export interface DerivableCostLine {
  * `raw_net / qty / pack_size`, or `null` if the line is a deposit/deposit-
  * return, or any of the three inputs is missing, zero, or not a finite
  * number. Never throws.
+ *
+ * A net of exactly 0 (free goods) or below 0 (a credit) also means "no cost":
+ * neither is a price the supplier charged for the product, so neither may
+ * become `current_unit_cost`. Owner decision, 2026-11-06 QA run (F5). A blank
+ * net is covered too, because `Number("")` is 0. Note these lines are still
+ * skipped silently by the approval loop; reporting them is F1.
  */
 export function deriveUnitCost(line: DerivableCostLine): string | null {
   if (line.lineType === "deposit" || line.lineType === "deposit_return") {
@@ -77,10 +83,11 @@ export function deriveUnitCost(line: DerivableCostLine): string | null {
 
   // `Number("")` is 0, not NaN, so an explicit finiteness check is required
   // rather than relying on NaN propagation alone. Zero (and negative — never
-  // a real quantity or pack size) are refused outright: dividing by them
+  // a real quantity or pack size) are refused outright, and a zero or negative
+  // net (free goods, a credit) the same way: dividing by them
   // either throws away information (division by zero -> Infinity, guarded
   // below) or produces a sign-flipped, meaningless "cost."
-  if (!Number.isFinite(rawNet)) return null;
+  if (!Number.isFinite(rawNet) || rawNet <= 0) return null;
   if (!Number.isFinite(quantity) || quantity <= 0) return null;
   if (!Number.isFinite(packSize) || packSize <= 0) return null;
 

@@ -19,12 +19,10 @@
  *        selects cost/case size and never reads `active`).
  *        ALSO: `resolveBarcodeForCount` (lib/domain/catalog.ts ~line 391) does
  *        not join `product` at all, so a retired product's barcode still scans.
- *   B. invariant 2  - `deriveUnitCost` returns a number for a $0, blank or
- *        NEGATIVE net amount instead of null
- *        cause: lib/domain/cost-derivation.ts ~line 87-90 - `rawNet` is only
- *        checked with `Number.isFinite`; quantity and pack size get the
- *        `<= 0` refusal, rawNet does not. `Number("")` is 0, so a blank net
- *        becomes the cost "0.0000".
+ *   B. FIXED 2026-11-06 (QA finding F5; the tests below are now plain
+ *        regression guards, no longer `test.failing`). `deriveUnitCost` used
+ *        to return a number for a $0, blank or NEGATIVE net amount instead of
+ *        null; it now refuses `rawNet <= 0` like quantity and pack size.
  *   C. invariant 10 - `productUpdateSchema.wasteFactor` accepts 1 .. 9.999
  *        cause: lib/validation/catalog.ts:141 `.max(9.999)` (the column's
  *        capacity, not the domain's). Theoretical depletion divides by
@@ -219,7 +217,7 @@ describe("A. count writes and product.active (invariant 6)", () => {
 });
 
 // ===========================================================================
-// B. Invariant 2 - deriveUnitCost invents a cost from a $0 / blank / negative net
+// B. Invariant 2 (FIXED, F5) - deriveUnitCost invented a cost from a $0 / blank / negative net
 // ===========================================================================
 //
 // AGENTS.md invariant 2 and valuation.ts: a cost is either exactly determined or
@@ -247,18 +245,18 @@ describe("B. deriveUnitCost on a non-positive or blank net amount (invariant 2)"
     expect(deriveUnitCost(productLine({ quantity: "-10.000" }))).toBeNull();
   });
 
-  test.failing("B1. a NEGATIVE net amount is null, not a negative unit cost", () => {
-    // OBSERVED: "-6.0000"
+  test("B1. a NEGATIVE net amount is null, not a negative unit cost", () => {
+    // Before the F5 fix this returned "-6.0000".
     expect(deriveUnitCost(productLine({ rawNet: "-60.00" }))).toBeNull();
   });
 
-  test.failing("B2. a ZERO net amount is null, not '0.0000'", () => {
-    // OBSERVED: "0.0000"
+  test("B2. a ZERO net amount is null, not '0.0000'", () => {
+    // Before the F5 fix this returned "0.0000".
     expect(deriveUnitCost(productLine({ rawNet: "0.00" }))).toBeNull();
   });
 
-  test.failing("B3. a BLANK net amount is null, not '0.0000'", () => {
-    // OBSERVED: "0.0000" for both
+  test("B3. a BLANK net amount is null, not '0.0000'", () => {
+    // Before the F5 fix this returned "0.0000" for both.
     expect(deriveUnitCost(productLine({ rawNet: "" }))).toBeNull();
     expect(deriveUnitCost(productLine({ rawNet: "   " }))).toBeNull();
   });
@@ -290,7 +288,7 @@ describe("B. approveInvoice posting a non-positive net amount (invariant 2)", ()
     expect(await costAndHistory()).toEqual({ cost: "6.0000", historyRows: 1 });
   });
 
-  test.failing.each([
+  test.each([
     ["negative", "-60.00"],
     ["zero", "0.00"],
   ])(

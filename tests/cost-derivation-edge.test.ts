@@ -9,9 +9,8 @@
  * Guards AGENTS.md invariant 2 (a cost is either exactly determined or it is
  * null — never a plausible-looking guess) and the "Deposits are never folded
  * into product cost" rule. Cases where the function is currently WRONG
- * (rawNet "", "0.00", "-60.00") are not here: they are in
- * tests/known-defects.test.ts as `test.failing`, so this file stays green and
- * honest about what it asserts.
+ * (rawNet "", "0.00", "-60.00") were fixed under F5 (2026-11-06); their
+ * regression guards live in tests/known-defects.test.ts section B.
  *
  * Mutations that must turn this file red:
  *   - lib/domain/cost-derivation.ts: `quantity <= 0` -> `quantity < 0`
@@ -227,5 +226,47 @@ describe("approveInvoice — only product lines reach the cost write", () => {
       .from(productCostHistory)
       .where(eq(productCostHistory.productId, fx.secondProductId));
     expect(history).toHaveLength(0);
+  });
+});
+
+describe("approveInvoice — free goods after a paid line (F5)", () => {
+  test("a free line (net 0.00) for the same product AFTER a paid line leaves the paid cost and writes no history row for it", async () => {
+    await db.update(invoice).set({ status: "reviewed" }).where(eq(invoice.id, fx.invoiceId));
+    // Paid line: 216.00 / 12 / 1 = 18.0000.
+    await db
+      .update(invoiceLine)
+      .set({ packSize: 1, quantity: "12.000", rawNet: "216.00", rawGross: "216.00" })
+      .where(eq(invoiceLine.id, fx.matchedInvoiceLineId));
+    // Free line, later line number, SAME product. Without the fix this
+    // overwrites current_unit_cost with 0.0000 (it is the last write).
+    const [free] = await db
+      .insert(invoiceLine)
+      .values({
+        organizationId: fx.organizationId,
+        invoiceId: fx.invoiceId,
+        lineNumber: 20,
+        description: "Free goods promo",
+        lineType: "product",
+        quantity: "1.000",
+        packSize: 1,
+        rawGross: "18.00",
+        rawDiscount: "18.00",
+        rawNet: "0.00",
+        matchedProductId: fx.pricedProductId,
+        matchMethod: "manual",
+      })
+      .$returningId();
+
+    const result = await approveInvoice(fx.owner, fx.invoiceId);
+
+    expect(result.costLinesApplied).toBe(1);
+    const [priced] = await db.select().from(product).where(eq(product.id, fx.pricedProductId));
+    expect(priced.currentUnitCost).toBe("18.0000");
+    const history = await db
+      .select()
+      .from(productCostHistory)
+      .where(eq(productCostHistory.productId, fx.pricedProductId));
+    expect(history).toHaveLength(1);
+    expect(history.some((row) => row.sourceInvoiceLineId === free.id)).toBe(false);
   });
 });
