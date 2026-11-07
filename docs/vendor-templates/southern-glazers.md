@@ -70,7 +70,7 @@ no real invoice figures are reproduced here.)
 | `Quantity` | `quantity` + `uom` | A **compound cell** — `1 Cases`, `2 Units` — not a bare number. Needs a dedicated parser that splits the numeral from the unit word before either reaches `DraftInvoiceLine`; the unit word then normalizes through the same case/each vocabulary `inferUom` already uses elsewhere in this file (`cases` → `case`, `units` → `each`). |
 | `Gross Amount` | `rawGross` | Direct — already its own column, no parsing beyond the shared printed-number cleanup (`parsePrintedNumber`). |
 | `Discount Amount` | `rawDiscount` | Direct, same as above. |
-| `Net Amount` | `rawNet` | Direct, same as above. Per the research spike (§6), this cell can be **blank** on a real line — treat a missing net amount as `null`, not `0`, per this file's existing "don't coerce an unknown into a plausible number" rule. |
+| `Net Amount` | `rawNet` | Direct, same as above. A row can reach the parser with this cell **blank**, but that is usually a shifted row, not a missing net: see §5a. Otherwise treat a missing net amount as `null`, not `0`, per this file's existing "don't coerce an unknown into a plausible number" rule. |
 | `Document Date` | header `invoiceDate` | Table-header lookup, same mechanism `findMarkdownTableValue` already uses for `invoiceDate`/`invoiceNumber` — needs `Document Date` added to whatever pattern list feeds that lookup for this table. |
 | `Account ID` | *(not currently mapped to any `invoice`/`invoice_line` column)* | Recorded here for completeness; nothing in the current schema stores a vendor account id. Not a gap this template is asking to be closed — just documenting that the field exists in the source and is presently discarded. |
 | `Gross Total` / `Discount Total` / `Net Total` | header `totalGross` / `totalDiscount` / `totalNet` | Table-header lookup (see §4 quirk below for why this must be table-scoped rather than the document-wide label search `findLabeledAmount` does today). |
@@ -119,12 +119,24 @@ a document-wide "find a number near the word 'total'" search: a label search ove
 the whole flattened document text has no way to distinguish the clean `Gross Total`
 cell from the polluted cell sitting one column over in the same row.
 
-`Total Units` is a separate, clean column and does not share this problem — but per
-the research spike, it can still legitimately **disagree with the sum of the line
-items** (header said 7, four real lines summed to 8). That is not a parsing defect
-either; it is exactly the discrepancy `arithmeticCheck`/`pdfInspectorCrossCheck`
-exist to catch and route to review, and it should not be "fixed" by trusting one
-number over the other.
+`Total Units` is a separate, clean column and does not share this problem. It
+counts only lines sold as units; `Total Cases` counts lines sold as cases. An
+earlier version of this document said `Total Units` disagreed with the line items.
+Corrected 2026-11-07: that compared it against the sum of every line, cases
+included. Compared against the unit lines alone, it matches.
+
+## 5a. A blank discount shifts the net into the discount column
+
+When a line has no discount, the PDF prints that cell empty, and `pdf-inspector`
+closes the gap. The row reaches the parser as gross, then the net sitting in the
+`Discount Amount` column, then a blank `Net Amount`. Corrected 2026-11-07: this
+document used to call that a genuinely blank net. The owner confirmed against the
+printed invoice that the discount was the blank cell and the net equalled the gross.
+
+The row alone cannot show this, because it looks the same as a full discount with
+no net printed. The invoice's printed totals can, so `repairShiftedNetCells` moves
+the value back only when `Discount Total` and `Net Total` both balance afterwards.
+If they do not, the line stays as read and is flagged `doesn't add up`.
 
 ## 6. The real invoice this was verified against — structure only, no real figures
 
@@ -146,12 +158,9 @@ which is what's recorded here instead:
 
 - One page, exactly the three-table-plus-standalone-field structure in §2 — no
   additional tables, no additional format variation.
-- The totals table's `Total Units` column disagreed with the sum of the real line
-  items by exactly 1 — confirming §5's discrepancy note describes real, observed
-  vendor behavior, not a hypothetical.
-- One line's `Net Amount` cell was genuinely blank on the real document —
-  confirming §3's "treat a missing net amount as `null`" guidance is verified
-  against real vendor output, not merely anticipated.
+- The totals table counts case lines and unit lines separately (§5).
+- One line had no discount, and its net reached the parser in the discount column
+  (§5a).
 - The compound `Item Name` cell shape described in §2/§3/§4 (product name and
   embedded SKU, then size / case pack / closure type, bullet-separated) is
   exactly what the real invoice printed, character for character in form if not
