@@ -55,10 +55,10 @@ import path from "node:path";
 // ZipArchive(options)`, not `archiver('zip', options)` (the pre-8 API most
 // examples online still show).
 import { ZipArchive } from "archiver";
-import { and, eq, gte, inArray, isNotNull, lt, lte } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, lt } from "drizzle-orm";
 import { db } from "@/db";
-import { auditPacket, auditPacketFile, count, countLine, invoice, user } from "@/db/schema";
-import type { auditPacketSourceTableEnum } from "@/db/enums";
+import { auditPacket, auditPacketFile, count, countLine, invoice, user, vendor } from "@/db/schema";
+import type { auditPacketSourceTableEnum, invoiceStatusEnum } from "@/db/enums";
 import type { Actor } from "@/lib/authz";
 import { ConflictError, NotFoundError } from "@/lib/domain/errors";
 import { resolveStoredPath, sha256Hex } from "@/lib/storage/invoice-files";
@@ -187,6 +187,12 @@ export interface AuditPacketStatusResult {
   status: "ready" | "processing" | "unavailable";
   downloadUrl?: string;
   expiresAt?: string;
+  /**
+   * Present when `status === "ready"`: the same list written into
+   * manifest.json. Empty array = nothing omitted. Undefined only for a
+   * packet built before this field existed.
+   */
+  omitted?: AuditPacketOmittedInvoice[];
 }
 
 /**
@@ -206,6 +212,7 @@ export async function getAuditPacketStatus(actor: Actor, packetId: number): Prom
       status: "ready",
       downloadUrl: `/api/audit-packets/${row.id}`,
       expiresAt: row.expiresAt.toISOString(),
+      omitted: row.manifestJson?.omitted,
     };
   }
   // "expired" | "failed", or a "ready" row with no expiresAt (should never
@@ -217,6 +224,106 @@ export async function getAuditPacketStatus(actor: Actor, packetId: number): Prom
 // ---------------------------------------------------------------------------
 // buildAuditPacketJob
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Invoice selection + the omitted list (F10)
+// ---------------------------------------------------------------------------
+
+/**
+ * Why an invoice that looks like it belongs in a packet is not in it.
+ *
+ * - `unapproved`: status is anything but `approved` (and not `rejected`).
+ *   Only approved invoices are part of the record, so these are left out and
+ *   named. An UNDATED unapproved invoice is reported as `unapproved` (one
+ *   reason, one entry): it cannot be placed in a range at all, but the more
+ *   fundamental reason it is excluded is that it is not approved. It is
+ *   listed for every range, with `invoiceDate: null` so the date gap is
+ *   still visible.
+ * - `undated`: approved, but `invoice_date` is NULL, so it cannot be placed
+ *   in any range.
+ *
+ * Rejected invoices are NOT listed: a rejected invoice is not part of the
+ * record, and naming it would imply it was a candidate. Invoices dated
+ * outside the range are not listed either - that is the range doing its job.
+ */
+export type AuditPacketOmittedReason = "unapproved" | "undated";
+
+export interface AuditPacketOmittedInvoice {
+  invoiceId: number;
+  vendorName: string | null;
+  invoiceNumber: string | null;
+  status: (typeof invoiceStatusEnum)[number];
+  invoiceDate: string | null;
+  reason: AuditPacketOmittedReason;
+}
+
+/**
+ * Splits one organization's archived invoices into those that go in the
+ * packet (approved, dated within the range) and those that are named as
+ * omitted. Single source of truth for BOTH the pre-creation preview and the
+ * build job, so the screen and manifest.json cannot disagree. The
+ * `organizationId` predicate is in every query [AR-3]; vendor is joined on
+ * the same org so a foreign vendor id can never leak a name.
+ */
+async function selectInvoicesForPacket(
+  orgId: number,
+  dateFrom: string,
+  dateTo: string,
+): Promise<{ included: (typeof invoice.$inferSelect)[]; omitted: AuditPacketOmittedInvoice[] }> {
+  const rows = await db
+    .select({ inv: invoice, vendorName: vendor.name })
+    .from(invoice)
+    .leftJoin(vendor, and(eq(vendor.id, invoice.vendorId), eq(vendor.organizationId, orgId)))
+    .where(and(eq(invoice.organizationId, orgId), isNotNull(invoice.filePath)))
+    .orderBy(asc(invoice.id));
+
+  const included: (typeof invoice.$inferSelect)[] = [];
+  const omitted: AuditPacketOmittedInvoice[] = [];
+  for (const { inv, vendorName } of rows) {
+    if (inv.status === "rejected") continue;
+    const date = inv.invoiceDate;
+    const inRange = date != null && date >= dateFrom && date <= dateTo;
+    let reason: AuditPacketOmittedReason | null = null;
+    if (inv.status !== "approved") {
+      // Undated or in range; an unapproved invoice dated outside the range
+      // would not have been in the packet either way.
+      if (date == null || inRange) reason = "unapproved";
+    } else if (date == null) {
+      reason = "undated";
+    } else if (inRange) {
+      included.push(inv);
+    }
+    if (reason) {
+      omitted.push({
+        invoiceId: inv.id,
+        vendorName: vendorName ?? null,
+        invoiceNumber: inv.invoiceNumber ?? null,
+        status: inv.status,
+        invoiceDate: date ?? null,
+        reason,
+      });
+    }
+  }
+  return { included, omitted };
+}
+
+export interface AuditPacketPreview {
+  dateFrom: string;
+  dateTo: string;
+  /** Approved, dated-in-range invoices that WILL be in the ZIP. */
+  includedInvoiceCount: number;
+  /** Invoices that will NOT be, each named with its reason. */
+  omitted: AuditPacketOmittedInvoice[];
+}
+
+/**
+ * Shows, before a packet is requested, exactly which invoices would be left
+ * out. Read-only; same selection function the build job uses.
+ */
+export async function previewAuditPacket(actor: Actor, input: CreateAuditPacketInput): Promise<AuditPacketPreview> {
+  const { included, omitted } = await selectInvoicesForPacket(actor.organizationId, input.dateFrom, input.dateTo);
+  return { dateFrom: input.dateFrom, dateTo: input.dateTo, includedInvoiceCount: included.length, omitted };
+}
 
 interface AuditPacketFileCandidate {
   organizationId: number;
@@ -305,17 +412,11 @@ export async function buildAuditPacketJob(packetId: number): Promise<void> {
     // Read from the row, never from a caller — the whole point of [AR-3].
     const orgId = packet.organizationId;
 
-    const invoiceRows = await db
-      .select()
-      .from(invoice)
-      .where(
-        and(
-          eq(invoice.organizationId, orgId),
-          isNotNull(invoice.filePath),
-          gte(invoice.invoiceDate, packet.dateFrom),
-          lte(invoice.invoiceDate, packet.dateTo),
-        ),
-      );
+    const { included: invoiceRows, omitted } = await selectInvoicesForPacket(
+      orgId,
+      packet.dateFrom,
+      packet.dateTo,
+    );
 
     const { startInclusive, endExclusive } = countRangeBounds(packet.dateFrom, packet.dateTo);
     const countRows = await db
@@ -427,6 +528,7 @@ export async function buildAuditPacketJob(packetId: number): Promise<void> {
     const manifest = {
       fileCount: candidates.length,
       totalSha256,
+      omitted,
       files: candidates.map((c) => ({
         path: c.filePath,
         sourceTable: c.sourceTable,

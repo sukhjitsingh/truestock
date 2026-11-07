@@ -31,6 +31,8 @@ import {
   createAuditPacket,
   buildAuditPacketJob,
   getAuditPacketStatus,
+  previewAuditPacket,
+  type AuditPacketPreview,
   type AuditPacketStatusResult,
 } from "@/lib/domain/audit-packets";
 import {
@@ -322,5 +324,20 @@ export async function getAuditPacketAction(
     const actor = await requireRole("owner");
     const parsed = getAuditPacketSchema.parse(input);
     return getAuditPacketStatus(actor, parsed.packetId);
+  });
+}
+
+/**
+ * Owner-only, read-only preview for the audit packet form: how many approved
+ * invoices a packet for this range would contain, and every invoice that
+ * would be omitted with its reason (`unapproved` | `undated`). Same
+ * selection the build job runs, so the screen matches manifest.json.
+ * Takes the same `{dateFrom, dateTo}` as `createAuditPacketAction`.
+ */
+export async function previewAuditPacketAction(input: unknown): Promise<ActionResult<AuditPacketPreview>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = createAuditPacketSchema.parse(input);
+    return previewAuditPacket(actor, parsed);
   });
 }

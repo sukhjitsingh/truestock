@@ -1663,6 +1663,17 @@ export const auditPacket = mysqlTable(
         sourceId: number;
         sha256: string;
       }>;
+      // Invoices that look like they belong in the range but are not in the
+      // ZIP, each with its single reason (F10). Absent on packets built
+      // before this field existed - read it as "not recorded", not "none".
+      omitted?: Array<{
+        invoiceId: number;
+        vendorName: string | null;
+        invoiceNumber: string | null;
+        status: (typeof invoiceStatusEnum)[number];
+        invoiceDate: string | null;
+        reason: "unapproved" | "undated";
+      }>;
     }>(),
     // Set to now() + 10min the moment `status` becomes `ready` — the
     // download-link TTL 04-slices.md's acceptance criteria require, enforced

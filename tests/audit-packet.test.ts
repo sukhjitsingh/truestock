@@ -89,22 +89,32 @@ mock.module("@/lib/auth", () => ({
 // Fixture helpers, beyond createFixtures().
 // ---------------------------------------------------------------------------
 
-/** An invoice with a REAL file written to INVOICE_STORAGE_DIR — the shape buildAuditPacketJob can actually archive. */
+/**
+ * An invoice with a REAL file written to INVOICE_STORAGE_DIR — the shape buildAuditPacketJob can actually archive.
+ * Defaults to `approved`: only approved invoices go in a packet (F10). Fixtures are synthetic bytes.
+ */
 async function insertInvoiceWithFile(
   organizationId: number,
-  invoiceDate: string,
+  invoiceDate: string | null,
   bytes: Buffer,
+  extra: {
+    status?: (typeof invoiceTable.$inferInsert)["status"];
+    vendorId?: number | null;
+    invoiceNumber?: string | null;
+  } = {},
 ): Promise<{ id: number; filePath: string; sha256: string }> {
   const sha256 = sha256Hex(bytes);
   const [inserted] = await db
     .insert(invoiceTable)
     .values({
       organizationId,
-      status: "needs_review",
+      status: extra.status ?? "approved",
       source: "pdf",
       fileSha256: sha256,
       fileSizeBytes: bytes.byteLength,
       invoiceDate,
+      vendorId: extra.vendorId ?? null,
+      invoiceNumber: extra.invoiceNumber ?? null,
     })
     .$returningId();
   const filePath = `${organizationId}/${inserted.id}.pdf`;
@@ -770,5 +780,150 @@ describe("ZIP manifest", () => {
       "manifest.json",
     ].sort();
     expect(listing).toEqual(expectedNames);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F10 — only approved invoices; every omission is named
+// ---------------------------------------------------------------------------
+
+describe("F10: audit packet invoice selection", () => {
+  const RANGE = { dateFrom: "2026-01-01", dateTo: "2026-01-31" };
+
+  async function buildAndLoad() {
+    const { packetId } = await createAuditPacket(fx.owner, RANGE);
+    await buildAuditPacketJob(packetId);
+    const [row] = await db.select().from(auditPacket).where(eq(auditPacket.id, packetId));
+    expect(row.status).toBe("ready");
+    return row;
+  }
+
+  test("f10_status_filter — only approved invoices are in the ZIP and the ledger; reviewed/needs_review/uploaded/rejected are not", async () => {
+    const approved = await insertInvoiceWithFile(fx.organizationId, "2026-01-10", Buffer.from("approved"));
+    for (const status of ["uploaded", "needs_review", "reviewed", "rejected"] as const) {
+      await insertInvoiceWithFile(fx.organizationId, "2026-01-11", Buffer.from(`not approved ${status}`), { status });
+    }
+    const row = await buildAndLoad();
+    const invoiceIds = row.manifestJson!.files.filter((f) => f.sourceTable === "invoice").map((f) => f.sourceId);
+    expect(invoiceIds).toEqual([approved.id]);
+    const ledger = await db.select().from(auditPacketFile).where(eq(auditPacketFile.auditPacketId, row.id));
+    expect(ledger.filter((r) => r.sourceTable === "invoice").map((r) => r.sourceId)).toEqual([approved.id]);
+  });
+
+  test("f10_unapproved_reported — an unapproved in-range invoice is named with vendor, number, status, date and reason unapproved; rejected is not listed", async () => {
+    const pending = await insertInvoiceWithFile(fx.organizationId, "2026-01-12", Buffer.from("pending"), {
+      status: "needs_review",
+      vendorId: fx.vendorId,
+      invoiceNumber: "SYN-0001",
+    });
+    await insertInvoiceWithFile(fx.organizationId, "2026-01-13", Buffer.from("rejected"), { status: "rejected" });
+    // Unapproved but OUT of range is simply not a candidate.
+    await insertInvoiceWithFile(fx.organizationId, "2026-03-13", Buffer.from("later"), { status: "needs_review" });
+
+    const row = await buildAndLoad();
+    expect(row.manifestJson!.omitted).toEqual([
+      {
+        invoiceId: pending.id,
+        vendorName: expect.any(String),
+        invoiceNumber: "SYN-0001",
+        status: "needs_review",
+        invoiceDate: "2026-01-12",
+        reason: "unapproved",
+      },
+    ]);
+    expect(row.manifestJson!.omitted![0].vendorName!.length).toBeGreaterThan(0);
+  });
+
+  test("f10_undated_reported — an approved invoice with no date is omitted as undated, named in manifest.json and in the ready status", async () => {
+    const undated = await insertInvoiceWithFile(fx.organizationId, null, Buffer.from("undated"), {
+      invoiceNumber: "SYN-U1",
+    });
+    const row = await buildAndLoad();
+    expect(row.manifestJson!.fileCount).toBe(0);
+    expect(row.manifestJson!.omitted).toEqual([
+      {
+        invoiceId: undated.id,
+        vendorName: null,
+        invoiceNumber: "SYN-U1",
+        status: "approved",
+        invoiceDate: null,
+        reason: "undated",
+      },
+    ]);
+    const status = await getAuditPacketStatus(fx.owner, row.id);
+    expect(status.status).toBe("ready");
+    expect(status.omitted).toEqual(row.manifestJson!.omitted);
+
+    // manifest.json inside the ZIP carries it too.
+    const { resolveStoredPath } = await import("@/lib/storage/invoice-files");
+    const raw = execFileSync("unzip", ["-p", resolveStoredPath(row.filePath!), "manifest.json"], { encoding: "utf8" });
+    expect(JSON.parse(raw).omitted).toEqual(row.manifestJson!.omitted);
+  });
+
+  test("f10_undated_unapproved_single_entry — an undated unapproved invoice appears exactly once, as unapproved with a null date", async () => {
+    const inv = await insertInvoiceWithFile(fx.organizationId, null, Buffer.from("undated pending"), {
+      status: "needs_review",
+    });
+    const row = await buildAndLoad();
+    const entries = row.manifestJson!.omitted!.filter((o) => o.invoiceId === inv.id);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].reason).toBe("unapproved");
+    expect(entries[0].invoiceDate).toBeNull();
+  });
+
+  test("f10_no_omissions — a clean range has an empty omitted list, not an absent one", async () => {
+    await insertInvoiceWithFile(fx.organizationId, "2026-01-10", Buffer.from("clean"));
+    const row = await buildAndLoad();
+    expect(row.manifestJson!.omitted).toEqual([]);
+  });
+
+  test("f10_org_scoping — another tenant's unapproved/undated invoices and vendor names never appear in omitted or in the ZIP", async () => {
+    await insertInvoiceWithFile(fx.otherOrganizationId, "2026-01-10", Buffer.from("their approved"));
+    await insertInvoiceWithFile(fx.otherOrganizationId, "2026-01-10", Buffer.from("their pending"), {
+      status: "needs_review",
+      vendorId: fx.otherVendorId,
+    });
+    await insertInvoiceWithFile(fx.otherOrganizationId, null, Buffer.from("their undated"));
+    const mine = await insertInvoiceWithFile(fx.organizationId, "2026-01-10", Buffer.from("mine pending"), {
+      status: "needs_review",
+      vendorId: fx.vendorId,
+    });
+    const row = await buildAndLoad();
+    expect(row.manifestJson!.fileCount).toBe(0);
+    expect(row.manifestJson!.omitted!.map((o) => o.invoiceId)).toEqual([mine.id]);
+    expect(row.manifestJson!.omitted![0].vendorName).not.toBeNull();
+  });
+
+  test("previewAuditPacketAction — owner sees included count and the omitted list before creating; same list the build then writes", async () => {
+    await insertInvoiceWithFile(fx.organizationId, "2026-01-10", Buffer.from("in"));
+    const pending = await insertInvoiceWithFile(fx.organizationId, "2026-01-11", Buffer.from("pending"), {
+      status: "reviewed",
+    });
+    const undated = await insertInvoiceWithFile(fx.organizationId, null, Buffer.from("undated"));
+    await insertInvoiceWithFile(fx.otherOrganizationId, null, Buffer.from("foreign undated"));
+
+    sessionUserId = fx.owner.userId;
+    const { previewAuditPacketAction } = await import("@/app/actions/invoices");
+    const result = await previewAuditPacketAction(RANGE);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.includedInvoiceCount).toBe(1);
+    expect(result.data.omitted.map((o) => [o.invoiceId, o.reason])).toEqual([
+      [pending.id, "unapproved"],
+      [undated.id, "undated"],
+    ]);
+
+    const row = await buildAndLoad();
+    expect(row.manifestJson!.omitted).toEqual(result.data.omitted);
+  });
+
+  test("previewAuditPacketAction — manager, staff and no session are refused; bad range refused", async () => {
+    const { previewAuditPacketAction } = await import("@/app/actions/invoices");
+    for (const id of [fx.manager.userId, fx.staff.userId, null]) {
+      sessionUserId = id;
+      expect((await previewAuditPacketAction(RANGE)).ok).toBe(false);
+    }
+    sessionUserId = fx.owner.userId;
+    expect((await previewAuditPacketAction({ dateFrom: "2026-01-31", dateTo: "2026-01-01" })).ok).toBe(false);
   });
 });

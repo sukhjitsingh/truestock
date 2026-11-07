@@ -54,7 +54,20 @@
  */
 import { useEffect, useState } from "react";
 import { FileArchive, Download, Loader2, AlertCircle, CheckCircle, RotateCcw } from "lucide-react";
-import { createAuditPacketAction, getAuditPacketAction } from "@/app/actions/invoices";
+import Link from "next/link";
+import {
+  createAuditPacketAction,
+  getAuditPacketAction,
+  previewAuditPacketAction,
+} from "@/app/actions/invoices";
+import type { AuditPacketOmittedInvoice } from "@/lib/domain/audit-packets";
+import {
+  packetOmissionsView,
+  previewKey,
+  previewView,
+  type OmittedRowView,
+  type PreviewState,
+} from "@/lib/audit-packet-omissions";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
 import { StatusPill, type PillTone } from "@/components/ui/status-pill";
@@ -76,6 +89,29 @@ function validateRange(dateFrom: string, dateTo: string): string | null {
   if (dateFrom > dateTo) return "End date must be on or after the start date.";
   if (dateTo > todayIso()) return "End date cannot be in the future.";
   return null;
+}
+
+/** The "left out" rows, shared by the pre-creation preview and the ready packet. */
+function OmittedList({ rows }: { rows: OmittedRowView[] }) {
+  return (
+    <ul className="flex flex-col divide-y divide-border/80 rounded-lg border border-border/80">
+      {rows.map((r) => (
+        <li key={r.invoiceId} className="flex flex-wrap items-center justify-between gap-2 p-3">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="text-row-subtitle font-medium text-foreground">{r.title}</span>
+            <span className="text-caption text-muted-foreground">{r.subtitle}</span>
+            <span className="text-caption text-warning">{r.reason}</span>
+          </div>
+          <Link
+            href={r.href}
+            className="inline-flex min-h-tap-min items-center rounded-md border border-border px-4 text-label uppercase font-semibold text-foreground hover:bg-muted"
+          >
+            Open invoice
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 function statusTone(status: Status): PillTone {
@@ -114,6 +150,47 @@ export function AuditPacket() {
   const [status, setStatus] = useState<Status | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
+  const [packetOmitted, setPacketOmitted] = useState<AuditPacketOmittedInvoice[] | undefined>(undefined);
+
+  const [preview, setPreview] = useState<PreviewState | null>(null);
+  const rangeValid = validateRange(dateFrom, dateTo) === null;
+
+  // Preview for the chosen range. A result is tagged with the range it was
+  // asked for and `cancelled` drops any response that lands after the range
+  // changed, so an earlier range's list can never show under a later one.
+  // A failure is stored as an error, never as an empty list: empty means
+  // "nothing omitted".
+  useEffect(() => {
+    if (!rangeValid || status != null) return;
+    const key = previewKey(dateFrom, dateTo);
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await previewAuditPacketAction({ dateFrom, dateTo });
+        if (cancelled) return;
+        if (!result.ok) {
+          setPreview({ key, status: "error", message: result.error.message });
+          return;
+        }
+        setPreview({
+          key,
+          status: "ok",
+          includedInvoiceCount: result.data.includedInvoiceCount,
+          omitted: result.data.omitted,
+        });
+      } catch {
+        if (cancelled) return;
+        setPreview({
+          key,
+          status: "error",
+          message: "Could not check which invoices will be left out. Check your connection and try again.",
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [dateFrom, dateTo, rangeValid, status]);
 
   // Polls only while a packet is in flight — cleared the instant `status`
   // leaves "processing" (including on unmount), so navigating away never
@@ -137,6 +214,7 @@ export function AuditPacket() {
           setStatus("ready");
           setDownloadUrl(result.data.downloadUrl ?? null);
           setExpiresAt(result.data.expiresAt ?? null);
+          setPacketOmitted(result.data.omitted);
         } else if (result.data.status === "unavailable") {
           setStatus("unavailable");
         }
@@ -162,6 +240,8 @@ export function AuditPacket() {
     setStatus(null);
     setDownloadUrl(null);
     setExpiresAt(null);
+    setPacketOmitted(undefined);
+    setPreview(null);
     setError(null);
     setFieldErrors({});
   }
@@ -217,7 +297,7 @@ export function AuditPacket() {
         {status === "processing" ? (
           <div className="flex flex-col gap-2">
             <p className="text-row-subtitle text-muted-foreground">
-              Building your compliance audit archive containing supplier invoices, count snapshot ledgers, and SHA-256 integrity manifest for the selected date range.
+              Building a ZIP of the approved, dated invoices in this range, count snapshots, and a SHA-256 manifest.
             </p>
             <p className="text-caption text-muted-foreground">
               This process runs in the background. You can stay on this page or return later.
@@ -248,6 +328,8 @@ export function AuditPacket() {
             </div>
           </div>
         ) : null}
+
+        {status === "ready" ? <ReadyOmissions omitted={packetOmitted} /> : null}
 
         {status === "unavailable" ? (
           <div className="flex items-center gap-2 text-negative">
@@ -282,8 +364,9 @@ export function AuditPacket() {
         <h2 className="text-label uppercase text-muted-foreground font-semibold">Create audit packet</h2>
       </div>
       <p className="text-row-subtitle text-muted-foreground">
-        Pick a date range to export every invoice and count in it, plus a SHA-256 manifest, as a
-        ZIP. Building it happens in the background; a download link is emailed to you and appears
+        Pick a date range to export its approved, dated invoices and count snapshots, plus a
+        SHA-256 manifest, as a ZIP. Invoices that are not approved or have no date are left out
+        and listed below before you create it. Building it happens in the background; a download link is emailed to you and appears
         here once it&apos;s ready.
       </p>
 
@@ -311,6 +394,8 @@ export function AuditPacket() {
         </Field>
       </div>
 
+      <PreviewPanel view={previewView(preview, dateFrom, dateTo, rangeValid)} />
+
       {error ? (
         <div className="flex items-center gap-2 rounded-lg bg-negative-bg p-3 text-caption text-negative" role="alert">
           <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
@@ -324,5 +409,49 @@ export function AuditPacket() {
         </Button>
       </div>
     </form>
+  );
+}
+
+function PreviewPanel({ view }: { view: ReturnType<typeof previewView> }) {
+  if (view.kind === "idle") return null;
+  if (view.kind === "loading") {
+    return (
+      <p className="inline-flex items-center gap-1.5 text-caption text-muted-foreground" role="status">
+        <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> Checking which invoices are in this range…
+      </p>
+    );
+  }
+  if (view.kind === "error") {
+    return (
+      <div className="flex items-center gap-2 rounded-lg bg-negative-bg p-3 text-caption text-negative" role="alert">
+        <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
+        <span>{view.message}</span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-3" role="status">
+      <p className="text-row-subtitle font-semibold text-foreground">{view.includedText}</p>
+      {view.omittedHeading ? (
+        <>
+          <p className="text-row-subtitle font-medium text-warning">{view.omittedHeading}</p>
+          <OmittedList rows={view.rows} />
+        </>
+      ) : (
+        <p className="text-caption text-muted-foreground">No invoices in this range will be left out.</p>
+      )}
+    </div>
+  );
+}
+
+function ReadyOmissions({ omitted }: { omitted: AuditPacketOmittedInvoice[] | undefined }) {
+  const v = packetOmissionsView(omitted);
+  return (
+    <div className="flex flex-col gap-3">
+      <p className={`text-row-subtitle font-medium ${v.kind === "list" ? "text-warning" : "text-muted-foreground"}`}>
+        {v.heading}
+      </p>
+      {v.kind === "list" ? <OmittedList rows={v.rows} /> : null}
+    </div>
   );
 }
