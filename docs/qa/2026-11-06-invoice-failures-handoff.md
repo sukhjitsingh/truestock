@@ -33,6 +33,10 @@ F2 and F3 are in `components/count/count-leg.tsx` only and have nothing to do wi
 
 ## Open findings
 
+> **Status, 2026-11-07:** all eight findings and the three minor items are fixed on
+> `feat/phase-2.5-invoice-automation`. What each proof covers, and what stays
+> unverified, is in `docs/open-items.md` #47. The findings below are kept as found.
+
 The order is a suggestion: wrong numbers first, then what blocks verifying the rest.
 
 ### 1. F1. Approving a real invoice posts no costs, silently

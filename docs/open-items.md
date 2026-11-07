@@ -2187,3 +2187,76 @@ posting no costs with nothing on screen to show it. The findings, code pointers,
 suggested order and decisions needed are in
 `docs/qa/2026-11-06-invoice-failures-handoff.md`. Close this item when that
 document's "Open findings" are closed or moved here individually.
+
+**Status, 2026-11-07: all eight findings and the three minor items are fixed
+locally on `feat/phase-2.5-invoice-automation`, not pushed. This item stays open
+for the three unverified paths below.** The plan is `docs/plans/invoice-qa-fixes/`.
+
+**Proven on real invoice A, through the UI against a production build, with the
+result read back from the database:**
+
+- **F1:** approval reported 3 of 4 lines posted and named the skipped line.
+  `product_cost_history` gained exactly three rows, and each unit cost equals the
+  line's net divided by its units.
+- **F5:** the free-goods line posted nothing and showed "net of zero (free goods)".
+- **F4:** the blank-discount line was repaired, the arithmetic and cross-check
+  passed, and the only alert left is a true one.
+- **F6:** three aliases were learned on item-code keys. Two lines sharing a code
+  made one alias.
+- **F7:** a second upload was refused with a link to the existing invoice. After
+  Return released the claim, the same file was accepted.
+- **F8:** a failed extraction shows the reason and Retry, and Approve is disabled
+  at 0 lines. This one was driven on real scan B.
+- **F10:** the packet holds approved invoices only and names all four omissions,
+  on screen and in the manifest.
+- **Minors:** the size warning shows, the currency field is empty, and the end-date
+  message appears once.
+- **Item Name reading (added 2026-11-07):** item code and case pack read correctly
+  on all four lines.
+
+**Gates at `a5ef5f2`:** 1384 unit and integration tests pass, 5 todo, 0 fail.
+Playwright 65 of 65, none skipped, with `E2E_REQUIRE_ALL=1`. Typecheck, lint and
+production build pass. Code and security reviews found nothing blocking. Those
+reviews read the code and ran nothing.
+
+**Not verified. Skipped means unverified, never passed:**
+
+1. **Vision.** There is no `ANTHROPIC_API_KEY`, so no scanned document has been read.
+   That also leaves Item Name reading on the Vision path unit-tested only.
+2. **Invoice B's lines.** It is a scan, so it needs Vision.
+3. **F9 past the key check, and on Hostinger.** Scan B reached the Vision route and
+   stopped at `EXTRACTION_UNAVAILABLE`. The canary is in `docs/go-live.md`.
+
+**Built and tested, not driven with a real file:**
+
+- Re-matching on a code-key alias from a later upload. The same file is now refused,
+  so it needs a second real invoice from this vendor.
+- F7's refusal at confirm time, which is a race. A test covers it.
+
+**Found during proof, not fixed:**
+
+- A packet that fails on a missing stored file says only "expired or the export
+  failed to build" and names no invoice.
+- Uploads that were never confirmed appear as undated omissions in every packet
+  range. Over time that could teach the owner to ignore the list.
+- Approved invoices with a NULL `file_path` drop out of a packet silently: neither
+  included nor named.
+- `DuplicateInvoice.invoiceId` reaches a manager who cannot open that invoice. It
+  carries no money. Low severity, from the security review.
+- A vintage after a 2–3 digit number (`MERLOT 13 2019`) reads as an item code. The
+  reviewer confirms each match, so the harm is limited.
+- A sum or cross-check failure still flags every line.
+- The catalog holds these products at 750 ml or 355 ml while the invoice says 1 L,
+  so costs posted with the size warning showing. Real use needs 1 L product rows.
+
+**Decisions nobody explicitly made:**
+
+- A pack read from the item name overrides a remembered alias pack.
+- The wording of the F7 refusal.
+- `live_file_sha256` has no backfill (`02-architecture.md`). This holds only while
+  production has never been deployed. Invoices already live on a migrated database
+  would hold no claim.
+
+**Differences from the approved mockups:** the "Approve: post 3 costs, skip 2" button
+label and the pack "Remembered" chip were not built. The panel lists no per-line
+unit costs.

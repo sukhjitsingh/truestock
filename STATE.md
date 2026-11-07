@@ -1,6 +1,6 @@
 # Truestock — current state
 
-Where the project actually is. Updated 2026-11-06.
+Where the project actually is. Updated 2026-11-07.
 
 This file answers one question: **what is proven, what is merely built, and what
 is next.** The distinction matters more here than the feature list, because this
@@ -15,6 +15,11 @@ project has twice shipped something that looked finished and was not.
 ---
 
 ## One-line status
+
+**The eight invoice failures from the 2026-11-06 QA run are fixed locally on
+`feat/phase-2.5-invoice-automation` (2026-11-07, not pushed).** Each was proven with
+a real text invoice through the UI and confirmed in the database. Vision and
+scanned invoices remain unverified because there is no API key (open-item #47).
 
 **Phase 2.5 is implementation-complete on `feat/phase-2.5-invoice-automation`.**
 All five planned A–E slices are merged into that integration branch: secure
@@ -115,6 +120,11 @@ vendors, and a full timed count.
 
 Verified means *observed running*, not reviewed or typechecked.
 
+**Invoice path on a real text invoice (2026-11-07).** Upload, extraction, review,
+partial cost posting, alias learning, duplicate refusal and the audit packet were
+driven through the UI against a production build and read back from the database.
+Per-finding results are in open-item #47.
+
 | Area | Evidence |
 |---|---|
 | **Schema + migrations** | Full chain `0000 → … → 0009` applies clean from empty to MariaDB 11.8 in Docker. Phase 2.5 verified all ten migrations together in an isolated database; composite tenant FKs reject cross-tenant ids (1452), generated uniqueness constraints hold, MariaDB JSON aliases round-trip through mysql2, and decimal costs remain exact |
@@ -210,6 +220,10 @@ orphaning a real product.
 ## What is built but unproven
 
 Written, reviewed, typechecked — never observed working.
+
+**Scanned invoices (2026-11-07).** Vision has never run: there is no API key. Scans
+are routed straight to it and stop at `EXTRACTION_UNAVAILABLE`, so invoice B's lines
+and the F9 path on Hostinger are unverified (open-item #47).
 
 - **The entire redesigned mobile counting surface (Phase 2, 2026-08-14).**
   This is the biggest unproven thing in the project right now, and it is
@@ -345,6 +359,11 @@ Written, reviewed, typechecked — never observed working.
 
 ## Recent history
 
+- **2026-11-07** — **Invoice QA failures fixed (docs/plans/invoice-qa-fixes, all four
+  gates approved by the owner).** F1, F4, F5, F6, F7, F8, F9, F10 and three minor
+  items, plus reading the item code, case pack and size from the Item Name column.
+  1384 tests pass, Playwright 65 of 65 with none skipped, reviews found nothing
+  blocking. Vision is still unverified; the rest is in open-item #47.
 - **2026-11-06** — **Merge QA, count queue fixed, invoice failures handed off.**
   A real-phone and real-invoice QA of the Phase 2.5 + `main` merge found ten
   failures that every automated suite passed. Two were in the count queue (a

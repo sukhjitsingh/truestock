@@ -14,7 +14,9 @@
 - [x] Slice 6 — F6 rules: confidence, scoping, deposits, shared keys
 - [x] Slice 7 — F7 happy path: migration 0011, claim, named refusal
 - [x] Slice 8 — F7 edges: rejected copy, race, Retry and Return
-- [ ] Slice 9 — proof on real invoices, build, reviews, STATE.md, open item #47
+- [x] Slice 9 — proof on real invoices, build, reviews, STATE.md, open item #47
+  (invoice A only; Vision, invoice B's lines and F9 on Hostinger stay unverified,
+  see open item #47)
 
 ## Notes for a fresh session
 Covers F1, F6 and F7 from `docs/qa/2026-11-06-invoice-failures-handoff.md`, tracked
