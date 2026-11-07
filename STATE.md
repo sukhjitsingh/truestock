@@ -42,9 +42,17 @@ not just false now, it is comprehensively so.
 
 **What has NOT happened is a count.** Four sessions, 8 lines between them. Every
 mechanism is proven and nothing has been measured: no timed pass, no full
-five-location walk, 90 of 101 products unpriced. The project moved from "does it
+six-location walk, 90 of 101 products unpriced. The project moved from "does it
 work at all" to "does it work at scale" in one day, and this file should not be
 read as saying more than that.
+
+**Phase 2.9 (field validation and the owner's data) status as of 2026-11-07:
+nothing is done.** Of its eleven items, five have partial evidence and six have
+none. The shared dev DB still has 9 of 99 products costed, 0 case sizes, 0 pars,
+0 vendors and no wine producers. Invoice approval posts costs, but so far only
+into test databases. There has been no timed count. The 2026-11-06 queue fix
+(#46) is proven only by e2e tests, not on the phone. Vision has never run
+(#47). The per-item breakdown is in ROADMAP.md, Phase 2.9.
 
 **Phase 2 — the UI redesign — shipped 2026-08-14** (PR #13, merge `9cbf64b`).
 Nine implementation commits behind the Gate 1 approval: design tokens and
@@ -57,6 +65,9 @@ filters, type-ahead search, and `prototypes/*.html` regenerated from
 touched in the back office was opened in a real browser; not one of the
 redesigned mobile counting screens has been on a phone.** That asymmetry is the
 main thing this file now has to say — see "What is built but unproven".
+*(Update 2026-11-07: the redesign has since been on a phone twice, on 2026-10-25
+and 2026-11-06. It has been used, but not evaluated: none of the four §6 UI bets
+has a verdict.)*
 
 **Also as of 2026-08-12, the app sets itself up.** Phases 1 and 1.5 shipped:
 locations are manageable from the app rather than by SQL, cost and case size are
@@ -246,12 +257,21 @@ and the F9 path on Hostinger are unverified (open-item #47).
   That is exactly the shape of failure this file exists to name, so treat the
   counting app as re-entering "never been on a phone" until Phase 2.9 puts it
   there.
+  **Update 2026-11-07:** the phone sessions on 2026-10-25 and 2026-11-06 ran on a
+  build that contains the redesign, so "never been on a phone" no longer holds.
+  What is still unproven is the evaluation. None of the four bets in
+  `docs/phone-count-test.md` §6 has a verdict. The 2026-10-25 recording also found
+  new issues to fix or accept before a real count: V1 (Save drops a fill that was
+  chosen but not added), A18 (the tab bar stays live during entry), A19 (Android
+  Back), A20 (Submit and Close have no pre-flight check), DB-1 (`$0.00` shown as
+  if it were a value) and DB-4 (a count can close with locations never visited).
 - **The counting app on a phone, AT SCALE.** Scan, tenths, sealed quantities,
   scan-to-enroll and the locked-location leg have each now run on a handset
   (2026-08-12) — so this entry is no longer "does it work" but "does it hold
   up". Nothing here has been done more than a few times in a row: the longest
-  session recorded **4 lines**, no pass has covered all five locations, and
-  nothing has been timed. Fatigue, a wrong tap at bottle 80, a leg switch made
+  session recorded **4 lines**, no pass has covered all six locations (count #3
+  on 2026-10-25 touched 2 and closed with 4 never visited), the stray-bottle
+  sheet has never been opened, and nothing has been timed. Fatigue, a wrong tap at bottle 80, a leg switch made
   in a hurry — none of that has been anywhere near this app. The 2026-08-01 UI pass
   (larger tap targets, safe-area insets, touch-manipulation, bigger fill and
   quantity buttons) is built and typechecked; **the fill pad has now been driven
@@ -322,10 +342,14 @@ and the F9 path on Hostinger are unverified (open-item #47).
   browser and a database.**
 - ~~**The offline write queue**~~ and ~~**the production CSP**~~ — both
   **verified 2026-08-12** and moved to the table above.
-  Two narrower gaps survive from the queue and are worth keeping visible: the
-  **mount-time flush** has never run (only the `online` listener was observed),
-  and the queue has never held **more than one write at a time**, so ordered
-  replay of several writes to the same line is still only reasoned about.
+  ~~Two narrower gaps survive from the queue: the mount-time flush has never run,
+  and the queue has never held more than one write.~~ **Superseded 2026-11-06.**
+  The first phone test with more than one queued write **failed** twice. An older
+  queued write overwrote a correction (F2), and nothing retried after the phone
+  fell over to mobile data (F3). The fix in `components/count/count-leg.tsx` (a
+  single lock, oldest write first, a 15 s retry timer and a flush on mount) is
+  proven only by 3 e2e specs on a production build, not on the phone. What is
+  left is in open-item #46.
 - **Phase 2.5 at operating scale.** Every A–E capability has database-backed
   coverage, the review/cost/audit-packet surfaces have run in isolated browsers,
   and a real Southern Glazer's text-PDF shape is covered. What has not happened
@@ -361,6 +385,12 @@ and the F9 path on Hostinger are unverified (open-item #47).
 
 ## Recent history
 
+- **2026-11-07** — **Phase 2.9 evaluated against the evidence.** None of the
+  eleven items is done, five are partial, and six have not started. ROADMAP.md
+  Phase 2.9 was rewritten to match (`81d47ea`). There are six locations, not five.
+  The queue gaps are replaced by the #46 phone checks. The Phase 2.5 field metric
+  and the Vision key are added as go-live blockers. So are the pre-count findings
+  from the 2026-10-25 recording.
 - **2026-11-07** — **Pushed and opened for merge.** The QA fixes and the merged
   count-queue fix are on `origin/feat/phase-2.5-invoice-automation`. PR #37 into
   `main` is open and has no conflicts. The repo is public, so real supplier
@@ -1334,7 +1364,13 @@ suite proves the software contract, not the operating claims.
    2 UI bets in `docs/phone-count-test.md`. A 2026-08-21 query of the shared
    dev volume still had 9 of 99 active products costed, 0 case sizes,
    0 pars and 0 vendors; isolated Phase 2.5 verification stacks do not change
-   that business data.
+   that business data. **Start with the two things that would quietly corrupt the
+   first real count.** First, prove the #46 queue fix on the phone: two or more
+   queued writes, a correction arriving in the right order, falling over to
+   mobile data, and the flush after the app is killed. Second, fix or accept the
+   pre-count findings V1, A18, A20, DB-1 and DB-4. Then enter data through real
+   invoices (add the 1 L product rows first, #47) and run Vision with a real key.
+   The status of each item is in ROADMAP.md, Phase 2.9.
 3. **Phase 3 — go-live.** Only after Phase 2.9. Start the real standalone
    artifact with `node .next/standalone/server.js`, exercise `pdf-inspector`
    from that artifact, run migrations `0000 → … → 0011` against production,
