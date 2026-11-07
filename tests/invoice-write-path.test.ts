@@ -873,15 +873,22 @@ describe("PUT /api/invoices/[id]/file", () => {
       firstChunkDelivered = resolve;
     });
 
-    const slowBody = new ReadableStream<Uint8Array>({
-      async pull(controller) {
-        controller.enqueue(new TextEncoder().encode("tampered "));
-        firstChunkDelivered();
-        await bodyReleased;
-        controller.enqueue(new TextEncoder().encode("replacement bytes"));
-        controller.close();
+    // highWaterMark 0: pull runs only when the handler actually reads. The
+    // default of 1 pulls at construction, which resolved `handlerIsReading`
+    // before the status check, so under load confirm landed first and the
+    // fast path answered (5 of 25 runs failed that way).
+    const slowBody = new ReadableStream<Uint8Array>(
+      {
+        async pull(controller) {
+          controller.enqueue(new TextEncoder().encode("tampered "));
+          firstChunkDelivered();
+          await bodyReleased;
+          controller.enqueue(new TextEncoder().encode("replacement bytes"));
+          controller.close();
+        },
       },
-    });
+      { highWaterMark: 0 },
+    );
 
     const inFlight = PUT(
       new Request(`http://localhost/api/invoices/${created.id}/file`, {
