@@ -104,7 +104,7 @@ import type { Actor } from "@/lib/authz";
 import { withLockRetry } from "@/lib/domain/db-errors";
 import { deriveUnitCost } from "@/lib/domain/cost-derivation";
 import { InvalidInvoiceTransitionError, NotFoundError } from "@/lib/domain/errors";
-import { toInvoiceRow, type InvoiceRow } from "@/lib/domain/invoices";
+import { assertInvoiceHasLinesTx, toInvoiceRow, type InvoiceRow } from "@/lib/domain/invoices";
 
 export interface ApproveInvoiceResult {
   invoice: InvoiceRow;
@@ -142,6 +142,11 @@ export async function approveInvoice(actor: Actor, invoiceId: number): Promise<A
           `Invoice ${invoiceId} must be reviewed to move to approved, but it is ${row.status}.`,
         );
       }
+
+      // F8: refuse a zero-line invoice (a failed extraction). After the replay
+      // and status checks above so an already-approved invoice still replays
+      // its original success; inside this transaction so nothing is written.
+      await assertInvoiceHasLinesTx(tx, actor, invoiceId);
 
       const now = new Date();
       await tx

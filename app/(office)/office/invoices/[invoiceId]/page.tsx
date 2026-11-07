@@ -1,6 +1,10 @@
 import { notFound } from "next/navigation";
 import { requireOfficeUser } from "@/lib/current-user";
-import { getInvoiceAction, getInvoiceLinesAction } from "@/app/actions/invoices";
+import {
+  getInvoiceAction,
+  getInvoiceLinesAction,
+  getInvoiceExtractionOutcomeAction,
+} from "@/app/actions/invoices";
 import {
   listVendorsAction,
   searchProductsAction,
@@ -60,6 +64,9 @@ export default async function InvoiceReviewPage({
       : Promise.all([
           getInvoiceLinesAction({ invoiceId }),
           searchProductsAction({ activeOnly: true, limit: 100 }),
+          invoice.status === "needs_review"
+            ? getInvoiceExtractionOutcomeAction({ invoiceId })
+            : Promise.resolve(null),
         ]),
   ]);
 
@@ -71,6 +78,7 @@ export default async function InvoiceReviewPage({
 
   const linesResult = reviewData ? reviewData[0] : null;
   const productsResult = reviewData ? reviewData[1] : null;
+  const outcomeResult = reviewData ? reviewData[2] : null;
 
   // `searchProductsAction` above is capped (`limit: 100`) and `activeOnly` —
   // a line's `matchedProductId` can point at a product outside that result
@@ -131,7 +139,12 @@ export default async function InvoiceReviewPage({
           {linesResult.error.message}
         </p>
       ) : (
-        <InvoiceReviewForm invoice={invoice} lines={linesResult.data} products={products} />
+        <InvoiceReviewForm
+          invoice={invoice}
+          lines={linesResult.data}
+          products={products}
+          outcome={outcomeResult?.ok ? outcomeResult.data : null}
+        />
       )}
     </div>
   );

@@ -112,6 +112,23 @@ export async function getInvoiceAction(
   });
 }
 
+/**
+ * The review screen's extraction status (F8): whether the newest extraction
+ * job failed, an owner-safe plain-language `failureMessage` derived from the
+ * job's error CODE (never its raw error text), whether Retry may be offered,
+ * and the invoice's line count. Owner-only and org-scoped, same gate as
+ * `getInvoiceAction`.
+ */
+export async function getInvoiceExtractionOutcomeAction(
+  input: unknown,
+): Promise<ActionResult<invoices.InvoiceExtractionOutcome>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = getInvoiceSchema.parse(input);
+    return invoices.getInvoiceExtractionOutcome(actor, parsed.invoiceId);
+  });
+}
+
 /** The owner's archive list — every column, including monetary ones. */
 export async function listInvoicesForOwnerAction(
   input: unknown = {},

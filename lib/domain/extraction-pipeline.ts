@@ -76,7 +76,7 @@ import {
   visionImageSizeProblem,
   type VisionImageContentType,
 } from "@/lib/storage/invoice-content-types";
-import { DomainError } from "@/lib/domain/errors";
+import { DomainError, ExtractionUnavailableError } from "@/lib/domain/errors";
 
 type PdfType = (typeof pdfTypeEnum)[number];
 type ExtractionPhase = (typeof extractionPhaseEnum)[number];
@@ -883,7 +883,9 @@ function getAnthropicClient(): Anthropic {
     // Caught by processExtractionQueue's try/catch and recorded as a clear,
     // non-internal errorMessage on the job — never an uncaught throw that
     // could crash the interval. See db/schema.ts's extractionJob.errorMessage.
-    throw new Error(
+    // A DomainError (code EXTRACTION_UNAVAILABLE) so the job's errorCode can
+    // drive a plain owner-facing message without parsing this internal text.
+    throw new ExtractionUnavailableError(
       "ANTHROPIC_API_KEY is not set; it is required for scanned, mixed, or image-based invoice extraction.",
     );
   }

@@ -602,6 +602,7 @@ describe("structural: every server action authorizes itself (invariant 7)", () =
       "getInvoiceAction",
       "listInvoicesForOwnerAction",
       "getInvoiceLinesAction",
+      "getInvoiceExtractionOutcomeAction",
       "reviewInvoiceAction",
       "rejectInvoiceAction",
       "approveInvoiceAction",

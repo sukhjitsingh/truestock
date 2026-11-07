@@ -96,8 +96,9 @@ import {
   resendToExtractionAction,
   approveInvoiceAction,
 } from "@/app/actions/invoices";
-import type { InvoiceRow } from "@/lib/domain/invoices";
+import type { InvoiceRow, InvoiceExtractionOutcome } from "@/lib/domain/invoices";
 import { previewKind } from "@/lib/invoice-preview";
+import { reviewOutcomeView } from "@/lib/invoice-review-outcome";
 import type { InvoiceLineRow, InvoiceLineUom } from "@/lib/domain/invoice-lines";
 import type { ProductSummary } from "@/lib/domain/catalog";
 import {
@@ -212,10 +213,13 @@ export function InvoiceReviewForm({
   invoice,
   lines,
   products,
+  outcome = null,
 }: {
   invoice: InvoiceRow;
   lines: InvoiceLineRow[];
   products: ProductSummary[];
+  /** Newest extraction job's outcome; fetched for needs_review only. */
+  outcome?: InvoiceExtractionOutcome | null;
 }) {
   const router = useRouter();
 
@@ -252,6 +256,11 @@ export function InvoiceReviewForm({
   const canReturn = invoice.status === "needs_review" || invoice.status === "reviewed";
   const canRetry = invoice.status === "rejected";
   const canApproveCosts = invoice.status === "reviewed";
+  const outcomeView = reviewOutcomeView(invoice.status, outcome);
+  // Stays true after a successful resend (the page re-renders as "processing"
+  // and unmounts this form); only a failure re-arms the button. A second click
+  // in the gap would otherwise hit a ConflictError.
+  const [retrying, setRetrying] = useState(false);
 
   function updateField(lineId: number, key: keyof LineFieldState, value: string) {
     setFields((prev) => ({ ...prev, [lineId]: { ...prev[lineId], [key]: value } }));
@@ -401,18 +410,19 @@ export function InvoiceReviewForm({
 
   async function handleRetry(event: React.FormEvent) {
     event.preventDefault();
-    setPending(true);
+    if (retrying) return;
+    setRetrying(true);
     setError(null);
     try {
       const result = await resendToExtractionAction({ invoiceId: invoice.id });
-      setPending(false);
       if (!result.ok) {
+        setRetrying(false);
         setError(result.error.message);
         return;
       }
       router.refresh();
     } catch {
-      setPending(false);
+      setRetrying(false);
       setError("Could not reach the server. Check your connection and try again.");
     }
   }
@@ -449,6 +459,23 @@ export function InvoiceReviewForm({
         <p className="rounded-xl border border-success/30 bg-success-bg/80 p-3 text-caption text-success backdrop-blur-md" role="status">
           Approved. This is a permanent record and can no longer be changed here.
         </p>
+      ) : null}
+
+      {outcomeView.showFailurePanel ? (
+        <div
+          className="flex flex-col gap-3 rounded-xl border-2 border-negative bg-negative-bg p-card-pad"
+          role="alert"
+        >
+          <h2 className="text-label uppercase font-semibold text-negative">Extraction failed</h2>
+          <p className="text-row-title text-foreground">{outcomeView.failureMessage}</p>
+          {outcomeView.canRetryNow ? (
+            <form method="post" onSubmit={handleRetry}>
+              <Button type="submit" size="primary" disabled={retrying || pending} className="w-fit font-semibold shadow-xs">
+                {retrying ? "Retrying…" : "Retry extraction"}
+              </Button>
+            </form>
+          ) : null}
+        </div>
       ) : null}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -646,7 +673,9 @@ export function InvoiceReviewForm({
                     <tr>
                       <td colSpan={columnCount}>
                         <p className="py-section-gap text-center text-row-subtitle text-muted-foreground">
-                          No lines were extracted from this document.
+                          {outcomeView.showFailurePanel
+                            ? "No lines. See the failure above."
+                            : "No lines were extracted from this document."}
                         </p>
                       </td>
                     </tr>
@@ -794,9 +823,19 @@ export function InvoiceReviewForm({
             {editable || canReturn || canApproveCosts ? (
               <div className="flex flex-wrap items-center gap-3">
                 {editable ? (
-                  <Button type="submit" size="primary" disabled={pending} className="font-semibold shadow-xs">
+                  <Button
+                    type="submit"
+                    size="primary"
+                    disabled={pending || retrying || outcomeView.approveBlockedReason != null}
+                    className="font-semibold shadow-xs"
+                  >
                     {pending ? "Approving…" : "Approve"}
                   </Button>
+                ) : null}
+                {editable && outcomeView.approveBlockedReason ? (
+                  <p className="w-full text-caption text-negative" role="status">
+                    {outcomeView.approveBlockedReason}
+                  </p>
                 ) : null}
                 {canApproveCosts ? (
                   <Button
@@ -870,8 +909,8 @@ export function InvoiceReviewForm({
 
           {canRetry ? (
             <form method="post" onSubmit={handleRetry} className="flex flex-col gap-3">
-              <Button type="submit" size="primary" disabled={pending} className="w-fit font-semibold shadow-xs">
-                {pending ? "Retrying…" : "Retry extraction"}
+              <Button type="submit" size="primary" disabled={pending || retrying} className="w-fit font-semibold shadow-xs">
+                {retrying ? "Retrying…" : "Retry extraction"}
               </Button>
             </form>
           ) : null}

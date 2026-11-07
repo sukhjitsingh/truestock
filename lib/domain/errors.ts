@@ -104,3 +104,26 @@ export class InvalidExtractionTransitionError extends DomainError {
     super("INVALID_EXTRACTION_TRANSITION", message);
   }
 }
+
+/**
+ * An invoice with no line items was moved to `reviewed` or `approved`
+ * (QA finding F8). A failed extraction leaves an invoice in `needs_review`
+ * with zero lines; reviewing or approving that would post nothing and hide the
+ * failure behind a hand-typed total. The message names the way out.
+ */
+export class NoInvoiceLinesError extends DomainError {
+  constructor(message: string) {
+    super("NO_INVOICE_LINES", message);
+  }
+}
+
+/**
+ * Invoice extraction cannot run on this deployment right now (the Vision
+ * provider is not configured). A distinct code so the owner sees a plain
+ * message instead of the raw internal text, which names an env var.
+ */
+export class ExtractionUnavailableError extends DomainError {
+  constructor(message: string) {
+    super("EXTRACTION_UNAVAILABLE", message);
+  }
+}

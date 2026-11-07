@@ -538,5 +538,23 @@ export async function createInvoiceMissingHeaderField(
   delete values[field];
 
   const [inv] = await db.insert(invoiceTable).values(values).$returningId();
+  // One line, because a real needs_review invoice that reached the header
+  // check has lines: an invoice with ZERO lines is now refused for review
+  // outright (F8), which would mask the missing-header-field rule these
+  // fixtures exist to exercise.
+  await db.insert(invoiceLineTable).values({
+    organizationId,
+    invoiceId: inv.id,
+    lineNumber: 1,
+    description: "Header fixture line",
+    lineType: "product",
+    quantity: "1.000",
+    uom: "each",
+    rawGross: "50.00",
+    rawDiscount: "0.00",
+    rawNet: "50.00",
+    matchMethod: "unmatched",
+    exceptionFlags: ["unmatched item"],
+  });
   return inv.id;
 }

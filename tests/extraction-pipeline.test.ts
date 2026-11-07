@@ -477,6 +477,8 @@ describe("text-PDF queue routing", () => {
       pdfType: "scanned",
       pagesNeedingOcr: [0],
       errorMessage: missingKeyMessage,
+      // The code (not the message) is what the owner-facing text is derived from.
+      errorCode: "EXTRACTION_UNAVAILABLE",
     });
     expect(savedLines).toHaveLength(0);
   });

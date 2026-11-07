@@ -58,6 +58,7 @@ import type { Actor } from "@/lib/authz";
 import { withLockRetry } from "@/lib/domain/db-errors";
 import { NotFoundError } from "@/lib/domain/errors";
 import {
+  assertInvoiceHasLinesTx,
   updateInvoiceStatusTx,
   resolveHeaderCorrectionData,
   type InvoiceRow,
@@ -528,7 +529,7 @@ export async function submitInvoiceReview(
   return withLockRetry(() =>
     db.transaction(async (tx) => {
       await applyLineReviewTx(tx, actor, invoiceId, corrections);
-      return updateInvoiceStatusTx(
+      const reviewed = await updateInvoiceStatusTx(
         tx,
         actor,
         invoiceId,
@@ -536,6 +537,11 @@ export async function submitInvoiceReview(
         "reviewed",
         resolveHeaderCorrectionData(headerCorrections),
       );
+      // F8: a failed extraction leaves zero lines. Checked after the CAS so a
+      // stale submit on an already-moved invoice still gets Conflict, and
+      // inside the transaction so the refusal rolls the CAS back.
+      await assertInvoiceHasLinesTx(tx, actor, invoiceId);
+      return reviewed;
     }),
   );
 }

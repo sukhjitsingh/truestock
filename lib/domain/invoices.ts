@@ -31,15 +31,16 @@
  * never declared-vs-declared.
  */
 import { readFile } from "node:fs/promises";
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, count, desc, eq, ne } from "drizzle-orm";
 import { db } from "@/db";
-import { invoice, vendor } from "@/db/schema";
+import { invoice, invoiceLine, vendor } from "@/db/schema";
 import { invoiceStatusEnum, invoiceSourceEnum } from "@/db/enums";
 import type { Actor } from "@/lib/authz";
 import {
   ConflictError,
   InvalidInvoiceTransitionError,
   InvoiceNotWritableError,
+  NoInvoiceLinesError,
   NotFoundError,
 } from "@/lib/domain/errors";
 import {
@@ -72,7 +73,10 @@ type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 export const INVOICE_TRANSITIONS: Record<InvoiceStatus, readonly InvoiceStatus[]> = {
   uploaded: ["processing"],
   processing: ["needs_review"],
-  needs_review: ["reviewed", "rejected"],
+  // needs_review -> processing is the owner's "retry extraction" edge. It is
+  // legal only when the latest extraction job FAILED; that guard lives in
+  // `resendInvoiceToExtraction`, not in this graph (F8).
+  needs_review: ["reviewed", "rejected", "processing"],
   reviewed: ["approved", "rejected"],
   approved: [],
   rejected: ["processing"],
@@ -645,7 +649,38 @@ export async function resendInvoiceToExtraction(
   invoiceId: number,
 ): Promise<ResendToExtractionResult> {
   return db.transaction(async (tx) => {
-    const updated = await updateInvoiceStatusTx(tx, actor, invoiceId, "rejected", "processing");
+    // Lock the invoice row (org-scoped) first so a double click serialises:
+    // the second call sees `processing` and is refused by the CAS below
+    // instead of opening a second job.
+    const [row] = await tx
+      .select({ status: invoice.status })
+      .from(invoice)
+      .where(and(eq(invoice.id, invoiceId), eq(invoice.organizationId, actor.organizationId)))
+      .for("update");
+    if (!row) {
+      throw new NotFoundError("Invoice");
+    }
+
+    if (row.status === "needs_review") {
+      // Retry straight from needs_review (F8) is only for a failed extraction.
+      // A needs_review invoice whose job succeeded is a real draft awaiting
+      // review; re-extracting it would discard the reviewer's work.
+      const [latestJob] = await tx
+        .select({ status: extractionJob.status })
+        .from(extractionJob)
+        .where(
+          and(eq(extractionJob.invoiceId, invoiceId), eq(extractionJob.organizationId, actor.organizationId)),
+        )
+        .orderBy(desc(extractionJob.id))
+        .limit(1);
+      if (latestJob?.status !== "failed") {
+        throw new ConflictError(
+          "This invoice was read successfully, so it can't be re-read. Review it, or reject it first to start over.",
+        );
+      }
+    }
+
+    const updated = await updateInvoiceStatusTx(tx, actor, invoiceId, ["rejected", "needs_review"], "processing");
 
     const [job] = await tx
       .insert(extractionJob)
@@ -658,4 +693,85 @@ export async function resendInvoiceToExtraction(
 
     return { invoice: updated, extractionJobId: job.id };
   });
+}
+
+/**
+ * Throws `NoInvoiceLinesError` when the invoice has no `invoice_line` rows.
+ * Called INSIDE the caller's transaction, after its status CAS/lock, so a
+ * failed extraction (which leaves zero lines in `needs_review`) can neither be
+ * marked reviewed nor approved (F8). Org-scoped.
+ */
+export async function assertInvoiceHasLinesTx(tx: Tx, actor: Actor, invoiceId: number): Promise<void> {
+  const [row] = await tx
+    .select({ n: count() })
+    .from(invoiceLine)
+    .where(and(eq(invoiceLine.invoiceId, invoiceId), eq(invoiceLine.organizationId, actor.organizationId)));
+  if (!row || Number(row.n) === 0) {
+    throw new NoInvoiceLinesError(
+      "This invoice has no line items, so it can't be reviewed or approved. Retry reading it, or reject it and upload a clearer copy.",
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Extraction outcome for the review page (F8)
+// ---------------------------------------------------------------------------
+
+/**
+ * Maps a job's `error_code` to a message safe to show an owner. NEVER derived
+ * from `error_message`, which is raw internal text (paths, env var names, SQL,
+ * stack fragments). Unknown or null codes get the generic message.
+ */
+export function describeExtractionFailure(errorCode: string | null): string {
+  switch (errorCode) {
+    case "EXTRACTION_UNAVAILABLE":
+      return "Scanned invoices can't be read right now. Try again later, or contact support if it keeps happening.";
+    case "WORKER_TIMEOUT":
+      return "Reading this invoice took too long and was stopped. Retry it; if it fails again, upload a clearer or smaller copy.";
+    default:
+      return "We couldn't read this invoice automatically. Retry it, or reject it and upload a clearer copy.";
+  }
+}
+
+export interface InvoiceExtractionOutcome {
+  /** Status of the newest extraction job; null if the invoice has none. */
+  jobStatus: (typeof extractionJob.$inferSelect)["status"] | null;
+  /** True only when the newest job is `failed`. */
+  failed: boolean;
+  /** Owner-safe plain-language message when `failed`, else null. */
+  failureMessage: string | null;
+  /** True when "Retry extraction" may be offered (needs_review with a failed job). */
+  canRetry: boolean;
+  lineCount: number;
+}
+
+/**
+ * What the review page needs to explain an empty invoice and offer Retry.
+ * Org-scoped: a foreign invoiceId is `NotFoundError`. Returns no raw error
+ * text. Call it from an owner-gated server component or action (it carries no
+ * money, but the page it serves is owner-only).
+ */
+export async function getInvoiceExtractionOutcome(
+  actor: Actor,
+  invoiceId: number,
+): Promise<InvoiceExtractionOutcome> {
+  const inv = await getInvoice(actor, invoiceId);
+  const [job] = await db
+    .select({ status: extractionJob.status, errorCode: extractionJob.errorCode })
+    .from(extractionJob)
+    .where(and(eq(extractionJob.invoiceId, invoiceId), eq(extractionJob.organizationId, actor.organizationId)))
+    .orderBy(desc(extractionJob.id))
+    .limit(1);
+  const [lines] = await db
+    .select({ n: count() })
+    .from(invoiceLine)
+    .where(and(eq(invoiceLine.invoiceId, invoiceId), eq(invoiceLine.organizationId, actor.organizationId)));
+  const failed = job?.status === "failed";
+  return {
+    jobStatus: job?.status ?? null,
+    failed,
+    failureMessage: failed ? describeExtractionFailure(job.errorCode) : null,
+    canRetry: failed && inv.status === "needs_review",
+    lineCount: Number(lines?.n ?? 0),
+  };
 }

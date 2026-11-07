@@ -317,7 +317,8 @@ describe("Adversarial Challenge 5: Split-Screen Invoice OCR Review & CAS Lifecyc
   test("INVOICE_TRANSITIONS graph obeys strict legal state edges", () => {
     expect(INVOICE_TRANSITIONS.uploaded).toEqual(["processing"]);
     expect(INVOICE_TRANSITIONS.processing).toEqual(["needs_review"]);
-    expect(INVOICE_TRANSITIONS.needs_review).toEqual(["reviewed", "rejected"]);
+    // "processing" = owner retry of a FAILED extraction (F8); the failed-job guard is in resendInvoiceToExtraction.
+    expect(INVOICE_TRANSITIONS.needs_review).toEqual(["reviewed", "rejected", "processing"]);
     expect(INVOICE_TRANSITIONS.reviewed).toEqual(["approved", "rejected"]);
     expect(INVOICE_TRANSITIONS.approved).toEqual([]); // Terminal immutable state
     expect(INVOICE_TRANSITIONS.rejected).toEqual(["processing"]); // Retry extraction
