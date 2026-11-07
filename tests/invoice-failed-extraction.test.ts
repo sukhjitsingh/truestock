@@ -26,6 +26,7 @@ import {
 } from "@/lib/domain/invoices";
 import { ConflictError, NoInvoiceLinesError, NotFoundError } from "@/lib/domain/errors";
 import { migrateTestDatabase, resetDatabase, createFixtures, type Fixtures } from "./helpers/test-db";
+import { resendExpectingResent } from "./helpers/resend";
 
 let fx: Fixtures;
 
@@ -127,7 +128,7 @@ describe("resendInvoiceToExtraction from needs_review", () => {
   test("a failed job: moves needs_review -> processing and opens exactly one new queued job, leaving the failed job's diagnostics", async () => {
     await makeFailedExtraction();
 
-    const result = await resendInvoiceToExtraction(fx.owner, fx.invoiceId);
+    const result = await resendExpectingResent(fx.owner, fx.invoiceId);
 
     expect(result.invoice.status).toBe("processing");
     const jobs = await jobsFor(fx.invoiceId);
@@ -217,7 +218,7 @@ describe("resendToExtractionAction from needs_review", () => {
     sessionUserId = fx.owner.userId;
     const result = await resendToExtractionAction({ invoiceId: fx.invoiceId });
     expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("unreachable");
+    if (!result.ok || result.data.outcome !== "resent") throw new Error("unreachable");
     expect(result.data.status).toBe("processing");
     expect(await jobsFor(fx.invoiceId)).toHaveLength(2);
   });

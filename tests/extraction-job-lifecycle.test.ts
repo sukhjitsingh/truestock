@@ -19,11 +19,11 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:tes
 import { eq } from "drizzle-orm";
 import { db, closePool } from "@/db";
 import { extractionJob } from "@/db/schema";
-import { createInvoiceForUpload, markUploadConfirmed } from "@/lib/domain/invoices";
+import { markUploadConfirmed } from "@/lib/domain/invoices";
 import { claimNextJob, updateJobStatus, reapStuckJobs } from "@/lib/domain/extraction";
 import { InvalidExtractionTransitionError, ConflictError } from "@/lib/domain/errors";
 import { writeInvoiceFile, sha256Hex } from "@/lib/storage/invoice-files";
-import { migrateTestDatabase, resetDatabase, createFixtures, type Fixtures } from "./helpers/test-db";
+import { migrateTestDatabase, resetDatabase, createFixtures, createInvoiceForUploadOrThrow, type Fixtures } from "./helpers/test-db";
 
 let fx: Fixtures;
 
@@ -46,7 +46,7 @@ afterAll(async () => {
 /** A confirmed upload — its `extraction_job` is `queued`, ready to claim. */
 async function createQueuedJob(): Promise<{ invoiceId: number; jobId: number }> {
   const bytes = Buffer.from(`invoice-${Math.random()}`);
-  const created = await createInvoiceForUpload(fx.owner, {
+  const created = await createInvoiceForUploadOrThrow(fx.owner, {
     source: "pdf",
     contentType: "application/pdf",
     fileSha256: sha256Hex(bytes),

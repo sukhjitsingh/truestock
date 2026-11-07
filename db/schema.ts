@@ -989,6 +989,11 @@ export const invoice = mysqlTable(
     // A mismatch leaves `extraction_job.status = awaiting_upload`, so a
     // truncated or swapped upload is never extracted [AR-6].
     fileSha256: varchar("file_sha256", { length: 64 }).notNull(),
+    // Holds the claim on the file while this invoice is live: set at confirm
+    // once the bytes are verified, cleared on rejection, set again on resend.
+    // file_sha256 cannot carry the constraint because it is written once, and
+    // rejected or unverified copies must not block a re-upload.
+    liveFileSha256: varchar("live_file_sha256", { length: 64 }),
     fileSizeBytes: int("file_size_bytes").notNull(),
 
     // ---------------------------------------------------------------------
@@ -1049,6 +1054,12 @@ export const invoice = mysqlTable(
     // product_cost_history's) composite tenant FK. Same role as
     // `vendor_organization_id_id_unique` / `count_organization_id_id_unique`.
     uniqueIndex("invoice_organization_id_id_unique").on(table.organizationId, table.id),
+    // One live copy of a file per organization. NULLs never collide, so
+    // rejected and not-yet-confirmed invoices hold no claim.
+    uniqueIndex("invoice_organization_live_file_sha256_unique").on(
+      table.organizationId,
+      table.liveFileSha256,
+    ),
     // Review queue: filter by tenant + status, ordered by recency.
     index("invoice_organization_status_invoice_date_idx").on(
       table.organizationId,

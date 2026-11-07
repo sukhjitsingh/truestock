@@ -50,6 +50,7 @@ import {
 } from "@/lib/storage/invoice-files";
 import { lockJobForUpload, updateJobStatusTx } from "@/lib/domain/extraction";
 import { extractionJob } from "@/db/schema";
+import { isDuplicateKeyOnIndex, withLockRetry } from "@/lib/domain/db-errors";
 
 export type InvoiceStatus = (typeof invoiceStatusEnum)[number];
 export type InvoiceSource = (typeof invoiceSourceEnum)[number];
@@ -280,12 +281,149 @@ export interface CreateInvoiceForUploadInput {
   fileSizeBytes: number;
 }
 
+// ---------------------------------------------------------------------------
+// One live copy of a file per organization (F7)
+// ---------------------------------------------------------------------------
+
 /**
- * One transaction, three writes, all or none:
+ * The invoice that already holds the claim on a file, as shown to the person
+ * whose upload was refused. Deliberately carries no money and no storage
+ * detail: a manager receives this too, and these are only the fields that let
+ * a person recognise the document. Always read org-scoped, so it can never
+ * describe another tenant's invoice.
+ */
+export interface DuplicateInvoice {
+  invoiceId: number;
+  vendorName: string | null;
+  invoiceNumber: string | null;
+  invoiceDate: string | null;
+  status: InvoiceStatus;
+  uploadedAt: Date;
+}
+
+/** The unique index that makes "one live copy per organization" true. */
+const LIVE_FILE_INDEX = "invoice_organization_live_file_sha256_unique";
+
+type SelectExecutor = Pick<Tx, "select">;
+
+async function toDuplicate(
+  exec: SelectExecutor,
+  orgId: number,
+  row: typeof invoice.$inferSelect,
+): Promise<DuplicateInvoice> {
+  let vendorName: string | null = null;
+  if (row.vendorId != null) {
+    // A separate org-scoped select, not a join: the locking read that found
+    // `row` must lock the invoice row only, and FOR UPDATE over a join would
+    // lock the vendor row too.
+    const [v] = await exec
+      .select({ name: vendor.name })
+      .from(vendor)
+      .where(and(eq(vendor.id, row.vendorId), eq(vendor.organizationId, orgId)))
+      .limit(1);
+    vendorName = v?.name ?? null;
+  }
+  return {
+    invoiceId: row.id,
+    vendorName,
+    invoiceNumber: row.invoiceNumber,
+    invoiceDate: row.invoiceDate,
+    status: row.status,
+    uploadedAt: row.createdAt,
+  };
+}
+
+/**
+ * Plain (non-locking) lookup, for the upload request: a fast refusal before
+ * any bytes move. NOT the guarantee — the unique index is; two simultaneous
+ * uploads both pass this and one loses at confirm. Non-locking on purpose: a
+ * `FOR UPDATE` that matches nothing takes a gap lock, and two concurrent
+ * upload requests holding the same gap while each inserts an invoice row is a
+ * deadlock.
+ */
+export async function findLiveCopy(orgId: number, sha256: string): Promise<DuplicateInvoice | null> {
+  const [row] = await db
+    .select()
+    .from(invoice)
+    .where(and(eq(invoice.organizationId, orgId), eq(invoice.liveFileSha256, sha256)))
+    .limit(1);
+  return row ? toDuplicate(db, orgId, row) : null;
+}
+
+/**
+ * Locking lookup, for the loser of a claim race. MUST be `FOR UPDATE`: at
+ * repeatable read a plain select after the 1062 reads from the transaction's
+ * snapshot, which can predate the winner's commit and so miss the very row
+ * that caused the collision, leaving a refusal with nothing to name. A
+ * locking read is a current read and sees it.
+ */
+async function findLiveCopyTx(
+  tx: Tx,
+  orgId: number,
+  sha256: string,
+  excludeInvoiceId?: number,
+): Promise<DuplicateInvoice | null> {
+  const conditions = [eq(invoice.organizationId, orgId), eq(invoice.liveFileSha256, sha256)];
+  // A claim must never name the invoice itself as its own duplicate.
+  if (excludeInvoiceId != null) conditions.push(ne(invoice.id, excludeInvoiceId));
+  const [row] = await tx
+    .select()
+    .from(invoice)
+    .where(and(...conditions))
+    .limit(1)
+    .for("update");
+  return row ? toDuplicate(tx, orgId, row) : null;
+}
+
+/**
+ * Takes the claim on `sha256` for `invoiceId`, or names whoever holds it.
+ * Returns null when the claim is ours (including when it already was), the
+ * holder when it is not.
+ *
+ * Only a 1062 on THIS index means "someone else holds the claim"; a collision
+ * on any other unique index is a different bug and is rethrown. A failed
+ * statement does not abort the surrounding InnoDB transaction, so the caller
+ * can read the winner in the same one.
+ */
+export async function claimFileTx(
+  tx: Tx,
+  orgId: number,
+  invoiceId: number,
+  sha256: string,
+): Promise<DuplicateInvoice | null> {
+  try {
+    await tx
+      .update(invoice)
+      .set({ liveFileSha256: sha256 })
+      .where(and(eq(invoice.id, invoiceId), eq(invoice.organizationId, orgId)));
+    return null;
+  } catch (err) {
+    if (!isDuplicateKeyOnIndex(err, LIVE_FILE_INDEX)) {
+      throw err;
+    }
+  }
+  const holder = await findLiveCopyTx(tx, orgId, sha256, invoiceId);
+  if (!holder) {
+    // The holder released the claim between the collision and the read (it
+    // was rejected in that instant). Say so plainly rather than guess.
+    throw new ConflictError("Another copy of this file was just changed. Try uploading again.");
+  }
+  return holder;
+}
+
+export type CreateInvoiceForUploadResult =
+  | { outcome: "created"; invoice: InvoiceRow }
+  | { outcome: "duplicate"; duplicate: DuplicateInvoice };
+
+/**
+ * If the organization already holds a live copy of this file, creates nothing
+ * and returns it. Otherwise one transaction, three writes, all or none:
  *   1. INSERT `invoice` (status `uploaded`, the declared hash/size).
  *   2. UPDATE `file_path` — only computable once the id exists
  *      (`invoiceStorageKey` is `{org}/{id}.{ext}`).
  *   3. INSERT `extraction_job` (status `awaiting_upload`).
+ * The claim (`live_file_sha256`) is NOT taken here: only bytes verified on
+ * disk hold one, so an abandoned upload blocks nothing.
  *
  * `vendorId`, if supplied, is ownership-checked before anything is written
  * [AR-2] — the composite `invoice_organization_vendor_fk` is a backstop
@@ -296,8 +434,12 @@ export interface CreateInvoiceForUploadInput {
 export async function createInvoiceForUpload(
   actor: Actor,
   input: CreateInvoiceForUploadInput,
-): Promise<InvoiceRow> {
-  return db.transaction(async (tx) => {
+): Promise<CreateInvoiceForUploadResult> {
+  const existing = await findLiveCopy(actor.organizationId, input.fileSha256);
+  if (existing) {
+    return { outcome: "duplicate", duplicate: existing };
+  }
+  const created = await db.transaction(async (tx) => {
     if (input.vendorId != null) {
       await assertVendorOwned(tx, actor.organizationId, input.vendorId);
     }
@@ -336,6 +478,7 @@ export async function createInvoiceForUpload(
     }
     return toInvoiceRow(row);
   });
+  return { outcome: "created", invoice: created };
 }
 
 // ---------------------------------------------------------------------------
@@ -343,9 +486,16 @@ export async function createInvoiceForUpload(
 // ---------------------------------------------------------------------------
 
 export interface ConfirmUploadResult {
-  /** Whether the bytes on disk matched what was declared at upload time. */
+  /**
+   * Whether the bytes on disk matched what was declared at upload time AND
+   * this invoice is now queued. False when `duplicate` is set even though the
+   * bytes verified: a caller that predates F7 and only reads `matched` must
+   * not report a refused upload as a success.
+   */
   matched: boolean;
   invoice: InvoiceRow;
+  /** Set when another live invoice in the organization already holds this file. */
+  duplicate?: DuplicateInvoice;
 }
 
 /**
@@ -397,7 +547,15 @@ export async function markUploadConfirmed(
   // `queued`, and the writer's bytes would land afterward over a file now
   // recorded as verified. See `lockJobForUpload`'s comment for the full
   // ordering argument.
-  return lockJobForUpload(actor.organizationId, invoiceId, async (jobRow, tx) => {
+  //
+  // The claim on the file (F7) is taken here too, in the same transaction that
+  // moves the job to `queued`, so only bytes verified on disk hold one and the
+  // claim and the queueing commit or roll back together. The unique index, not
+  // any lookup, decides a race: if another invoice won it, the job stays at
+  // `awaiting_upload` and nothing is queued. `withLockRetry` re-runs the whole
+  // transaction on a deadlock or a stale-snapshot (1020) from the locking read
+  // that names the winner; nothing the first attempt did persisted.
+  return withLockRetry(() => lockJobForUpload(actor.organizationId, invoiceId, async (jobRow, tx) => {
     let actualSha256: string;
     let actualSize: number;
     try {
@@ -416,6 +574,10 @@ export async function markUploadConfirmed(
     }
 
     if (jobRow.status === "awaiting_upload") {
+      const holder = await claimFileTx(tx, actor.organizationId, invoiceId, row.fileSha256);
+      if (holder) {
+        return { matched: false, invoice: toInvoiceRow(row), duplicate: holder };
+      }
       await updateJobStatusTx(tx, jobRow.id, "awaiting_upload", "queued");
     }
     // Any other status means a previous confirm already advanced it — treated
@@ -427,7 +589,7 @@ export async function markUploadConfirmed(
     // function's own contract promises is safe to replay.
 
     return { matched: true, invoice: toInvoiceRow(row) };
-  });
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -602,7 +764,10 @@ export async function updateInvoiceStatusTx(
 
   await tx
     .update(invoice)
-    .set({ status: to, ...data })
+    // Every route to `rejected` runs through here, so this is the one place a
+    // rejected invoice releases its claim on the file (F7). Spread AFTER `data`
+    // so a caller cannot re-assert a claim on the way out.
+    .set({ status: to, ...data, ...(to === "rejected" ? { liveFileSha256: null } : {}) })
     .where(and(eq(invoice.id, invoiceId), eq(invoice.organizationId, actor.organizationId)));
 
   const [updated] = await tx
@@ -621,78 +786,100 @@ export async function updateInvoiceStatusTx(
 // re-extract entry point [AR-4].
 // ---------------------------------------------------------------------------
 
-export interface ResendToExtractionResult {
-  invoice: InvoiceRow;
-  extractionJobId: number;
-}
+export type ResendToExtractionResult =
+  | { outcome: "resent"; invoice: InvoiceRow; extractionJobId: number }
+  | { outcome: "duplicate"; duplicate: DuplicateInvoice };
 
 /**
- * CAS `rejected -> processing`, then opens a NEW `extraction_job` row
- * starting at `queued` — never `awaiting_upload`, because the file behind
- * this invoice was already confirmed on disk the first time around and
- * nothing here re-collects it [AR-6]. The invoice's CAS and the job insert
- * run in one transaction: a conflict on the CAS (the invoice moved on again
- * before this call landed) must not leave an orphaned job queued against an
- * invoice that never actually re-entered `processing`.
+ * CAS `rejected -> processing` (or `needs_review -> processing` after a failed
+ * extraction), then opens a NEW `extraction_job` row starting at `queued` —
+ * never `awaiting_upload`, because the file behind this invoice was already
+ * confirmed on disk the first time around and nothing here re-collects it
+ * [AR-6]. The invoice's CAS and the job insert run in one transaction: a
+ * conflict on the CAS must not leave an orphaned job queued against an invoice
+ * that never actually re-entered `processing`.
+ *
+ * F7: a rejected invoice released its claim on the file, so another invoice may
+ * have taken it since. An invoice holding no claim therefore takes it first
+ * (`claimFileTx`, same transaction, before any state change); if someone else
+ * holds it, nothing is changed and the holder is returned. An invoice that
+ * already holds the claim (`needs_review`) keeps it and skips this.
+ * `withLockRetry` re-runs the whole transaction on a deadlock or 1020; a
+ * rolled-back attempt wrote neither a claim nor a job, so a re-run cannot
+ * create two jobs.
  *
  * The PREVIOUS job row (whatever it ended at — normally `failed`, with its
  * `error_message`/`retry_count` intact) is never touched by this function.
  * That is deliberate, not an oversight: those columns are the diagnostic
  * record of why the first attempt failed, and this is a fresh attempt, not a
- * correction to the old one. Two job rows now exist for one invoice — the
- * first time that has ever been possible — see
+ * correction to the old one. Two job rows now exist for one invoice — see
  * `lib/domain/extraction.ts:getJobForInvoice`/`lockJobForUpload`'s
- * `ORDER BY id DESC` for why that is now load-bearing there.
+ * `ORDER BY id DESC` for why that is load-bearing there.
  */
 export async function resendInvoiceToExtraction(
   actor: Actor,
   invoiceId: number,
 ): Promise<ResendToExtractionResult> {
-  return db.transaction(async (tx) => {
-    // Lock the invoice row (org-scoped) first so a double click serialises:
-    // the second call sees `processing` and is refused by the CAS below
-    // instead of opening a second job.
-    const [row] = await tx
-      .select({ status: invoice.status })
-      .from(invoice)
-      .where(and(eq(invoice.id, invoiceId), eq(invoice.organizationId, actor.organizationId)))
-      .for("update");
-    if (!row) {
-      throw new NotFoundError("Invoice");
-    }
-
-    if (row.status === "needs_review") {
-      // Retry straight from needs_review (F8) is only for a failed extraction.
-      // A needs_review invoice whose job succeeded is a real draft awaiting
-      // review; re-extracting it would discard the reviewer's work.
-      const [latestJob] = await tx
-        .select({ status: extractionJob.status })
-        .from(extractionJob)
-        .where(
-          and(eq(extractionJob.invoiceId, invoiceId), eq(extractionJob.organizationId, actor.organizationId)),
-        )
-        .orderBy(desc(extractionJob.id))
-        .limit(1);
-      if (latestJob?.status !== "failed") {
-        throw new ConflictError(
-          "This invoice was read successfully, so it can't be re-read. Review it, or reject it first to start over.",
-        );
+  return withLockRetry(() =>
+    db.transaction(async (tx): Promise<ResendToExtractionResult> => {
+      // Lock the invoice row (org-scoped) first so a double click serialises:
+      // the second call sees `processing` and is refused by the CAS below
+      // instead of opening a second job.
+      const [row] = await tx
+        .select({
+          status: invoice.status,
+          fileSha256: invoice.fileSha256,
+          liveFileSha256: invoice.liveFileSha256,
+        })
+        .from(invoice)
+        .where(and(eq(invoice.id, invoiceId), eq(invoice.organizationId, actor.organizationId)))
+        .for("update");
+      if (!row) {
+        throw new NotFoundError("Invoice");
       }
-    }
 
-    const updated = await updateInvoiceStatusTx(tx, actor, invoiceId, ["rejected", "needs_review"], "processing");
+      if (row.status === "needs_review") {
+        // Retry straight from needs_review (F8) is only for a failed extraction.
+        // A needs_review invoice whose job succeeded is a real draft awaiting
+        // review; re-extracting it would discard the reviewer's work.
+        const [latestJob] = await tx
+          .select({ status: extractionJob.status })
+          .from(extractionJob)
+          .where(
+            and(eq(extractionJob.invoiceId, invoiceId), eq(extractionJob.organizationId, actor.organizationId)),
+          )
+          .orderBy(desc(extractionJob.id))
+          .limit(1);
+        if (latestJob?.status !== "failed") {
+          throw new ConflictError(
+            "This invoice was read successfully, so it can't be re-read. Review it, or reject it first to start over.",
+          );
+        }
+      }
 
-    const [job] = await tx
-      .insert(extractionJob)
-      .values({
-        organizationId: actor.organizationId,
-        invoiceId,
-        status: "queued",
-      })
-      .$returningId();
+      // Only for a status the CAS below would accept; any other status falls
+      // through to it and is refused as a Conflict, not as a "duplicate".
+      if (row.liveFileSha256 == null && (row.status === "rejected" || row.status === "needs_review")) {
+        const holder = await claimFileTx(tx, actor.organizationId, invoiceId, row.fileSha256);
+        if (holder) {
+          return { outcome: "duplicate", duplicate: holder };
+        }
+      }
 
-    return { invoice: updated, extractionJobId: job.id };
-  });
+      const updated = await updateInvoiceStatusTx(tx, actor, invoiceId, ["rejected", "needs_review"], "processing");
+
+      const [job] = await tx
+        .insert(extractionJob)
+        .values({
+          organizationId: actor.organizationId,
+          invoiceId,
+          status: "queued",
+        })
+        .$returningId();
+
+      return { outcome: "resent", invoice: updated, extractionJobId: job.id };
+    }),
+  );
 }
 
 /**

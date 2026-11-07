@@ -12,8 +12,8 @@
 - [x] Slice 4 — F1 units per case, migration 0010
 - [x] Slice 5 — F6 happy path: alias without item code, pre-match by description
 - [x] Slice 6 — F6 rules: confidence, scoping, deposits, shared keys
-- [ ] Slice 7 — F7 happy path: migration 0011, claim, named refusal
-- [ ] Slice 8 — F7 edges: rejected copy, race, Retry and Return
+- [x] Slice 7 — F7 happy path: migration 0011, claim, named refusal
+- [x] Slice 8 — F7 edges: rejected copy, race, Retry and Return
 - [ ] Slice 9 — proof on real invoices, build, reviews, STATE.md, open item #47
 
 ## Notes for a fresh session

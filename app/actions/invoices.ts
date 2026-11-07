@@ -55,11 +55,11 @@ import {
   getAuditPacketSchema,
 } from "@/lib/validation/invoices";
 
-export interface UploadInvoiceResult {
-  invoiceId: number;
-  uploadUrl: string;
-  status: invoices.InvoiceStatus;
-}
+export type UploadInvoiceResult =
+  | { outcome: "created"; invoiceId: number; uploadUrl: string; status: invoices.InvoiceStatus }
+  // canOpen: the review page is owner-only, so only an owner gets a link to it.
+  // A manager still learns which invoice it is, just not a way to open it.
+  | { outcome: "duplicate"; duplicate: invoices.DuplicateInvoice; canOpen: boolean };
 
 /**
  * Creates the `invoice` + `extraction_job` rows and hands back where to PUT
@@ -75,10 +75,18 @@ export async function uploadInvoiceAction(
     const actor = await requireRole("owner", "manager");
     const parsed = uploadInvoiceSchema.parse(input);
     const created = await invoices.createInvoiceForUpload(actor, parsed);
+    if (created.outcome === "duplicate") {
+      return {
+        outcome: "duplicate" as const,
+        duplicate: created.duplicate,
+        canOpen: actor.role === "owner",
+      };
+    }
     return {
-      invoiceId: created.id,
-      uploadUrl: `/api/invoices/${created.id}/file`,
-      status: created.status,
+      outcome: "created" as const,
+      invoiceId: created.invoice.id,
+      uploadUrl: `/api/invoices/${created.invoice.id}/file`,
+      status: created.invoice.status,
     };
   });
 }
@@ -86,6 +94,10 @@ export async function uploadInvoiceAction(
 export interface ConfirmUploadResult {
   matched: boolean;
   status: invoices.InvoiceStatus;
+  /** Set when another live invoice already holds this file; `matched` is then false. */
+  duplicate?: invoices.DuplicateInvoice;
+  /** Present with `duplicate`: true only for an owner (the review page is owner-only). */
+  canOpen?: boolean;
 }
 
 /**
@@ -101,6 +113,14 @@ export async function confirmUploadAction(
     const actor = await requireRole("owner", "manager");
     const parsed = confirmUploadSchema.parse(input);
     const result = await invoices.markUploadConfirmed(actor, parsed.invoiceId);
+    if (result.duplicate) {
+      return {
+        matched: false,
+        status: result.invoice.status,
+        duplicate: result.duplicate,
+        canOpen: actor.role === "owner",
+      };
+    }
     return { matched: result.matched, status: result.invoice.status };
   });
 }
@@ -266,11 +286,9 @@ export async function getInvoicePostingReportAction(
   });
 }
 
-export interface ResendToExtractionResult {
-  invoiceId: number;
-  extractionJobId: number;
-  status: invoices.InvoiceStatus;
-}
+export type ResendToExtractionResult =
+  | { outcome: "resent"; invoiceId: number; extractionJobId: number; status: invoices.InvoiceStatus }
+  | { outcome: "duplicate"; duplicate: invoices.DuplicateInvoice; canOpen: boolean }; // canOpen: role is owner
 
 /**
  * Re-extract: opens a NEW `extraction_job` row (`queued`, skipping
@@ -286,7 +304,14 @@ export async function resendToExtractionAction(
     const actor = await requireRole("owner");
     const parsed = resendToExtractionSchema.parse(input);
     const result = await invoices.resendInvoiceToExtraction(actor, parsed.invoiceId);
+    if (result.outcome === "duplicate") {
+      // The action is owner-only today; canOpen still follows the role so
+      // loosening the gate later cannot silently hand out a link to a page
+      // that role cannot open.
+      return { outcome: "duplicate", duplicate: result.duplicate, canOpen: actor.role === "owner" };
+    }
     return {
+      outcome: "resent",
       invoiceId: result.invoice.id,
       extractionJobId: result.extractionJobId,
       status: result.invoice.status,

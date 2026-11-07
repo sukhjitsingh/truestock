@@ -137,6 +137,8 @@ import {
 } from "@/components/ui/table";
 import { InvoiceExceptionBadges } from "@/components/office/invoice-exception-badges";
 import { computeLineAlerts } from "@/lib/invoice-line-alerts";
+import { InvoiceDuplicateNotice } from "@/components/office/invoice-duplicate-notice";
+import { buildRetryDuplicateView, type RetryDuplicateView } from "@/lib/invoice-duplicate-view";
 import { formatCostForInput, formatCalendarDate } from "@/lib/utils";
 
 /** One `corrections[]` entry, exactly as `reviewInvoiceSchema` (the SAME
@@ -283,6 +285,11 @@ export function InvoiceReviewForm({
   // and unmounts this form); only a failure re-arms the button. A second click
   // in the gap would otherwise hit a ConflictError.
   const [retrying, setRetrying] = useState(false);
+  // The refusal renders right under the Retry button that was pressed.
+  const [retryRefusal, setRetryRefusal] = useState<{
+    view: RetryDuplicateView;
+    place: "panel" | "actions";
+  } | null>(null);
 
   function updateField(lineId: number, key: keyof LineFieldState, value: string) {
     setFields((prev) => ({ ...prev, [lineId]: { ...prev[lineId], [key]: value } }));
@@ -473,16 +480,22 @@ export function InvoiceReviewForm({
     }
   }
 
-  async function handleRetry(event: React.FormEvent) {
+  async function handleRetry(event: React.FormEvent, place: "panel" | "actions") {
     event.preventDefault();
     if (retrying) return;
     setRetrying(true);
     setError(null);
+    setRetryRefusal(null);
     try {
       const result = await resendToExtractionAction({ invoiceId: invoice.id });
       if (!result.ok) {
         setRetrying(false);
         setError(result.error.message);
+        return;
+      }
+      if (result.data.outcome === "duplicate") {
+        setRetrying(false);
+        setRetryRefusal({ view: buildRetryDuplicateView(result.data.duplicate, result.data.canOpen), place });
         return;
       }
       router.refresh();
@@ -534,12 +547,13 @@ export function InvoiceReviewForm({
           <h2 className="text-label uppercase font-semibold text-negative">Extraction failed</h2>
           <p className="text-row-title text-foreground">{outcomeView.failureMessage}</p>
           {outcomeView.canRetryNow ? (
-            <form method="post" onSubmit={handleRetry}>
+            <form method="post" onSubmit={(event) => handleRetry(event, "panel")}>
               <Button type="submit" size="primary" disabled={retrying || pending} className="w-fit font-semibold shadow-xs">
                 {retrying ? "Retrying…" : "Retry extraction"}
               </Button>
             </form>
           ) : null}
+          {retryRefusal?.place === "panel" ? <InvoiceDuplicateNotice view={retryRefusal.view} /> : null}
         </div>
       ) : null}
 
@@ -1083,12 +1097,13 @@ export function InvoiceReviewForm({
           ) : null}
 
           {canRetry ? (
-            <form method="post" onSubmit={handleRetry} className="flex flex-col gap-3">
+            <form method="post" onSubmit={(event) => handleRetry(event, "actions")} className="flex flex-col gap-3">
               <Button type="submit" size="primary" disabled={pending || retrying} className="w-fit font-semibold shadow-xs">
                 {retrying ? "Retrying…" : "Retry extraction"}
               </Button>
             </form>
           ) : null}
+          {retryRefusal?.place === "actions" ? <InvoiceDuplicateNotice view={retryRefusal.view} /> : null}
         </div>
       </div>
     </div>

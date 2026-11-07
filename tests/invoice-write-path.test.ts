@@ -19,7 +19,6 @@ import { and, eq, sql } from "drizzle-orm";
 import { db, closePool } from "@/db";
 import { invoice, extractionJob } from "@/db/schema";
 import {
-  createInvoiceForUpload,
   markUploadConfirmed,
   getInvoice,
   listInvoicesForOwner,
@@ -37,7 +36,7 @@ import {
 } from "@/lib/domain/errors";
 import { readFile } from "node:fs/promises";
 import { writeInvoiceFile, sha256Hex, resolveStoredPath } from "@/lib/storage/invoice-files";
-import { migrateTestDatabase, resetDatabase, createFixtures, type Fixtures } from "./helpers/test-db";
+import { migrateTestDatabase, resetDatabase, createFixtures, createInvoiceForUploadOrThrow, type Fixtures } from "./helpers/test-db";
 
 let fx: Fixtures;
 
@@ -84,7 +83,7 @@ async function getJobForInvoice(invoiceId: number) {
 }
 
 async function uploadAndWriteMatchingFile(actor: Fixtures["owner"]): Promise<InvoiceRow> {
-  const created = await createInvoiceForUpload(actor, {
+  const created = await createInvoiceForUploadOrThrow(actor, {
     source: "pdf",
     contentType: "application/pdf",
     fileSha256: sha256Hex(Buffer.from("hello invoice")),
@@ -133,12 +132,12 @@ describe("computeRetentionUntil", () => {
 });
 
 // ---------------------------------------------------------------------------
-// createInvoiceForUpload — the three-write transaction
+// createInvoiceForUploadOrThrow — the three-write transaction
 // ---------------------------------------------------------------------------
 
-describe("createInvoiceForUpload", () => {
+describe("createInvoiceForUploadOrThrow", () => {
   test("inserts invoice (uploaded) + extraction_job (awaiting_upload), and stamps file_path", async () => {
-    const created = await createInvoiceForUpload(fx.owner, {
+    const created = await createInvoiceForUploadOrThrow(fx.owner, {
       vendorId: fx.vendorId,
       source: "photo",
       contentType: "image/jpeg",
@@ -156,7 +155,7 @@ describe("createInvoiceForUpload", () => {
   });
 
   test("a cross-tenant vendorId is refused with NotFoundError, and nothing is written", async () => {
-    const attempt = createInvoiceForUpload(fx.owner, {
+    const attempt = createInvoiceForUploadOrThrow(fx.owner, {
       vendorId: fx.otherVendorId,
       source: "pdf",
       contentType: "application/pdf",
@@ -215,7 +214,7 @@ describe("markUploadConfirmed", () => {
   test(
     "a mismatched hash leaves the job at awaiting_upload — MUTATION-CHECKED: comparing a declared value against itself instead of the derived one makes this always match",
     async () => {
-      const created = await createInvoiceForUpload(fx.owner, {
+      const created = await createInvoiceForUploadOrThrow(fx.owner, {
         source: "pdf",
         contentType: "application/pdf",
         fileSha256: sha256Hex(Buffer.from("declared bytes")),
@@ -233,7 +232,7 @@ describe("markUploadConfirmed", () => {
   );
 
   test("no file on disk yet is 'not yet confirmable', not a crash", async () => {
-    const created = await createInvoiceForUpload(fx.owner, {
+    const created = await createInvoiceForUploadOrThrow(fx.owner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: "d".repeat(64),
@@ -272,7 +271,7 @@ describe("markUploadConfirmed", () => {
 
 describe("getInvoice", () => {
   test("returns the invoice scoped to the caller's organization", async () => {
-    const created = await createInvoiceForUpload(fx.owner, {
+    const created = await createInvoiceForUploadOrThrow(fx.owner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: "e".repeat(64),
@@ -286,7 +285,7 @@ describe("getInvoice", () => {
   test(
     "a cross-tenant invoiceId returns NotFoundError, never a response confirming the row exists — MUTATION-CHECKED: dropping the organizationId predicate returns the other tenant's row instead",
     async () => {
-      const created = await createInvoiceForUpload(fx.owner, {
+      const created = await createInvoiceForUploadOrThrow(fx.owner, {
         source: "pdf",
         contentType: "application/pdf",
         fileSha256: "f".repeat(64),
@@ -310,13 +309,13 @@ describe("getInvoice", () => {
 
 describe("listInvoicesForOwner / listInvoicesRedacted", () => {
   test("both exclude status = approved by default", async () => {
-    const uploaded = await createInvoiceForUpload(fx.owner, {
+    const uploaded = await createInvoiceForUploadOrThrow(fx.owner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: "1".repeat(64),
       fileSizeBytes: 5,
     });
-    const toApprove = await createInvoiceForUpload(fx.owner, {
+    const toApprove = await createInvoiceForUploadOrThrow(fx.owner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: "2".repeat(64),
@@ -336,13 +335,13 @@ describe("listInvoicesForOwner / listInvoicesRedacted", () => {
   });
 
   test("only returns the caller's own organization's invoices", async () => {
-    await createInvoiceForUpload(fx.owner, {
+    await createInvoiceForUploadOrThrow(fx.owner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: "3".repeat(64),
       fileSizeBytes: 5,
     });
-    await createInvoiceForUpload(fx.otherOwner, {
+    await createInvoiceForUploadOrThrow(fx.otherOwner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: "4".repeat(64),
@@ -356,7 +355,7 @@ describe("listInvoicesForOwner / listInvoicesRedacted", () => {
   test(
     "listInvoicesRedacted's rows never carry a monetary or file-identity field — asserted on the returned object's own keys, not a value check — MUTATION-CHECKED: selecting the whole row instead of the explicit column list adds totalGross/fileSha256/filePath back",
     async () => {
-      await createInvoiceForUpload(fx.owner, {
+      await createInvoiceForUploadOrThrow(fx.owner, {
         source: "pdf",
         contentType: "application/pdf",
         fileSha256: "5".repeat(64),
@@ -388,7 +387,7 @@ describe("listInvoicesForOwner / listInvoicesRedacted", () => {
 
 describe("updateInvoiceStatus", () => {
   test("a legal transition succeeds and persists", async () => {
-    const created = await createInvoiceForUpload(fx.owner, {
+    const created = await createInvoiceForUploadOrThrow(fx.owner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: "6".repeat(64),
@@ -402,7 +401,7 @@ describe("updateInvoiceStatus", () => {
   test(
     "an illegal transition is refused before touching the database — approved is terminal",
     async () => {
-      const created = await createInvoiceForUpload(fx.owner, {
+      const created = await createInvoiceForUploadOrThrow(fx.owner, {
         source: "pdf",
         contentType: "application/pdf",
         fileSha256: "7".repeat(64),
@@ -421,7 +420,7 @@ describe("updateInvoiceStatus", () => {
   test(
     "a stale `from` — the row already moved on — raises ConflictError, never a silent no-op — MUTATION-CHECKED: dropping the fromList.includes(row.status) check lets a stale transition overwrite the current status",
     async () => {
-      const created = await createInvoiceForUpload(fx.owner, {
+      const created = await createInvoiceForUploadOrThrow(fx.owner, {
         source: "pdf",
         contentType: "application/pdf",
         fileSha256: "8".repeat(64),
@@ -442,7 +441,7 @@ describe("updateInvoiceStatus", () => {
   test(
     "a transition INTO reviewed is refused while any required document field is still NULL — MUTATION-CHECKED: removing the REQUIRED_FOR_REVIEW guard lets it through with every field NULL",
     async () => {
-      const created = await createInvoiceForUpload(fx.owner, {
+      const created = await createInvoiceForUploadOrThrow(fx.owner, {
         source: "pdf",
         contentType: "application/pdf",
         fileSha256: "9".repeat(64),
@@ -460,7 +459,7 @@ describe("updateInvoiceStatus", () => {
   );
 
   test("a transition into reviewed succeeds once every required field is populated, either already on the row or via this same call's data", async () => {
-    const created = await createInvoiceForUpload(fx.owner, {
+    const created = await createInvoiceForUploadOrThrow(fx.owner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: "0".repeat(64),
@@ -483,7 +482,7 @@ describe("updateInvoiceStatus", () => {
   });
 
   test("a cross-tenant invoiceId is refused with NotFoundError", async () => {
-    const created = await createInvoiceForUpload(fx.owner, {
+    const created = await createInvoiceForUploadOrThrow(fx.owner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: "a1".padEnd(64, "1"),
@@ -503,7 +502,7 @@ describe("claimNextJob", () => {
   test(
     "job_not_claimable_before_upload — a job still awaiting_upload is never returned, even when it is the only job — MUTATION-CHECKED: dropping the status = 'queued' predicate from the UPDATE's WHERE clause claims it (the probe SELECT alone is not the guard — the UPDATE re-asserting status is)",
     async () => {
-      await createInvoiceForUpload(fx.owner, {
+      await createInvoiceForUploadOrThrow(fx.owner, {
         source: "pdf",
         contentType: "application/pdf",
         fileSha256: "b1".padEnd(64, "1"),
@@ -654,13 +653,13 @@ describe("GET /api/invoices/[id]/file", () => {
   });
 
   test("a NULL file_path is 404, not a crash", async () => {
-    const created = await createInvoiceForUpload(fx.owner, {
+    const created = await createInvoiceForUploadOrThrow(fx.owner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: "c1".padEnd(64, "1"),
       fileSizeBytes: 5,
     });
-    // file_path is set by createInvoiceForUpload's own transaction, so force
+    // file_path is set by createInvoiceForUploadOrThrow's own transaction, so force
     // it back to NULL to exercise the defensive branch directly.
     await db.update(invoice).set({ filePath: null }).where(eq(invoice.id, created.id));
 
@@ -692,7 +691,7 @@ describe("GET /api/invoices/[id]/file", () => {
 
 describe("PUT /api/invoices/[id]/file", () => {
   test("owner can upload the file", async () => {
-    const created = await createInvoiceForUpload(fx.owner, {
+    const created = await createInvoiceForUploadOrThrow(fx.owner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: sha256Hex(Buffer.from("put body")),
@@ -712,7 +711,7 @@ describe("PUT /api/invoices/[id]/file", () => {
   });
 
   test("manager can upload the file — positive control matching the upload action's own role gate", async () => {
-    const created = await createInvoiceForUpload(fx.manager, {
+    const created = await createInvoiceForUploadOrThrow(fx.manager, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: sha256Hex(Buffer.from("manager body")),
@@ -730,7 +729,7 @@ describe("PUT /api/invoices/[id]/file", () => {
   });
 
   test("staff is refused with 403 and nothing is written", async () => {
-    const created = await createInvoiceForUpload(fx.owner, {
+    const created = await createInvoiceForUploadOrThrow(fx.owner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: sha256Hex(Buffer.from("staff body")),
@@ -750,7 +749,7 @@ describe("PUT /api/invoices/[id]/file", () => {
   });
 
   test("a cross-tenant invoice id is refused with 404", async () => {
-    const created = await createInvoiceForUpload(fx.owner, {
+    const created = await createInvoiceForUploadOrThrow(fx.owner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: sha256Hex(Buffer.from("cross tenant")),
@@ -786,7 +785,7 @@ describe("PUT /api/invoices/[id]/file", () => {
     // stops the extraction worker from claiming an unwritten file (AR-6) also
     // stops a writer from touching a confirmed one.
     const body = "original archived bytes";
-    const created = await createInvoiceForUpload(fx.owner, {
+    const created = await createInvoiceForUploadOrThrow(fx.owner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: sha256Hex(Buffer.from(body)),
@@ -847,7 +846,7 @@ describe("PUT /api/invoices/[id]/file", () => {
     // this test would be worse than none — it would pass most runs and be
     // read as evidence.
     const body = "original archived bytes";
-    const created = await createInvoiceForUpload(fx.owner, {
+    const created = await createInvoiceForUploadOrThrow(fx.owner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: sha256Hex(Buffer.from(body)),
@@ -938,7 +937,7 @@ describe("PUT /api/invoices/[id]/file", () => {
     // the two serialize, so the second caller observes `queued` and takes the
     // idempotent-replay path it was always supposed to take.
     const body = "bytes confirmed twice at once";
-    const created = await createInvoiceForUpload(fx.owner, {
+    const created = await createInvoiceForUploadOrThrow(fx.owner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: sha256Hex(Buffer.from(body)),
@@ -976,7 +975,7 @@ describe("PUT /api/invoices/[id]/file", () => {
     // silently starts reporting a successful archive as a verification
     // failure, and this test is what catches it.
     const body = "bytes that land exactly once";
-    const created = await createInvoiceForUpload(fx.owner, {
+    const created = await createInvoiceForUploadOrThrow(fx.owner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: sha256Hex(Buffer.from(body)),

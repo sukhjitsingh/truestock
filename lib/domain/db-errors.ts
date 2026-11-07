@@ -24,12 +24,20 @@
  * The chain is walked rather than just `.cause` being unwrapped once, because
  * nothing guarantees the nesting depth stays at one.
  */
-function driverErrorInChain(err: unknown): { code?: unknown; errno?: unknown } | null {
+function driverErrorInChain(
+  err: unknown,
+): { code?: unknown; errno?: unknown; message?: unknown; sqlMessage?: unknown } | null {
   let current = err;
   // Bounded so a self-referential cause cannot spin forever.
   for (let depth = 0; depth < 10; depth++) {
     if (typeof current !== "object" || current === null) return null;
-    const e = current as { code?: unknown; errno?: unknown; cause?: unknown };
+    const e = current as {
+      code?: unknown;
+      errno?: unknown;
+      message?: unknown;
+      sqlMessage?: unknown;
+      cause?: unknown;
+    };
     if (e.code !== undefined || e.errno !== undefined) return e;
     if (!("cause" in e)) return null;
     current = e.cause;
@@ -42,6 +50,21 @@ export function isDuplicateKeyError(err: unknown): boolean {
   // Both forms: mysql2 populates `code` and `errno` together, but only the
   // number is guaranteed stable across driver versions.
   return driver?.code === "ER_DUP_ENTRY" || driver?.errno === 1062;
+}
+
+/**
+ * A 1062 on one SPECIFIC unique index, named by `indexName`. `isDuplicateKeyError`
+ * answers "some unique index collided"; a caller that has a meaning for exactly
+ * one index (a duplicate file, say) must not reinterpret a collision on a
+ * different index as that meaning. MariaDB's message is `Duplicate entry '..'
+ * for key '<index>'` (MySQL 8 prefixes the table), so this matches the name as a
+ * substring of the driver's own message, found through the same `cause` walk.
+ */
+export function isDuplicateKeyOnIndex(err: unknown, indexName: string): boolean {
+  if (!isDuplicateKeyError(err)) return false;
+  const driver = driverErrorInChain(err);
+  const text = String(driver?.sqlMessage ?? driver?.message ?? "");
+  return text.includes(indexName);
 }
 
 /**

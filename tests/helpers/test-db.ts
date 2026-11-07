@@ -26,6 +26,29 @@ import {
   invoiceLine as invoiceLineTable,
 } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
+import {
+  createInvoiceForUpload,
+  type CreateInvoiceForUploadInput,
+  type InvoiceRow,
+} from "@/lib/domain/invoices";
+
+/**
+ * `createInvoiceForUpload` for a test that is not about duplicates: the fixture
+ * is expected to be new, so a refusal here means the fixture's bytes collided
+ * with a live copy, which is a bug in the test, not a result to assert on.
+ */
+export async function createInvoiceForUploadOrThrow(
+  actor: Actor,
+  input: CreateInvoiceForUploadInput,
+): Promise<InvoiceRow> {
+  const result = await createInvoiceForUpload(actor, input);
+  if (result.outcome === "duplicate") {
+    throw new Error(
+      `Test fixture collided with live invoice ${result.duplicate.invoiceId}: use different bytes.`,
+    );
+  }
+  return result.invoice;
+}
 
 /**
  * Refuses to run against anything but a database whose name ends in `_test`.

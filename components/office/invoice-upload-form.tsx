@@ -8,6 +8,8 @@ import { invoiceSourceEnum } from "@/db/enums";
 import { ACCEPTED_INVOICE_CONTENT_TYPES } from "@/lib/storage/invoice-content-types";
 import { Button } from "@/components/ui/button";
 import { Field, Select } from "@/components/ui/field";
+import { InvoiceDuplicateNotice } from "@/components/office/invoice-duplicate-notice";
+import { buildDuplicateView, type DuplicateView } from "@/lib/invoice-duplicate-view";
 
 type InvoiceSource = (typeof invoiceSourceEnum)[number];
 
@@ -107,6 +109,12 @@ export function InvoiceUploadForm({ vendors }: { vendors: VendorSummary[] }) {
   const [stage, setStage] = useState<Stage>("idle");
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  // The shared "already uploaded" refusal, for both the request-time and the
+  // confirm-time path. Not an error and never retryable: the file is fine,
+  // resending it would be refused again. Changing the key remounts the
+  // uncontrolled file input, the only way to clear its selection.
+  const [refusal, setRefusal] = useState<DuplicateView | null>(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
 
   const pending = PENDING_STAGES.has(stage);
 
@@ -120,12 +128,27 @@ export function InvoiceUploadForm({ vendors }: { vendors: VendorSummary[] }) {
     setStage("idle");
     setError(null);
     setFieldErrors({});
+    setRefusal(null);
+    setFileInputKey((k) => k + 1);
+  }
+
+  function clearRefusal() {
+    setRefusal(null);
+    setFile(null);
+    setContentType("");
+    setInvoiceId(null);
+    setUploadUrl(null);
+    setStage("idle");
+    setError(null);
+    setFieldErrors({});
+    setFileInputKey((k) => k + 1);
   }
 
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const selected = event.target.files?.[0] ?? null;
     setError(null);
     setFieldErrors({});
+    setRefusal(null);
     setStage("idle");
     setInvoiceId(null);
     setUploadUrl(null);
@@ -199,6 +222,13 @@ export function InvoiceUploadForm({ vendors }: { vendors: VendorSummary[] }) {
         setError(result.error.message);
         return;
       }
+      if (result.data.duplicate) {
+        setStage("idle");
+        setInvoiceId(null);
+        setUploadUrl(null);
+        setRefusal(buildDuplicateView(result.data.duplicate, result.data.canOpen === true));
+        return;
+      }
       if (!result.data.matched) {
         setStage("verify-failed");
         setError("The uploaded file didn't verify against what was declared. Try uploading it again.");
@@ -221,6 +251,7 @@ export function InvoiceUploadForm({ vendors }: { vendors: VendorSummary[] }) {
 
     setError(null);
     setFieldErrors({});
+    setRefusal(null);
     setStage("hashing");
 
     let fileSha256: string;
@@ -249,6 +280,11 @@ export function InvoiceUploadForm({ vendors }: { vendors: VendorSummary[] }) {
         setStage("idle");
         setError(result.error.message);
         setFieldErrors(result.error.fieldErrors ?? {});
+        return;
+      }
+      if (result.data.outcome === "duplicate") {
+        setStage("idle");
+        setRefusal(buildDuplicateView(result.data.duplicate, result.data.canOpen));
         return;
       }
       setInvoiceId(result.data.invoiceId);
@@ -280,6 +316,7 @@ export function InvoiceUploadForm({ vendors }: { vendors: VendorSummary[] }) {
       >
         <div className="relative rounded-xl border border-dashed border-border/90 bg-secondary/30 p-4 transition-all hover:border-accent/60">
           <input
+            key={fileInputKey}
             id="invoice-file"
             type="file"
             accept={ACCEPTED_INVOICE_CONTENT_TYPES.join(",")}
@@ -331,6 +368,7 @@ export function InvoiceUploadForm({ vendors }: { vendors: VendorSummary[] }) {
           <span>{error}</span>
         </div>
       ) : null}
+      {refusal ? <InvoiceDuplicateNotice view={refusal} note={refusal.note} /> : null}
       {stage === "done" ? (
         <div className="flex items-center gap-2 rounded-lg bg-success-bg p-3 text-caption text-success" role="status">
           <CheckCircle className="size-4 shrink-0" aria-hidden="true" />
@@ -342,6 +380,10 @@ export function InvoiceUploadForm({ vendors }: { vendors: VendorSummary[] }) {
         {stage === "verify-failed" ? (
           <Button type="button" variant="outline" size="tap" onClick={handleRetry}>
             Retry upload
+          </Button>
+        ) : refusal ? (
+          <Button type="button" variant="outline" size="primary" onClick={clearRefusal}>
+            {refusal.chooseAnotherLabel}
           </Button>
         ) : (
           <Button type="submit" size="primary" disabled={pending || !file} className="font-semibold shadow-xs">

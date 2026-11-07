@@ -1,0 +1,2 @@
+ALTER TABLE `invoice` ADD `live_file_sha256` varchar(64);--> statement-breakpoint
+ALTER TABLE `invoice` ADD CONSTRAINT `invoice_organization_live_file_sha256_unique` UNIQUE(`organization_id`,`live_file_sha256`);

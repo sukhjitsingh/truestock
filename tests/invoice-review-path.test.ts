@@ -26,7 +26,8 @@ import { eq } from "drizzle-orm";
 import { db, closePool } from "@/db";
 import { invoice, invoiceLine, extractionJob } from "@/db/schema";
 import { getLinesForInvoice, applyLineReview, submitInvoiceReview } from "@/lib/domain/invoice-lines";
-import { updateInvoiceStatus, resendInvoiceToExtraction, createInvoiceForUpload } from "@/lib/domain/invoices";
+import { updateInvoiceStatus, resendInvoiceToExtraction } from "@/lib/domain/invoices";
+import { resendExpectingResent } from "./helpers/resend";
 import { getJobForInvoice } from "@/lib/domain/extraction";
 import { NotFoundError, ConflictError, DomainError, InvoiceNotWritableError } from "@/lib/domain/errors";
 import {
@@ -34,6 +35,7 @@ import {
   resetDatabase,
   createFixtures,
   createInvoiceMissingHeaderField,
+  createInvoiceForUploadOrThrow,
   type Fixtures,
 } from "./helpers/test-db";
 
@@ -164,7 +166,7 @@ describe("applyLineReview", () => {
   );
 
   test("a line id belonging to a DIFFERENT invoice in the same org is refused — a foreign key proves the row exists, not that this review may touch it", async () => {
-    const secondInvoice = await createInvoiceForUpload(fx.owner, {
+    const secondInvoice = await createInvoiceForUploadOrThrow(fx.owner, {
       source: "pdf",
       contentType: "application/pdf",
       fileSha256: "a".repeat(64),
@@ -340,7 +342,7 @@ describe("resendInvoiceToExtraction", () => {
       .set({ errorMessage: "sentinel from the first attempt", retryCount: 2 })
       .where(eq(extractionJob.id, fx.extractionJobId));
 
-    const result = await resendInvoiceToExtraction(fx.owner, fx.invoiceId);
+    const result = await resendExpectingResent(fx.owner, fx.invoiceId);
 
     expect(result.invoice.status).toBe("processing");
     expect(result.extractionJobId).not.toBe(fx.extractionJobId);
@@ -371,7 +373,7 @@ describe("resendInvoiceToExtraction", () => {
 
   test("getJobForInvoice returns the NEWEST job once a resend has created a second row for the same invoice", async () => {
     await updateInvoiceStatus(fx.owner, fx.invoiceId, "needs_review", "rejected", { rejectionReason: "x" });
-    const { extractionJobId } = await resendInvoiceToExtraction(fx.owner, fx.invoiceId);
+    const { extractionJobId } = await resendExpectingResent(fx.owner, fx.invoiceId);
 
     const job = await getJobForInvoice(fx.organizationId, fx.invoiceId);
     expect(job.id).toBe(extractionJobId);
@@ -625,7 +627,7 @@ describe("resendToExtractionAction", () => {
     const result = await resendToExtractionAction({ invoiceId: fx.invoiceId });
 
     expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("unreachable");
+    if (!result.ok || result.data.outcome !== "resent") throw new Error("unreachable");
     expect(result.data.status).toBe("processing");
     expect(result.data.extractionJobId).not.toBe(fx.extractionJobId);
   });
