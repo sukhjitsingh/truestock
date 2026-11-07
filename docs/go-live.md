@@ -192,6 +192,23 @@ Not with `curl`. See the rule at the top.
       pdf-inspector from the standalone artifact. The scan reaches the real
       Claude Vision API, records provider/model/token/cost provenance, and lands
       in the owner review queue rather than silently inventing unmatched data.
+- [ ] **Canary: scans go straight to Vision and never touch PDFium.** Do this
+      on a separate test site or test organization first, with one *synthetic*
+      scanned PDF (never a real supplier document). Confirm all three:
+      (1) the invoice reaches `needs_review` with line items, and its
+      extraction job is `done` with `provider` = anthropic and token/cost
+      recorded (that is the Vision call); (2) the job has no error text
+      mentioning `PDFium`; (3) for a *text* PDF the job is `done` with no
+      provider (pdf-inspector's native addon loaded and parsed it, no Vision).
+      Failure looks like: a scan landing in `needs_review` with **zero lines**
+      and a failed job (an `ocr`-phase error naming the Anthropic key means the
+      key is missing or invalid on the host; any error naming PDFium means the
+      selective-OCR path was reintroduced and must be removed, since no native
+      PDFium is proven on Hostinger); or a text PDF failing in `classify` with
+      a module/binary load error, which means pdf-inspector's native addon did
+      not load on the host and *every* PDF will fail. A scan that shows zero
+      lines is never an approvable invoice: retry it from the review page, or
+      reject it.
 - [ ] **Review and approve one matched line.** Confirm the invoice locks, one
       `product_cost_history` row points to its source line, and a repeated
       approval cannot post the cost twice.

@@ -11,7 +11,8 @@
  * (upload/confirm) — this file is about what happens to the DATA once a job
  * is running, not the job's own state machine.
  */
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from "bun:test";
+import * as pdfInspector from "@firecrawl/pdf-inspector";
 import { eq } from "drizzle-orm";
 import { db, closePool } from "@/db";
 import { extractionJob, invoice, vendorAlias } from "@/db/schema";
@@ -447,14 +448,6 @@ describe("text-PDF queue routing", () => {
           confidence: 1,
           pagesNeedingOcr: [0],
         }),
-        // Non-empty pagesRecommendingHosted keeps this on the Vision path so
-        // the missing-key failure this test is actually about still fires —
-        // an empty array here would skip Vision entirely and never reach it.
-        processPdfWithOcr: async () => ({
-          markdown: "",
-          pagesRecommendingHosted: [1],
-          pagesRoutedToOcr: [1],
-        }),
         readPdfFile: async () => Buffer.from("%PDF-1.4 test fixture"),
       });
     } finally {
@@ -520,14 +513,6 @@ describe("text-PDF queue routing", () => {
         processPdfCalled = true;
         return { markdown: MIXED_GROUND_TRUTH_MARKDOWN, pagesWithTables: [1], hasEncodingIssues: false };
       },
-      // Non-empty pagesRecommendingHosted keeps this on the Vision path —
-      // this test is specifically about both halves of the mixed branch
-      // (markdown ground truth AND Vision) running together.
-      processPdfWithOcr: async () => ({
-        markdown: MIXED_GROUND_TRUTH_MARKDOWN,
-        pagesRecommendingHosted: [1],
-        pagesRoutedToOcr: [1],
-      }),
       readPdfFile: async () => Buffer.from("%PDF-1.4 test fixture"),
       extractInvoice: async () => {
         extractInvoiceCalled = true;
@@ -702,292 +687,89 @@ describe("text-PDF queue routing", () => {
   });
 });
 
-describe("selective-OCR queue routing", () => {
-  test("a scanned job where pdf-inspector recommends no hosted page reaches needs_review/done on its own markdown, without ever calling Claude Vision", async () => {
-    await db
-      .update(invoice)
-      .set({
-        status: "uploaded",
-        pageCount: null,
-        invoiceDate: null,
-        invoiceNumber: null,
-        totalGross: null,
-        totalDiscount: null,
-        totalNet: null,
-        currency: null,
-        retentionUntil: null,
-      })
-      .where(eq(invoice.id, fx.invoiceId));
+describe("scans go straight to Vision (QA finding F9)", () => {
+  // No native PDFium is proven on the production host, so a scanned or mixed
+  // document must never reach pdf-inspector's selective-OCR entry point (which
+  // is what loads PDFium). The spy replaces the real native call; if the
+  // pipeline reaches it the test fails, and a PDFium load error would
+  // otherwise have been swallowed by the old fallback and hidden.
+  async function queueScan() {
+    await db.update(invoice).set({ status: "uploaded", pageCount: null }).where(eq(invoice.id, fx.invoiceId));
     await db
       .update(extractionJob)
       .set({ status: "queued", phase: null, pdfType: null, completedAt: null })
       .where(eq(extractionJob.id, fx.extractionJobId));
-
-    let claudeWasCalled = false;
-    const result = await processExtractionQueue("selective-ocr-skip-vision-test", {
-      classifyPdf: async () => ({
-        pdfType: "scanned",
-        pageCount: 1,
-        confidence: 1,
-        pagesNeedingOcr: [0],
-      }),
-      // Empty pagesRecommendingHosted is the whole point of this test:
-      // pdf-inspector itself says no page needs a hosted vision model, so
-      // Vision must never be called.
-      processPdfWithOcr: async () => ({
-        markdown: PERFORMANCE_TEXT_INVOICE_MARKDOWN,
-        pagesRecommendingHosted: [],
-        pagesRoutedToOcr: [0],
-      }),
-      readPdfFile: async () => Buffer.from("%PDF-1.4 test fixture"),
-      extractInvoice: async () => {
-        claudeWasCalled = true;
-        throw new Error("Claude must not be called when no page recommends a hosted vision model");
-      },
-    });
-
-    expect(result).toMatchObject({
-      claimed: true,
-      jobId: fx.extractionJobId,
-      invoiceId: fx.invoiceId,
-      outcome: "done",
-    });
-    expect(claudeWasCalled).toBe(false);
-
-    const [savedInvoice, savedJob, savedLines] = await Promise.all([
-      db.query.invoice.findFirst({ where: (row, { eq }) => eq(row.id, fx.invoiceId) }),
-      db.query.extractionJob.findFirst({ where: (row, { eq }) => eq(row.id, fx.extractionJobId) }),
-      db.query.invoiceLine.findMany({
-        where: (row, { eq }) => eq(row.invoiceId, fx.invoiceId),
-        orderBy: (row, { asc }) => asc(row.lineNumber),
-      }),
-    ]);
-    expect(savedInvoice?.status).toBe("needs_review");
-    expect(savedInvoice?.invoiceNumber).toBe("693655");
-    expect(savedJob).toMatchObject({
-      status: "done",
-      phase: "parse",
-      pdfType: "scanned",
-      provider: null,
-      modelId: null,
-      inputTokens: null,
-      outputTokens: null,
-      costUsd: null,
-    });
-    expect(savedLines.map((line) => line.vendorItemCode)).toEqual(["FD252", "NH700", "F4794"]);
+  }
+  const visionResult = (code: string) => ({
+    raw: {
+      invoiceDate: "2026-08-01",
+      invoiceNumber: code,
+      totalGross: null,
+      totalDiscount: null,
+      totalNet: null,
+      currency: "USD",
+      lines: [
+        {
+          rawText: "1 case Vision Item",
+          lineType: "product" as const,
+          vendorItemCode: code,
+          description: "Vision Item",
+          packDescription: null,
+          quantity: 1,
+          uom: "case",
+          packSize: 12,
+          unitCost: 50,
+          extendedCost: 50,
+          rawGross: 50,
+          rawDiscount: null,
+          rawNet: 50,
+          confidence: 0.95,
+        },
+      ],
+    },
+    provider: "anthropic",
+    modelId: "claude-sonnet-5",
+    promptVersion: "invoice-extraction-v1",
+    rawResponse: {},
+    inputTokens: 100,
+    outputTokens: 50,
+    costUsd: "0.001000",
   });
 
-  test("a scanned job where pdf-inspector's own fused markdown has no recognizable line-item table still reaches needs_review/done via the Claude Vision fallback, even though pagesRecommendingHosted was empty", async () => {
-    await db
-      .update(invoice)
-      .set({
-        status: "uploaded",
-        pageCount: null,
-        invoiceDate: null,
-        invoiceNumber: null,
-        totalGross: null,
-        totalDiscount: null,
-        totalNet: null,
-        currency: null,
-        retentionUntil: null,
-      })
-      .where(eq(invoice.id, fx.invoiceId));
-    await db
-      .update(extractionJob)
-      .set({ status: "queued", phase: null, pdfType: null, completedAt: null })
-      .where(eq(extractionJob.id, fx.extractionJobId));
-
-    let claudeWasCalled = false;
-    const result = await processExtractionQueue("selective-ocr-parse-failure-fallback-test", {
-      classifyPdf: async () => ({
-        pdfType: "scanned",
-        pageCount: 1,
-        confidence: 1,
-        pagesNeedingOcr: [0],
-      }),
-      // Empty pagesRecommendingHosted is the same as the skip-Vision test —
-      // pdf-inspector itself is confident no page needs a hosted vision
-      // model. But this markdown has no table syntax at all (prose, no `|`
-      // rows), so parseLinesFromMarkdown throws "no recognizable
-      // line-item table was found" — the fallback this test proves.
-      processPdfWithOcr: async () => ({
-        markdown: "This document has no markdown table anywhere in it, just prose.",
-        pagesRecommendingHosted: [],
-        pagesRoutedToOcr: [0],
-      }),
-      readPdfFile: async () => Buffer.from("%PDF-1.4 test fixture"),
-      extractInvoice: async () => {
-        claudeWasCalled = true;
-        return {
-          raw: {
-            invoiceDate: "2026-08-01",
-            invoiceNumber: "FALLBACK-1",
-            totalGross: null,
-            totalDiscount: null,
-            totalNet: null,
-            currency: "USD",
-            lines: [
-              {
-                rawText: "1 case Vision Fallback Item",
-                lineType: "product",
-                vendorItemCode: "FALLBACK-SKU-1",
-                description: "Vision Fallback Item",
-                packDescription: null,
-                quantity: 1,
-                uom: "case",
-                packSize: 12,
-                unitCost: 50,
-                extendedCost: 50,
-                rawGross: 50,
-                rawDiscount: null,
-                rawNet: 50,
-                confidence: 0.95,
-              },
-            ],
+  for (const pdfType of ["scanned", "mixed"] as const) {
+    test(`a ${pdfType} job reaches needs_review/done through Vision and never calls pdf-inspector's PDFium-backed OCR`, async () => {
+      await queueScan();
+      const ocrSpy = spyOn(pdfInspector, "processPdfWithOcr").mockImplementation(async () => {
+        throw new Error("failed to load PDFium; install a compatible PDFium shared library or set PDFIUM_LIB_PATH");
+      });
+      let visionCalls = 0;
+      try {
+        const result = await processExtractionQueue(`no-pdfium-${pdfType}`, {
+          classifyPdf: async () => ({ pdfType, pageCount: 1, confidence: pdfType === "mixed" ? 0.6 : 1, pagesNeedingOcr: [0] }),
+          processPdf: async () => ({ markdown: null, pagesWithTables: [], hasEncodingIssues: false }),
+          readPdfFile: async () => Buffer.from("%PDF-1.4 test fixture"),
+          extractInvoice: async () => {
+            visionCalls += 1;
+            return visionResult(`NO-PDFIUM-${pdfType}`);
           },
-          provider: "anthropic",
-          modelId: "claude-sonnet-5",
-          promptVersion: "invoice-extraction-v1",
-          rawResponse: {},
-          inputTokens: 100,
-          outputTokens: 50,
-          costUsd: "0.001000",
-        };
-      },
+        });
+        expect(result).toMatchObject({ claimed: true, outcome: "done" });
+        expect(visionCalls).toBe(1);
+        expect(ocrSpy).not.toHaveBeenCalled();
+      } finally {
+        ocrSpy.mockRestore();
+      }
+      const [savedInvoice, savedJob, savedLines] = await Promise.all([
+        db.query.invoice.findFirst({ where: (row, { eq }) => eq(row.id, fx.invoiceId) }),
+        db.query.extractionJob.findFirst({ where: (row, { eq }) => eq(row.id, fx.extractionJobId) }),
+        db.query.invoiceLine.findMany({ where: (row, { eq }) => eq(row.invoiceId, fx.invoiceId) }),
+      ]);
+      expect(savedInvoice?.status).toBe("needs_review");
+      expect(savedJob).toMatchObject({ status: "done", pdfType, provider: "anthropic" });
+      expect(savedJob?.errorMessage).toBeNull();
+      expect(savedLines.map((line) => line.vendorItemCode)).toEqual([`NO-PDFIUM-${pdfType}`]);
     });
-
-    expect(result).toMatchObject({
-      claimed: true,
-      jobId: fx.extractionJobId,
-      invoiceId: fx.invoiceId,
-      outcome: "done",
-    });
-    // The whole point of this test: the markdown-only parse failed, so
-    // Vision MUST have run as the fallback — the inverse assertion from the
-    // skip-Vision test above.
-    expect(claudeWasCalled).toBe(true);
-
-    const [savedInvoice, savedJob, savedLines] = await Promise.all([
-      db.query.invoice.findFirst({ where: (row, { eq }) => eq(row.id, fx.invoiceId) }),
-      db.query.extractionJob.findFirst({ where: (row, { eq }) => eq(row.id, fx.extractionJobId) }),
-      db.query.invoiceLine.findMany({
-        where: (row, { eq }) => eq(row.invoiceId, fx.invoiceId),
-        orderBy: (row, { asc }) => asc(row.lineNumber),
-      }),
-    ]);
-    expect(savedInvoice?.status).toBe("needs_review");
-    expect(savedInvoice?.invoiceNumber).toBe("FALLBACK-1");
-    expect(savedJob).toMatchObject({
-      status: "done",
-      phase: "parse",
-      pdfType: "scanned",
-      provider: "anthropic",
-      modelId: "claude-sonnet-5",
-    });
-    expect(savedLines.map((line) => line.vendorItemCode)).toEqual(["FALLBACK-SKU-1"]);
-  });
-
-  test("a scanned job whose selective-OCR step throws (model load failure or the 30s timeout) still reaches needs_review/done via Claude Vision instead of failing — before selective OCR existed every scanned PDF went to Vision, so an OCR error must not make an extractable invoice worse than that", async () => {
-    await db
-      .update(invoice)
-      .set({
-        status: "uploaded",
-        pageCount: null,
-        invoiceDate: null,
-        invoiceNumber: null,
-        totalGross: null,
-        totalDiscount: null,
-        totalNet: null,
-        currency: null,
-        retentionUntil: null,
-      })
-      .where(eq(invoice.id, fx.invoiceId));
-    await db
-      .update(extractionJob)
-      .set({ status: "queued", phase: null, pdfType: null, completedAt: null })
-      .where(eq(extractionJob.id, fx.extractionJobId));
-
-    let claudeWasCalled = false;
-    const result = await processExtractionQueue("selective-ocr-throw-fallback-test", {
-      classifyPdf: async () => ({
-        pdfType: "scanned",
-        pageCount: 3,
-        confidence: 1,
-        pagesNeedingOcr: [0, 1, 2],
-      }),
-      // The same message withTimeout() raises, so this stands in for both a
-      // native OCR crash and a long scan that outlasts PDF_PROCESSING_TIMEOUT_MS.
-      processPdfWithOcr: async () => {
-        throw new Error("processPdfWithOcrAsync timed out after 30000ms");
-      },
-      readPdfFile: async () => Buffer.from("%PDF-1.4 test fixture"),
-      extractInvoice: async () => {
-        claudeWasCalled = true;
-        return {
-          raw: {
-            invoiceDate: "2026-08-01",
-            invoiceNumber: "OCR-THROW-1",
-            totalGross: null,
-            totalDiscount: null,
-            totalNet: null,
-            currency: "USD",
-            lines: [
-              {
-                rawText: "1 case Vision After OCR Failure",
-                lineType: "product",
-                vendorItemCode: "OCR-THROW-SKU-1",
-                description: "Vision After OCR Failure",
-                packDescription: null,
-                quantity: 1,
-                uom: "case",
-                packSize: 12,
-                unitCost: 50,
-                extendedCost: 50,
-                rawGross: 50,
-                rawDiscount: null,
-                rawNet: 50,
-                confidence: 0.95,
-              },
-            ],
-          },
-          provider: "anthropic",
-          modelId: "claude-sonnet-5",
-          promptVersion: "invoice-extraction-v1",
-          rawResponse: {},
-          inputTokens: 100,
-          outputTokens: 50,
-          costUsd: "0.001000",
-        };
-      },
-    });
-
-    expect(result).toMatchObject({
-      claimed: true,
-      jobId: fx.extractionJobId,
-      invoiceId: fx.invoiceId,
-      outcome: "done",
-    });
-    expect(claudeWasCalled).toBe(true);
-
-    const [savedInvoice, savedJob, savedLines] = await Promise.all([
-      db.query.invoice.findFirst({ where: (row, { eq }) => eq(row.id, fx.invoiceId) }),
-      db.query.extractionJob.findFirst({ where: (row, { eq }) => eq(row.id, fx.extractionJobId) }),
-      db.query.invoiceLine.findMany({
-        where: (row, { eq }) => eq(row.invoiceId, fx.invoiceId),
-        orderBy: (row, { asc }) => asc(row.lineNumber),
-      }),
-    ]);
-    expect(savedInvoice?.status).toBe("needs_review");
-    expect(savedInvoice?.invoiceNumber).toBe("OCR-THROW-1");
-    expect(savedJob).toMatchObject({
-      status: "done",
-      phase: "parse",
-      pdfType: "scanned",
-      provider: "anthropic",
-      modelId: "claude-sonnet-5",
-    });
-    expect(savedLines.map((line) => line.vendorItemCode)).toEqual(["OCR-THROW-SKU-1"]);
-  });
+  }
 });
 
 describe("parseLinesFromVision", () => {

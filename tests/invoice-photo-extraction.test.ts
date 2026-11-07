@@ -245,7 +245,7 @@ async function queueInvoiceAt(filePath: string): Promise<void> {
 
 /** Every pdf-inspector entry point, wired to record and throw — a photo must reach none of them. */
 function pdfInspectorTripwires() {
-  const calls = { classifyPdf: 0, processPdf: 0, processPdfWithOcr: 0 };
+  const calls = { classifyPdf: 0, processPdf: 0 };
   const deps: ProcessExtractionQueueDeps = {
     classifyPdf: async () => {
       calls.classifyPdf += 1;
@@ -254,10 +254,6 @@ function pdfInspectorTripwires() {
     processPdf: async () => {
       calls.processPdf += 1;
       throw new Error("processPdf must not be called for a photo");
-    },
-    processPdfWithOcr: async () => {
-      calls.processPdfWithOcr += 1;
-      throw new Error("processPdfWithOcr must not be called for a photo");
     },
   };
   return { calls, deps };
@@ -305,7 +301,7 @@ describe("photo queue routing", () => {
         invoiceId: fx.invoiceId,
         outcome: "done",
       });
-      expect(calls).toEqual({ classifyPdf: 0, processPdf: 0, processPdfWithOcr: 0 });
+      expect(calls).toEqual({ classifyPdf: 0, processPdf: 0 });
 
       expect(docs).toHaveLength(1);
       expect(docs[0].mediaType).toBe(contentType);
@@ -361,7 +357,6 @@ describe("photo queue routing", () => {
         classifyCalls += 1;
         return { pdfType: "scanned", pageCount: 2, confidence: 1, pagesNeedingOcr: [0, 1] };
       },
-      processPdfWithOcr: async () => ({ markdown: "", pagesRecommendingHosted: [1, 2], pagesRoutedToOcr: [] }),
       readPdfFile: async () => PDF_BYTES,
       extractInvoice: async (doc) => {
         docs.push(doc);
@@ -412,7 +407,7 @@ describe("photo queue routing", () => {
     });
     expect(fileRead).toBe(false);
     expect(visionCalled).toBe(false);
-    expect(calls).toEqual({ classifyPdf: 0, processPdf: 0, processPdfWithOcr: 0 });
+    expect(calls).toEqual({ classifyPdf: 0, processPdf: 0 });
 
     const { savedInvoice, savedJob, savedLines } = await readState();
     // Out of `processing` and into the review queue where Reject/re-extract lives.
@@ -443,7 +438,7 @@ describe("photo queue routing", () => {
       errorMessage: expect.stringMatching(/photos over 7\.5 MB can't be read.*lower resolution/),
     });
     expect(visionCalled).toBe(false);
-    expect(calls).toEqual({ classifyPdf: 0, processPdf: 0, processPdfWithOcr: 0 });
+    expect(calls).toEqual({ classifyPdf: 0, processPdf: 0 });
 
     const { savedInvoice, savedJob, savedLines } = await readState();
     expect(savedInvoice?.status).toBe("needs_review");
@@ -474,7 +469,6 @@ describe("photo queue routing", () => {
 
     const result = await processExtractionQueue("big-pdf", {
       classifyPdf: async () => ({ pdfType: "scanned", pageCount: 9, confidence: 1, pagesNeedingOcr: [0] }),
-      processPdfWithOcr: async () => ({ markdown: "", pagesRecommendingHosted: [1], pagesRoutedToOcr: [] }),
       readPdfFile: async () => Buffer.alloc(MAX_VISION_IMAGE_BYTES + 1),
       extractInvoice: async (doc) => {
         docs.push(doc);

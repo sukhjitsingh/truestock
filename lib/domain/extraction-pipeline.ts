@@ -183,48 +183,12 @@ export async function processPdf(bytes: Buffer): Promise<ProcessPdfResult> {
   };
 }
 
-export interface ProcessPdfWithOcrResult {
-  markdown: string;
-  /**
-   * 1-indexed pages pdf-inspector itself flags as needing a real vision
-   * model — empty means nothing in this document needed Vision at all.
-   * Sourced directly from `OcrPdfResult.pagesRecommendingHosted`.
-   */
-  pagesRecommendingHosted: number[];
-  /**
-   * 1-indexed pages that actually ran local OCR (a subset of what
-   * `classifyPdf` predicted). Logged for observability only — not
-   * persisted (see `02-architecture.md`'s Data section).
-   */
-  pagesRoutedToOcr: number[];
-}
-
-/**
- * pdf-inspector's one-call selective-OCR pipeline: native extraction first,
- * local OCR only on pages the native quality signals flag (`OcrMode.Auto`),
- * and its own recommendation for which pages still need a hosted vision
- * model. Same caller responsibility as `classifyPdf`/`processPdf` — the
- * caller reads the file and performs containment checks.
- *
- * `mode` is asserted from the string literal `"Auto"` rather than written as
- * `pdfInspector.OcrMode.Auto` — `OcrMode` is a `const enum` (same
- * `isolatedModules` constraint noted on `PDF_INSPECTOR_TYPE_TO_SCHEMA`
- * above: a const enum imported from another module can be referenced as a
- * TYPE but its members can't be inlined as VALUES). `"Auto"` is `OcrMode`'s
- * own runtime string value per the library's declaration.
- */
-export async function processPdfWithOcr(bytes: Buffer): Promise<ProcessPdfWithOcrResult> {
-  const result = await withTimeout(
-    pdfInspector.processPdfWithOcr(bytes, { mode: "Auto" as pdfInspector.OcrMode }),
-    PDF_PROCESSING_TIMEOUT_MS,
-    "processPdfWithOcrAsync",
-  );
-  return {
-    markdown: result.markdown,
-    pagesRecommendingHosted: result.pagesRecommendingHosted,
-    pagesRoutedToOcr: result.pagesRoutedToOcr,
-  };
-}
+// There is deliberately no wrapper for pdf-inspector's `processPdfWithOcr`
+// (its selective-OCR pipeline). That path loads a native PDFium library, and
+// no PDFium is proven to load on the production host (Hostinger), so scanned
+// and mixed documents go straight to Claude Vision. A PDFium load failure was
+// the first thing a real scanned invoice hit (QA 2026-11-06, F9). Do not
+// reintroduce it without proving the native library on the host first.
 
 // ---------------------------------------------------------------------------
 // Text-based extraction — deterministic pdf-inspector Markdown
@@ -1276,7 +1240,6 @@ export interface ProcessExtractionQueueDeps {
   extractInvoice?: ExtractInvoiceFn;
   classifyPdf?: typeof classifyPdf;
   processPdf?: typeof processPdf;
-  processPdfWithOcr?: typeof processPdfWithOcr;
   readPdfFile?: (filePath: string) => Promise<Buffer>;
 }
 
@@ -1437,11 +1400,8 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
 
   // Effective type may differ from the raw classification: low confidence or
   // encoding issues reroute a `text` classification to `mixed`, so the
-  // document goes through selective OCR instead of trusting
-  // potentially-garbage native markdown. Vision still runs afterwards if OCR
-  // fails, still recommends a hosted page, or its markdown has no parsable
-  // line-item table — but a rerouted document whose OCR output parses cleanly
-  // is accepted without Vision.
+  // document goes to Claude Vision instead of trusting potentially-garbage
+  // native markdown.
   let effectivePdfType: PdfType = classification.pdfType;
   if (effectivePdfType === "text" && classification.confidence < CLASSIFICATION_CONFIDENCE_THRESHOLD) {
     effectivePdfType = "mixed";
@@ -1465,7 +1425,7 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
   // Scanned PDFs skip the block above entirely (no text layer to extract),
   // so their first phase update is the unconditional "ocr" set below —
   // shared with `mixed`, which already went through "text_extract" above
-  // and now moves on to selective OCR too.
+  // and then goes to Vision too.
 
   let parsed: ParsedExtraction;
   let extraction: ExtractInvoiceResult | null = null;
@@ -1476,71 +1436,23 @@ async function runClaimedJob(job: ExtractionJobRow, deps: ProcessExtractionQueue
     await setJobPhase(job.id, "parse");
     parsed = parseLinesFromMarkdown(markdown);
   } else {
-    // Scanned/mixed PDFs run pdf-inspector's selective-OCR pipeline first.
-    // Single unconditional "ocr" phase call site for both (previously
-    // scanned got "ocr" from a separate branch above, and mixed got it from
-    // a now-removed conditional here — consolidated to this one call).
+    // Scanned/mixed PDFs and photos go straight to Claude Vision. pdf-inspector's
+    // selective-OCR pipeline is NOT called: it needs a native PDFium library
+    // that is not proven on the production host, so no PDFium code path may
+    // exist for these documents (F9). `markdown` is the earlier native-text
+    // extraction (null for scanned), passed to Vision as supporting context
+    // and later used as the cross-check ground truth.
     await setJobPhase(job.id, "ocr");
-    const processPdfWithOcrFn = deps.processPdfWithOcr ?? processPdfWithOcr;
-    // The native OCR call can throw (model load failure on a small host) or
-    // hit PDF_PROCESSING_TIMEOUT_MS on a long scan. Either way the job must
-    // not fail: before selective OCR existed, every scanned PDF went straight
-    // to Vision, so Vision is the known-good fallback. Treat a failed OCR step
-    // as "nothing here was confident enough to skip Vision".
-    // A photo never enters this step: it is not a PDF, so pdf-inspector would
-    // throw on it, and with `ocrResult` left null it falls through to Vision
-    // below exactly like a failed OCR would.
-    let ocrResult: ProcessPdfWithOcrResult | null = null;
-    if (!photoMediaType) {
-      try {
-        ocrResult = await processPdfWithOcrFn(pdfBytes);
-        console.log(
-          `[extraction-pipeline] job ${job.id}: selective OCR routed ${ocrResult.pagesRoutedToOcr.length} page(s) to local OCR, ${ocrResult.pagesRecommendingHosted.length} page(s) still recommend a hosted vision model`,
-        );
-      } catch (err) {
-        console.warn(
-          `[extraction-pipeline] job ${job.id}: selective OCR failed (${err instanceof Error ? err.message : String(err)}); falling back to Claude Vision`,
-        );
-      }
-    }
-
-    // Empty pagesRecommendingHosted means pdf-inspector itself is confident
-    // no page needs a hosted vision model — skip Claude Vision entirely and
-    // parse its fused markdown the same deterministic way the `text` path
-    // does. A parse failure here (no recognizable line-item table) is not
-    // treated as a hard error: it falls through to Vision below, same as
-    // today, so an invoice never costs MORE than the old pipeline — only
-    // sometimes less.
-    let markdownParsed: ParsedExtraction | null = null;
-    if (ocrResult && ocrResult.pagesRecommendingHosted.length === 0) {
-      await setJobPhase(job.id, "parse");
-      try {
-        markdownParsed = parseLinesFromMarkdown(ocrResult.markdown);
-      } catch {
-        // Fall through to Vision below.
-      }
-    }
-
-    if (markdownParsed) {
-      parsed = markdownParsed;
-    } else {
-      // Unchanged from today: the whole buffer, not a page subset (see
-      // appendix-a-selective-ocr-audit.md — no page-scoped image is
-      // available from this library's Node.js binding). `markdown` here is
-      // deliberately the earlier native-extraction variable, not
-      // `ocrResult.markdown`, to keep this call byte-for-byte identical to
-      // the pre-existing Vision path.
-      const extractFn = deps.extractInvoice ?? extractInvoice;
-      extraction = await extractFn({
-        pdfType: effectivePdfType,
-        markdown,
-        pdfBase64: pdfBytes.toString("base64"),
-        // Only set for a photo: a PDF's doc stays exactly what it always was.
-        ...(photoMediaType ? { mediaType: photoMediaType } : {}),
-      });
-      await setJobPhase(job.id, "parse");
-      parsed = parseLinesFromVision(extraction.raw);
-    }
+    const extractFn = deps.extractInvoice ?? extractInvoice;
+    extraction = await extractFn({
+      pdfType: effectivePdfType,
+      markdown,
+      pdfBase64: pdfBytes.toString("base64"),
+      // Only set for a photo: a PDF's doc stays exactly what it always was.
+      ...(photoMediaType ? { mediaType: photoMediaType } : {}),
+    });
+    await setJobPhase(job.id, "parse");
+    parsed = parseLinesFromVision(extraction.raw);
   }
   const { header, lines } = parsed;
 
