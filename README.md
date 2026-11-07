@@ -25,13 +25,16 @@ set, the mobile counting surface rebuilt, the back office on a left icon rail wi
 the catalog on TanStack Table v8 and per-role column sets. The back office half was
 verified screen by screen in a real browser; **the redesigned counting screens have
 not been opened on a phone**, so every phone-verified fact above predates the
-surface that ships today.
+surface that ships today. *(Update 2026-11-07: they have since run on a phone,
+on 2026-10-25 and 2026-11-06. They have been used there, but not evaluated.)*
 
 **What is unproven is scale, not mechanism.** Five sessions produced 13 count lines
 between them. Nothing has been timed against the sub-20-minute target the design is
-justified by, no pass has covered all five locations, rapid-scan mode has never
+justified by, no pass has covered all six locations, rapid-scan mode has never
 faced a real camera, and 90 of 99 active products are unpriced. Those measurements
-are deferred to Phase 2.9 by a deliberate decision — see `ROADMAP.md`.
+are deferred to Phase 2.9 by a deliberate decision — see `ROADMAP.md`. As of
+2026-11-07 none of Phase 2.9 is done. The status of each item is in
+`docs/open-items.md` #48.
 
 - [`STATE.md`](STATE.md) — what is proven, what is merely built, what is next
 - [`ROADMAP.md`](ROADMAP.md) — the phases after the MVP
@@ -93,7 +96,7 @@ To run against the database without the app container, copy `.env.example` to
 
 ```bash
 bun run test:docker      # integration tests against real MariaDB
-bun run verify:browser   # drives a real Chrome against the running dev server
+VERIFY_ALLOW_DB=127.0.0.1:3307/truestock bun run verify:browser   # drives a real Chrome against the running dev server
 ```
 
 **Both are required — neither substitutes for the other.** This project has three
@@ -107,6 +110,18 @@ and `CHECK_STAFF_*` for the role-gating checks — from the gitignored
 history) and drives the Chrome already installed on the machine — Playwright's own
 browser is deliberately not downloaded. It restores every value it overwrites and
 deletes every row it creates.
+
+**It refuses to run unless you name the database you mean.** `DATABASE_URL` and
+`BASE_URL` must both be loopback (`127.0.0.1`, `localhost` or `::1` — a docker
+service name like `db` does not count), and `VERIFY_ALLOW_DB` must be set, per
+run, to exactly `<host>:<port>/<database>` of that `DATABASE_URL` (the example
+above matches the compose stack's published port; the worktree test stack
+publishes `3310`, so there it is `127.0.0.1:3310/truestock`). The harness inserts
+rows, edits product costs and deletes its own fixtures, and a stale
+`DATABASE_URL` in the shell must not be able to aim any of that at real data. The
+refusal prints the exact value to export. It is deliberately not baked into the
+`verify:browser` script. `scripts/verify-ui-redesign.mjs` carries the same guard
+on its authenticated section.
 
 **A check it could not run is printed as SKIPPED and listed under NOT VERIFIED —
 never as a pass.** Two are permanently skipped against the current dev data

@@ -141,8 +141,22 @@ for you.
    |---|---|---|
    | `DATABASE_URL` | `mysql://<user>:<password>@localhost:3306/truestock` | Read lazily by `db/index.ts` — never at build time |
    | `BETTER_AUTH_SECRET` | output of `openssl rand -base64 32` | Session signing |
-   | `BETTER_AUTH_URL` | `https://truestock.<yourdomain>` | Better Auth's own base URL |
+   | `BETTER_AUTH_URL` | `https://truestock.<yourdomain>` | Better Auth's own base URL and the origin used in audit-packet email links |
    | `NODE_ENV` | `production` | Standalone's `server.js` does not set this itself |
+   | `INVOICE_STORAGE_DIR` | `/home/<account>/truestock-data/invoices` | Absolute persistent path for retained originals and audit ZIPs; outside `public/` and outside the replaceable app release tree |
+   | `ANTHROPIC_API_KEY` | production Claude API key | Required for the scan-primary Vision path; text PDFs do not prove it |
+   | `EMAIL_PROVIDER` | `sendgrid` | Any configured provider currently uses the SendGrid v3 REST endpoint |
+   | `EMAIL_API_KEY` | production SendGrid API key | Audit-packet completion notification |
+   | `EMAIL_FROM` | verified sender address | SendGrid rejects or drops an unverified sender |
+
+   Create the storage directory before the app starts. Its exact absolute path
+   depends on the Hostinger account home, but it must **not** live under the
+   uploaded Next.js artifact: deployments replace that tree. Confirm the Node
+   process can create/read files there, then upload one invoice, restart and
+   redeploy, and prove the same bytes still download through the authenticated
+   route. Back up the database and this directory as one retention set; a row
+   without its file, or a file without its tenant-scoped row, is not a usable
+   archive. Never use the development default `./var/invoices` in production.
 
 5. **Enable SSH and add a deploy key.**
    hPanel → *Advanced → SSH Access* → enable it, note the host/port/username

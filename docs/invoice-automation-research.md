@@ -1110,7 +1110,7 @@ per the `claude-api` skill (cached 2026-06-24), not from memory.
 ## 5.4 Spike result — real Southern Glazer's invoice, extracted in ~100 ms
 
 Validated on 2026-08-14 against the owner's actual invoice
-`Southern Glazer's Invoice-5402426.pdf` (60 KB, 1 page) using pdf-inspector v1.14.2. The
+`Southern Glazer's Invoice-[redacted].pdf` (60 KB, 1 page) using pdf-inspector v1.14.2. The
 binary used was **`linux-x64-gnu` running inside `node:22-slim` via Docker** — deliberately
 the same glibc/arch as the Hostinger production runtime, so this is a partial de-risk of
 §5.2's spike (the standalone-packaging half remains unproven, see below).
@@ -1120,10 +1120,10 @@ is a generated PDF from SGWS's Proof portal, not a scan.
 
 **Extract** — 83ms, valid layout-aware Markdown. Tables intact, per-line items recovered:
 
-- Header: Invoice **5402426**, dated 02/02/2026, account ID 10880.
-- Totals: Gross **$483.64**, Discount **$123.78**, Net **$359.86**.
+- Header: Invoice **[redacted]**, dated [redacted], account ID [redacted].
+- Totals: Gross **$[redacted]**, Discount **$[redacted]**, Net **$[redacted]**.
 - 4 line items with pack details parsed out of the item name
-  (`BLACK VELVET CANADIAN 80 984395 • 1.0L • 12 Case • SCREW CAP`), quantity, gross/discount/net.
+  (`[product] 80 [redacted] • 1.0L • 12 Case • SCREW CAP`), quantity, gross/discount/net.
 - Title: *"Proof by Southern Glazer's"*.
 
 **Two findings that validate the pipeline design, not just the tool:**

@@ -21,14 +21,19 @@ import {
   type QueuedWrite,
   type QueuedWriteKind,
 } from "@/lib/count-queue";
-import { cn } from "@/lib/utils";
+import { cn, formatUnits } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { CardStack } from "@/components/ui/card";
 import { CountLineCard, type CountLineCardData } from "@/components/count/count-line-card";
 import { BarcodeScanner } from "@/components/count/barcode-scanner";
 import { QuantityEntry, type QuantitySubmission } from "@/components/count/quantity-entry";
 import { FillEntry } from "@/components/count/fill-entry";
+import { planFillSave } from "@/lib/fill-save";
+import { afterSave, saveStillApplies } from "@/lib/entry-drafts";
 import { EnrollForm } from "@/components/count/enroll-form";
+import { LocationPicker } from "@/components/count/location-picker";
+import { StrayBottleModal } from "@/components/count/stray-bottle-modal";
+import { useHideTabBar } from "@/components/count/tab-bar";
 import { formatProductSize } from "@/lib/bottle-sizes";
 
 interface LocalLine extends CountLineCardData {
@@ -45,45 +50,22 @@ type Phase =
   | { kind: "entry"; product: ProductSummary; locationId: number; isStray: boolean }
   | { kind: "enroll"; barcode: string; format: string | null };
 
-/**
- * One rapid-mode scan, kept only long enough to be shown over the camera.
- *
- * `ok: false` entries matter more than the successes: in rapid mode the
- * scanner does not close, so a refusal has no screen of its own to land on.
- * If a failure were silent the counter would keep scanning past it and the
- * bottle would simply be missing from the count — the same quiet shortfall
- * CLAUDE.md's `client_line_id` note warns about, arrived at from the UI side.
- */
+/** Which half of the entry screen just saved while the other half still holds unsaved input. */
+type EntryNotice = "fill-saved" | "qty-saved" | null;
+/** Where the "Discard unsaved entry?" row is shown — next to the control that was tapped. */
+type DiscardPrompt = "top" | "fill" | "qty" | null;
+
 interface RapidEvent {
-  /** Fresh per scan, so React keys stay unique when the same bottle repeats. */
   key: string;
   ok: boolean;
   title: string;
   detail: string;
 }
 
-/** How many rapid scans stay on screen. Enough to see a mistake, not a wall of text. */
 const RAPID_LOG_LIMIT = 4;
+/** How often queued writes are retried while any are waiting. */
+const QUEUE_RETRY_MS = 15_000;
 
-/**
- * Shown when a READ-side server call cannot reach the server at all.
- *
- * The asymmetry this exists to fix: `runWrite` has always wrapped its server
- * action in try/catch, because the offline case is the whole reason the write
- * queue exists. The read-side calls beside it — `resolveBarcodeAction`,
- * `searchProductsAction` — did not. Offline, the fetch threw straight out of an
- * async event handler, so `setBusy(false)` never ran, `setError` was never
- * reached, and `setPhase` never fired. You scanned, the scanner closed, and
- * NOTHING happened: no entry screen, no error, no queued write. Silent, and the
- * exact shape of every other bug this project has had to find the hard way.
- *
- * A read cannot be queued the way a write can, and the message must not imply
- * otherwise. The barcode has to resolve to a product BEFORE there is an entry
- * screen to collect a reading on, so there is nothing to replay later — and the
- * search picker is no fallback here, being equally server-backed. The honest
- * advice is: what you already entered is safe, this scan is not, come back into
- * range and do it again.
- */
 const OFFLINE_LOOKUP_MESSAGE =
   "Offline — couldn't look that up, and nothing was recorded for it. " +
   "Readings you already entered are saved and will sync when you are back in range. " +
@@ -93,45 +75,90 @@ function lineKey(productId: number, locationId: number) {
   return `${productId}:${locationId}`;
 }
 
-/**
- * How a write is named back to the person who made it, when the server
- * refuses one that was queued offline. "Tito's Handmade Vodka · Back Bar" is
- * something a counter can walk over and re-check; "a queued save" is not.
- */
 function writeLabel(product: ProductSummary, location: LocationSummary) {
   return `${product.name} · ${location.name}`;
 }
 
 /**
- * One counting leg: a locked location, a scan/search input, and the running
- * list of what was just counted.
+ * Mobile Floor Counting Leg Coordinator (spec §5, prototypes/count-scan.html)
  *
- * WHY THE LOCATION IS LOCKED (CLAUDE.md, and the reason
- * prototypes/count-scan.html's free-switch dropdown must not be copied): a
- * wrong active location fails *silently*. Every scan lands on a real,
- * legitimate line in the wrong place. The count total stays correct and only
- * the distribution is wrong, so nothing looks broken until a reorder list is
- * nonsense weeks later. So the location is chosen once per leg and cannot be
- * changed by a dropdown sitting next to the scan button.
- *
- * The escape hatch is a separate, deliberately heavier action: "count
- * something elsewhere" records one stray bottle into another location and
- * returns you to the current leg. It never silently changes which leg you
- * are in.
+ * Enforces:
+ * 1. Locked Location Leg Flow (station chosen once per leg, locked loc-pill).
+ * 2. Stray Bottle Modal escape hatch.
+ * 3. 56px primary tap targets on all counting controls.
+ * 4. Paired search and barcode scan at the bottom of the screen.
+ * 5. Invariant 3 rescan pulse and aria-live="polite" screen reader announcements.
+ * 6. Offline write queue with optimistic updates and UUID idempotency.
  */
 export function CountLeg({
   countId,
   locations,
   initialLines,
   canSeeCost,
+  initialLocationId = null,
 }: {
   countId: number;
   locations: LocationSummary[];
   initialLines: CountLineDetail[];
   canSeeCost: boolean;
+  /**
+   * Deep link from a count line's Edit arrow: start already inside that leg, as
+   * if it had been picked. The scan page validates it against the active
+   * locations; it is re-checked here so a bad value can only ever mean the
+   * picker, never a leg on a location this screen doesn't hold.
+   */
+  initialLocationId?: number | null;
 }) {
-  const [phase, setPhase] = useState<Phase>({ kind: "pick-location" });
-  const [activeLocationId, setActiveLocationId] = useState<number | null>(null);
+  const startLocationId =
+    initialLocationId != null && locations.some((l) => l.id === initialLocationId)
+      ? initialLocationId
+      : null;
+  const [phase, setPhaseRaw] = useState<Phase>(() =>
+    startLocationId != null ? { kind: "counting" } : { kind: "pick-location" },
+  );
+  const [activeLocationId, setActiveLocationId] = useState<number | null>(startLocationId);
+
+  // The bottom tab bar's links bypass requestLeave's discard guard, so with an
+  // entry or enroll draft on screen one stray tap on Catalog or Account threw it
+  // away silently. Entry and enroll leave through their own Back/Cancel, which
+  // do go through the guard; picking and counting have no draft and keep the bar.
+  useHideTabBar(phase.kind === "entry" || phase.kind === "enroll");
+
+  // Unsaved-input tracking for the entry screen. Refs, not state: nothing
+  // renders from them, and the save continuations below must read the value AT
+  // THE MOMENT THE SAVE RESOLVES — a closure would hold whatever it was at the
+  // tap, and the other editor is not locked while a save is in flight.
+  const fillDirtyRef = useRef(false);
+  const qtyDirtyRef = useRef(false);
+  // Bumped on every phase change. A save captures it before its first await and
+  // skips its post-save bookkeeping if it has moved (see saveStillApplies).
+  const entrySessionRef = useRef(0);
+  // Bumped to remount ONE editor to a clean state after it saves, while leaving
+  // the other (dirty) one mounted. Remounting re-seeds from the line.
+  const [fillKey, setFillKey] = useState(0);
+  const [qtyKey, setQtyKey] = useState(0);
+  const [entryNotice, setEntryNotice] = useState<EntryNotice>(null);
+  const [discardPrompt, setDiscardPrompt] = useState<DiscardPrompt>(null);
+
+  // Every phase change clears the entry screen's bookkeeping, so a flag or
+  // notice from one product's entry can never leak into the next one.
+  const setPhase = useCallback((next: Phase) => {
+    entrySessionRef.current += 1;
+    fillDirtyRef.current = false;
+    qtyDirtyRef.current = false;
+    setEntryNotice(null);
+    setDiscardPrompt(null);
+    setPhaseRaw(next);
+  }, []);
+  const onFillDirty = useCallback((dirty: boolean) => {
+    fillDirtyRef.current = dirty;
+    // "Your open-bottle entry hasn't been saved" is moot once it is clean.
+    if (!dirty) setEntryNotice((n) => (n === "qty-saved" ? null : n));
+  }, []);
+  const onQtyDirty = useCallback((dirty: boolean) => {
+    qtyDirtyRef.current = dirty;
+    if (!dirty) setEntryNotice((n) => (n === "fill-saved" ? null : n));
+  }, []);
   const [lines, setLines] = useState<Map<string, LocalLine>>(() => {
     const map = new Map<string, LocalLine>();
     for (const l of initialLines) {
@@ -141,45 +168,39 @@ export function CountLeg({
   });
   const [pendingWrites, setPendingWrites] = useState(0);
   const [scannerOpen, setScannerOpen] = useState(false);
+  const [strayModalOpen, setStrayModalOpen] = useState(false);
   const [query, setQuery] = useState("");
-  /** Target of the floating bar's search button — see the bar at the bottom
-   *  of this component's JSX for why it focuses this field rather than
-   *  opening a second one. */
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [results, setResults] = useState<ProductSummary[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [rescanAnnouncement, setRescanAnnouncement] = useState<string | null>(null);
 
-  /**
-   * Rapid mode: the scanner stays open and every scan records "one more of
-   * this" without an entry screen (open-item #10). Only meaningful where the
-   * count is quantities-only — a tenths location needs a fill reading per
-   * bottle, which is exactly the entry screen rapid mode skips.
-   */
   const [rapid, setRapid] = useState(false);
-  /** Last few rapid scans, newest first, for the on-scanner confirmation. */
   const [rapidLog, setRapidLog] = useState<RapidEvent[]>([]);
-  /** Held for the duration of one rapid write, so two can never overlap. */
   const rapidInFlight = useRef(false);
 
   const activeLocation = locations.find((l) => l.id === activeLocationId) ?? null;
-
-  /**
-   * Rapid mode is offered only where the location is counted by quantity.
-   *
-   * On a tenths location every open bottle needs a fill reading, which is the
-   * entry screen rapid mode exists to skip — a "+1 each" there would record a
-   * whole sealed bottle for what is actually a part-full one, and the count
-   * would read high with nothing on screen looking wrong. The mode is hidden
-   * rather than disabled because the location already states its input mode
-   * two lines up, so a greyed-out control would be asking a question the
-   * screen has answered.
-   */
   const rapidAvailable = activeLocation?.countMode !== "tenths";
 
   const refreshPending = useCallback(async () => {
     setPendingWrites((await pendingFor(countId)).length);
   }, [countId]);
+
+  // Everything that sends count writes runs one at a time through `exclusive`.
+  // Replay order is only real if nothing can overtake: a SET sent straight past
+  // a queued ADD lands first, then the ADD replays on top of the correction and
+  // the screen and the database disagree with nothing looking wrong.
+  const sendTailRef = useRef<Promise<unknown>>(Promise.resolve());
+  const flushWaitingRef = useRef(false);
+  // The write `runWrite` is sending itself. It is in the queue too, for
+  // durability, so `flush` has to know to leave it alone.
+  const sendingIdRef = useRef<string | null>(null);
+  const exclusive = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
+    const run = sendTailRef.current.then(task);
+    sendTailRef.current = run.catch(() => undefined);
+    return run;
+  }, []);
 
   /** Send one queued write, reusing its stored id. Returns false if the network is still down. */
   const sendQueued = useCallback(async (write: QueuedWrite): Promise<boolean> => {
@@ -239,23 +260,41 @@ export function CountLeg({
    * burning through the queue would just mark every write failed.
    */
   const flush = useCallback(async () => {
-    for (const write of await pendingFor(countId)) {
-      const reachable = await sendQueued(write);
-      if (!reachable) break;
-    }
+    // One waiting drain is enough: it reads the queue when its turn comes, so a
+    // second would only resend. Without this, retry ticks pile up behind a slow
+    // request.
+    if (flushWaitingRef.current) return;
+    flushWaitingRef.current = true;
+    await exclusive(async () => {
+      flushWaitingRef.current = false;
+      for (const write of await pendingFor(countId)) {
+        // `runWrite` is sending this one, and everything after it is newer.
+        if (write.id === sendingIdRef.current) break;
+        const reachable = await sendQueued(write);
+        if (!reachable) break;
+      }
+    });
     await refreshPending();
-  }, [countId, sendQueued, refreshPending]);
+  }, [countId, exclusive, sendQueued, refreshPending]);
+
+  // Retry on a timer while anything is queued. The `online` event is not
+  // enough: a phone that falls from Wi-Fi to mobile data never goes offline as
+  // far as the browser knows, so `online` never fires and a queued write would
+  // wait until the screen happened to remount.
+  const hasPending = pendingWrites > 0;
+  useEffect(() => {
+    if (!hasPending) return;
+    const timer = setInterval(() => {
+      if (navigator.onLine !== false) void flush();
+    }, QUEUE_RETRY_MS);
+    return () => clearInterval(timer);
+  }, [hasPending, flush]);
 
   // Drain on mount — a leg reopened after a dropped connection must actually
   // send what is still waiting, not merely display a count of it — and again
   // whenever the browser says the network is back.
   useEffect(() => {
-    // `flush` is async: it talks to IndexedDB and the network and only
-    // touches state in a promise continuation, which the rule's static
-    // analysis can't see. This is external-system synchronization — the
-    // carve-out the rule's own docs describe — not derived state. The queue
-    // must actually be drained on mount, not merely counted.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // The queue must actually be drained on mount, not merely counted.
     void flush();
     const onOnline = () => void flush();
     window.addEventListener("online", onOnline);
@@ -278,6 +317,7 @@ export function CountLeg({
       label: string,
       payload: Record<string, unknown>,
       optimistic: (prev: Map<string, LocalLine>) => Map<string, LocalLine>,
+      holdBusyOnOk = false,
     ) => {
       const id = newWriteId();
       setError(null);
@@ -304,6 +344,7 @@ export function CountLeg({
         return optimistic(prev);
       });
 
+      sendingIdRef.current = id;
       await enqueue({
         id,
         kind,
@@ -318,14 +359,26 @@ export function CountLeg({
       const body = { ...payload, clientLineId: id };
       let result: Awaited<ReturnType<typeof incrementCountLineAction>>;
       try {
-        result =
-          kind === "scan"
-            ? await scanCountLineAction(body)
-            : kind === "increment"
-              ? await incrementCountLineAction(body)
-              : kind === "fills"
-                ? await editCountLineFillsAction(body)
-                : await setCountLineQuantitiesAction(body);
+        result = await exclusive(async () => {
+          // Older queued writes go first, or this one overtakes them. If they
+          // still can't get through, neither can this: it waits behind them.
+          for (const older of await pendingFor(countId)) {
+            if (older.id === id) continue;
+            if (!(await sendQueued(older))) throw new Error("Queue still blocked");
+          }
+          const sent =
+            kind === "scan"
+              ? await scanCountLineAction(body)
+              : kind === "increment"
+                ? await incrementCountLineAction(body)
+                : kind === "fills"
+                  ? await editCountLineFillsAction(body)
+                  : await setCountLineQuantitiesAction(body);
+          // Answered either way, so it leaves the queue. Inside the lock so
+          // `flush` can never see it after the server has already replied.
+          await dequeue(id);
+          return sent;
+        });
       } catch {
         // The fetch threw — offline, which is the case this queue exists for.
         // The write is already durably enqueued under `id`, the optimistic row
@@ -337,21 +390,22 @@ export function CountLeg({
         // counts starts causing double ones.
         await markAttempt(id, "Offline — will retry");
         await refreshPending();
-        setBusy(false);
+        if (!holdBusyOnOk) setBusy(false);
         return true;
+      } finally {
+        sendingIdRef.current = null;
       }
 
       if (result.ok) {
-        await dequeue(id);
         // Adopt the server's line id and authoritative quantities. The server
         // stays the source of truth; the optimistic row was only a placeholder.
         const row = result.data;
         setLines((prev) => {
           const next = new Map(prev);
-          const key = lineKey(row.productId, row.locationId);
-          const existing = next.get(key);
+          const lineK = lineKey(row.productId, row.locationId);
+          const existing = next.get(lineK);
           if (existing) {
-            next.set(key, {
+            next.set(lineK, {
               ...existing,
               lineId: row.id,
               sealedCaseQty: row.sealedCaseQty,
@@ -386,15 +440,21 @@ export function CountLeg({
           }
           return next;
         });
-        await dequeue(id);
         setError(result.error.message);
       }
 
       await refreshPending();
-      setBusy(false);
+      // A caller that is about to leave or remount the entry screen asks to
+      // keep `busy` through a success and clears it itself (`finishSave`), in
+      // the same batch as that transition. Clearing it here re-enabled Save for
+      // a render while the editor was still mounted on the freshly updated
+      // line — "10 ea → 20 ea" on a button that had just saved the 10 — and a
+      // second tap in that window added the bottles twice. A refusal always
+      // releases here: the screen stays, and the counter needs to retry.
+      if (!(holdBusyOnOk && result.ok)) setBusy(false);
       return result.ok;
     },
-    [countId, refreshPending, canSeeCost],
+    [countId, refreshPending, canSeeCost, exclusive, sendQueued],
   );
 
   async function onBarcode(barcode: string, format: string | null) {
@@ -525,9 +585,12 @@ export function CountLeg({
       return;
     }
 
+    const k = lineKey(product.id, locationId);
+    const existing = lines.get(k);
+
     const ok = await runWrite(
       "scan",
-      lineKey(product.id, locationId),
+      k,
       writeLabel(product, location),
       { countId, barcode, format: format ?? undefined, locationId, qty: 1 },
       (prev) =>
@@ -541,6 +604,17 @@ export function CountLeg({
         ),
     );
 
+    if (ok && existing) {
+      // A case of unknown size adds an unknown number of units; announcing a
+      // total built on a guessed size would be a confident wrong number.
+      const addedUnits = packLevel === "case" ? product.caseSize : 1;
+      setRescanAnnouncement(
+        addedUnits != null
+          ? `Updated ${product.name} in ${location.name}: now ${formatUnits((existing.units ?? 0) + addedUnits)} units`
+          : `Updated ${product.name} in ${location.name}: case added, case size unknown`,
+      );
+    }
+
     pushRapid({
       ok,
       title: product.name,
@@ -550,7 +624,6 @@ export function CountLeg({
     });
   }
 
-  /** Prepend a rapid result, keeping the list short. */
   function pushRapid(event: Omit<RapidEvent, "key">) {
     setRapidLog((prev) =>
       [{ ...event, key: newWriteId() }, ...prev].slice(0, RAPID_LOG_LIMIT),
@@ -567,11 +640,64 @@ export function CountLeg({
       const found = await searchProductsAction({ query: value, limit: 20 });
       if (found.ok) setResults(found.data);
     } catch {
-      // Offline. Clear the list rather than leaving the PREVIOUS query's hits
-      // sitting under the current text — stale results that look like an answer
-      // are worse than none, because tapping one records the wrong bottle.
       setResults([]);
       setError(OFFLINE_LOOKUP_MESSAGE);
+    }
+  }
+
+  // ---- entry screen: leaving without losing input ---------------------------
+
+  const leaveEntry = () => setPhase({ kind: "counting" });
+
+  /**
+   * Back / Cancel. A clean entry screen leaves at once; one holding unsaved
+   * input asks first — inline, not a modal (a dialog on a control used this
+   * often is clicked through blind), and next to the control that was tapped.
+   */
+  function requestLeave(from: Exclude<DiscardPrompt, null>) {
+    if (fillDirtyRef.current || qtyDirtyRef.current) {
+      setDiscardPrompt(from);
+      return;
+    }
+    leaveEntry();
+  }
+
+  /**
+   * Call after a save SUCCEEDED. The entry screen mounts the open-bottle and
+   * sealed editors together, each with its own Save; leaving unmounts both, so
+   * a save from one used to silently discard whatever was typed in the other.
+   * If the other holds unsaved input, stay: remount only the half that saved
+   * (it re-seeds from the already-updated line) and say what is still pending.
+   * The other half's draft is never written on its behalf.
+   *
+   * `startedSession` is `entrySessionRef.current` as read BEFORE the save's
+   * first await. If the counter left this entry meanwhile (Back → Discard, then
+   * scanned something else) the write has landed but the screen is no longer
+   * the one it was for, and the dirty refs now describe a different entry.
+   */
+  function afterEntrySave(saved: "fill" | "qty", startedSession: number) {
+    if (!saveStillApplies(startedSession, entrySessionRef.current)) return;
+    const otherDirty = saved === "fill" ? qtyDirtyRef.current : fillDirtyRef.current;
+    if (afterSave({ otherDirty }) === "leave") {
+      leaveEntry();
+      return;
+    }
+    if (saved === "fill") setFillKey((k) => k + 1);
+    else setQtyKey((k) => k + 1);
+    setEntryNotice(saved === "fill" ? "fill-saved" : "qty-saved");
+    setDiscardPrompt(null);
+  }
+
+  /**
+   * Close out a save started with `runWrite(..., holdBusyOnOk = true)`: run the
+   * leave/remount, then release `busy` in the same batch so Save is never
+   * enabled against an editor that has already saved.
+   */
+  function finishSave(ok: boolean, saved: "fill" | "qty", startedSession: number) {
+    try {
+      if (ok) afterEntrySave(saved, startedSession);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -586,10 +712,6 @@ export function CountLeg({
         onPick={(id) => {
           setActiveLocationId(id);
           setPhase({ kind: "counting" });
-          // Rapid mode does not survive a leg change. It is a per-location
-          // decision (a tenths leg cannot use it at all), and carrying it
-          // silently into the next leg would mean the first scan there
-          // records +1 without the counter having asked for that.
           setRapid(false);
           setRapidLog([]);
         }}
@@ -605,9 +727,6 @@ export function CountLeg({
         barcode={phase.barcode}
         format={phase.format}
         onCancel={() => setPhase({ kind: "counting" })}
-        // Both enroll paths land here — whether the barcode was attached to a
-        // product the catalog already had or to one just created, the next
-        // step is identical: count the thing that is now in your hand.
         onResolved={(product) => {
           if (activeLocationId == null) return;
           setPhase({ kind: "entry", product, locationId: activeLocationId, isStray: false });
@@ -622,29 +741,36 @@ export function CountLeg({
     const { product, locationId, isStray } = phase;
     const location = locations.find((l) => l.id === locationId)!;
     const existing = lines.get(lineKey(product.id, locationId));
-    const done = () => setPhase({ kind: "counting" });
-
-    // Fill levels are offered only where the location says so (CLAUDE.md:
-    // the input-mode switch is driven entirely by location) and only for
-    // things that can be partly full. A sealed case in the storeroom has no
-    // fill level, and offering a pad there invites someone to tap one.
     const showFill = location.countMode === "tenths";
+    // Keyed on the line too, so a different product's entry can never inherit
+    // this one's typed state even if React reuses the component position.
+    const entryKey = `${product.id}:${locationId}`;
 
     return (
       <div className="px-bar-pad pb-8 pt-6">
-        <button
-          type="button"
-          onClick={done}
-          className="mb-4 flex items-center gap-1 text-caption text-muted-foreground"
-        >
-          <ChevronLeft className="size-4" aria-hidden="true" /> Back to {location.name}
-        </button>
+        {discardPrompt === "top" ? (
+          <DiscardRow className="mb-4" onKeep={() => setDiscardPrompt(null)} onDiscard={leaveEntry} />
+        ) : (
+          <button
+            type="button"
+            onClick={() => requestLeave("top")}
+            className="mb-2 flex min-h-tap-min items-center gap-1 text-caption text-muted-foreground hover:text-foreground"
+          >
+            <ChevronLeft className="size-4" aria-hidden="true" /> Back to {location.name}
+          </button>
+        )}
 
         <h1 className="text-header-title text-foreground">{product.name}</h1>
-        <p className="mt-1 text-row-subtitle text-muted-foreground">
-          {formatProductSize(product)} &middot; {location.name}
-          {isStray ? " · stray" : ""}
-        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <span className="text-row-subtitle text-muted-foreground">
+            {formatProductSize(product)} &middot; {location.name}
+          </span>
+          {isStray ? (
+            <span className="rounded-full bg-accent/15 px-2.5 py-0.5 text-label font-semibold uppercase text-accent">
+              Stray bottle
+            </span>
+          ) : null}
+        </div>
 
         {error ? (
           <p className="mt-3 rounded-md bg-negative-bg px-3 py-2 text-caption text-negative" role="alert">
@@ -655,46 +781,100 @@ export function CountLeg({
         <div className="mt-section-gap">
           {showFill ? (
             <FillEntry
+              key={`fill:${entryKey}:${fillKey}`}
+              productId={product.id}
               productName={product.name}
+              sizeMl={product.sizeMl}
+              unitType={product.unitType}
+              locationName={location.name}
               existingFills={existing?.partialFills ?? []}
-              // A correction edits a row that exists server-side. Before the
-              // first write lands there is nothing to correct — and the local
-              // array is still empty anyway, so the affordance would do
-              // nothing if it were offered.
               canCorrect={existing?.lineId != null}
+              canSeeCost={canSeeCost}
+              unitCost={product.currentUnitCost}
               pending={busy}
-              onCorrect={async (allFills) => {
-                if (existing?.lineId == null) return;
+              onSaveFills={async (allFills) => {
+                const startedSession = entrySessionRef.current;
+                // FillEntry hands back the WHOLE open-bottle list, seeded from
+                // the line's existing fills. Sending that array through the
+                // ledgered `increment` would append it onto itself and
+                // double-count every bottle already there, so classify the edit
+                // first (lib/fill-save.ts).
+                const plan = planFillSave(existing?.partialFills ?? [], allFills);
+
+                if (plan.kind === "none") {
+                  // Nothing was written, so don't claim a save; just don't
+                  // strand the counter (or eat the other editor's input).
+                  if (afterSave({ otherDirty: qtyDirtyRef.current }) === "leave") leaveEntry();
+                  return;
+                }
+
+                if (plan.kind === "append") {
+                  // Only the NEW bottles go out, through the ledgered, additive
+                  // path with a fresh id per attempt: retry-safe, and it works
+                  // before the line has synced.
+                  const ok = await runWrite(
+                    "increment",
+                    lineKey(product.id, locationId),
+                    writeLabel(product, location),
+                    {
+                      countId,
+                      productId: product.id,
+                      locationId,
+                      sealedCaseQtyDelta: 0,
+                      sealedEachQtyDelta: 0,
+                      newPartialFills: plan.added,
+                    },
+                    (prev) => applyIncrement(prev, product, location, 0, 0, plan.added),
+                    true,
+                  );
+                  finishSave(ok, "fill", startedSession);
+                  return;
+                }
+
+                // plan.kind === "replace": a bottle was changed or removed. That
+                // corrects a row that exists server-side. Before the first write
+                // lands there is nothing to correct, and REPLACE is not ledgered,
+                // so refuse rather than guess.
+                if (existing?.lineId == null) {
+                  setError(
+                    "This line hasn't finished syncing, so a bottle can't be changed or removed yet. Wait for the sync indicator to clear, then try again.",
+                  );
+                  return;
+                }
                 const ok = await runWrite(
                   "fills",
                   lineKey(product.id, locationId),
                   writeLabel(product, location),
-                  { countLineId: existing.lineId, partialFills: allFills },
-                  (prev) => applyFillCorrection(prev, product, location, allFills),
+                  { countLineId: existing.lineId, partialFills: plan.fills },
+                  (prev) => applyFillCorrection(prev, product, location, plan.fills),
+                  true,
                 );
-                if (ok) done();
+                finishSave(ok, "fill", startedSession);
               }}
-              onSubmit={async (newFills) => {
-                const ok = await runWrite(
-                  "increment",
-                  lineKey(product.id, locationId),
-                  writeLabel(product, location),
-                  {
-                    countId,
-                    productId: product.id,
-                    locationId,
-                    sealedCaseQtyDelta: 0,
-                    sealedEachQtyDelta: 0,
-                    newPartialFills: newFills,
-                  },
-                  (prev) => applyIncrement(prev, product, location, 0, 0, newFills),
-                );
-                if (ok) done();
-              }}
-              onCancel={done}
+              onDirtyChange={onFillDirty}
+              onCancel={() => requestLeave("fill")}
             />
           ) : null}
 
+          {entryNotice === "fill-saved" ? (
+            <p
+              role="status"
+              className="mt-3 rounded-md bg-warning-bg px-3 py-2 text-caption font-medium text-warning"
+            >
+              Saved. Your sealed-bottle entry below hasn&rsquo;t been saved yet.
+            </p>
+          ) : null}
+          {discardPrompt === "fill" ? (
+            <DiscardRow className="mt-3" onKeep={() => setDiscardPrompt(null)} onDiscard={leaveEntry} />
+          ) : null}
+
+          {/*
+            Sealed bottles are counted in EVERY location, tenths or not. A Speed
+            Rail or Back Bar line is open bottles AND the sealed backup behind
+            them, and sealed is the larger share of units (60-75%). Gating this
+            behind `!showFill` makes every sealed bottle on a tenths shelf
+            uncountable, with no error anywhere.
+          */}
           <div className={showFill ? "mt-section-gap border-t border-border pt-5" : ""}>
             {showFill ? (
               <p className="mb-3 text-label uppercase text-muted-foreground">
@@ -702,17 +882,20 @@ export function CountLeg({
               </p>
             ) : null}
             <QuantityEntry
+              key={`qty:${entryKey}:${qtyKey}`}
+              productId={product.id}
+              productName={product.name}
               currentCases={existing?.sealedCaseQty ?? 0}
               currentEaches={existing?.sealedEachQty ?? 0}
               caseSize={existing?.caseSizeAtCount ?? product.caseSize}
-              // Identity, not a flag: QuantityEntry asks `isCountedByCase`
-              // itself so this screen never gets its own idea of what a case
-              // is. Both fields come off the resolved product row.
               category={product.category}
               unitType={product.unitType}
               canSet={existing?.lineId != null}
+              canSeeCost={canSeeCost}
+              unitCost={product.currentUnitCost}
               pending={busy}
               onSubmit={async (submission: QuantitySubmission) => {
+                const startedSession = entrySessionRef.current;
                 const ok =
                   submission.mode === "set" && existing?.lineId != null
                     ? await runWrite(
@@ -725,6 +908,7 @@ export function CountLeg({
                           sealedEachQty: submission.eaches,
                         },
                         (prev) => applySet(prev, product, location, submission),
+                        true,
                       )
                     : await runWrite(
                         "increment",
@@ -747,11 +931,24 @@ export function CountLeg({
                             submission.eaches,
                             [],
                           ),
+                        true,
                       );
-                if (ok) done();
+                finishSave(ok, "qty", startedSession);
               }}
-              onCancel={done}
+              onDirtyChange={onQtyDirty}
+              onCancel={() => requestLeave("qty")}
             />
+            {entryNotice === "qty-saved" ? (
+              <p
+                role="status"
+                className="mt-3 rounded-md bg-warning-bg px-3 py-2 text-caption font-medium text-warning"
+              >
+                Saved. Your open-bottle entry above hasn&rsquo;t been saved yet.
+              </p>
+            ) : null}
+            {discardPrompt === "qty" ? (
+              <DiscardRow className="mt-3" onKeep={() => setDiscardPrompt(null)} onDiscard={leaveEntry} />
+            ) : null}
           </div>
         </div>
       </div>
@@ -764,6 +961,11 @@ export function CountLeg({
 
   return (
     <div className="pb-action-bar">
+      {/* Screen Reader Live Region for Invariant 3 Announcements */}
+      <div aria-live="polite" className="sr-only">
+        {rescanAnnouncement}
+      </div>
+
       {scannerOpen ? (
         <BarcodeScanner
           onDetected={onBarcode}
@@ -818,34 +1020,48 @@ export function CountLeg({
         />
       ) : null}
 
+      {/* Top Bar: Navigation + Identity + Sync Badge */}
       <div className="flex items-center justify-between gap-2 px-bar-pad pt-4">
         <Link
           href={`/count/${countId}`}
           aria-label="Back to count"
-          className="flex size-11 items-center justify-center rounded-full border border-border"
+          className="flex size-11 items-center justify-center rounded-full border border-border/80 bg-card/85 text-foreground backdrop-blur-md shadow-xs transition-all hover:border-accent/40 active:scale-95"
         >
           <ChevronLeft className="size-5" aria-hidden="true" />
         </Link>
         <div className="text-center">
-          <p className="text-label uppercase text-muted-foreground">Count #{countId}</p>
+          <p className="text-label font-bold uppercase text-foreground">Count #{countId}</p>
+          <p className="text-caption text-muted-foreground">In progress</p>
         </div>
         <SyncIndicator pending={pendingWrites} />
       </div>
 
-      {/*
-        The active location is a STATEMENT, not a control. It is deliberately
-        not a dropdown — see this component's doc comment.
-      */}
-      <div className="px-bar-pad pt-4">
-        <div className="inline-flex items-center gap-2 rounded-full bg-muted px-3 py-2">
-          <MapPin className="size-4 text-muted-foreground" aria-hidden="true" />
-          <span className="text-label uppercase text-foreground">{activeLocation?.name}</span>
+      {/* Locked Location Context Row */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-bar-pad pt-4">
+        <div
+          className="inline-flex min-h-tap-min items-center gap-2 rounded-full border border-border/80 bg-card/85 px-3.5 py-1.5 backdrop-blur-md shadow-xs"
+          aria-label={`Current location for this leg: ${activeLocation?.name}`}
+        >
+          <MapPin className="size-4 text-accent" aria-hidden="true" />
+          <span className="text-label font-bold uppercase text-foreground">
+            {activeLocation?.name}
+          </span>
           <span className="text-caption text-muted-foreground">
             · {activeLocation?.countMode === "tenths" ? "fill levels" : "quantities only"}
           </span>
         </div>
+
+        {/* Stray Bottle Escape Hatch Button */}
+        <button
+          type="button"
+          onClick={() => setStrayModalOpen(true)}
+          className="inline-flex min-h-tap-min items-center rounded-full border border-dashed border-input bg-transparent px-3.5 text-caption font-semibold text-muted-foreground hover:border-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Count a stray bottle elsewhere
+        </button>
       </div>
 
+      {/* Top Search + Scan Input (Pinned at top) */}
       <div className="px-bar-pad pt-4">
         <div className="flex h-tap-min items-center gap-2 rounded-md border border-input bg-card px-4 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50">
           <Search className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -866,8 +1082,6 @@ export function CountLeg({
             <ScanLine className="size-6" aria-hidden="true" />
           </button>
         </div>
-        {/* Search is always beside scan, never behind it — damaged labels,
-            house infusions and some wine have no usable barcode (CLAUDE.md). */}
       </div>
 
       {error ? (
@@ -876,6 +1090,7 @@ export function CountLeg({
         </p>
       ) : null}
 
+      {/* Search Results Dropdown */}
       {results.length > 0 ? (
         <div className="px-bar-pad pt-4">
           <p className="mb-2 text-label uppercase text-muted-foreground">Search results</p>
@@ -884,7 +1099,7 @@ export function CountLeg({
               <button
                 key={p.id}
                 type="button"
-                className="flex min-h-tap-primary flex-col justify-center rounded-lg border border-border bg-card p-card-pad text-left active:bg-muted"
+                className="flex min-h-tap-primary flex-col justify-center rounded-xl border border-border/80 bg-card/85 backdrop-blur-md p-card-pad text-left shadow-xs transition-all hover:border-accent/40 hover:bg-muted/60 active:scale-[0.985]"
                 onClick={() => {
                   setResults([]);
                   setQuery("");
@@ -903,6 +1118,7 @@ export function CountLeg({
         </div>
       ) : null}
 
+      {/* Just Counted List */}
       <div className="px-bar-pad pt-5">
         <div className="mb-3 flex items-baseline justify-between">
           <p className="text-label uppercase text-muted-foreground">Just counted</p>
@@ -923,43 +1139,18 @@ export function CountLeg({
         )}
       </div>
 
-      <div className="px-bar-pad pt-5">
-        {/*
-          The escape hatch. Note it never touches `activeLocationId` — it
-          opens an entry screen pointed at another location and returns here.
-          That is the whole difference between this and a location dropdown.
-        */}
-        <StrayPicker
-          locations={locations.filter((l) => l.id !== activeLocationId)}
-          onProduct={(product, locationId) =>
-            setPhase({ kind: "entry", product, locationId, isStray: true })
-          }
-        />
-      </div>
+      {/* Stray Bottle Modal */}
+      <StrayBottleModal
+        isOpen={strayModalOpen}
+        activeLocationId={activeLocationId ?? 0}
+        locations={locations}
+        onClose={() => setStrayModalOpen(false)}
+        onRecordStray={(targetLocationId, product) => {
+          setPhase({ kind: "entry", product, locationId: targetLocationId, isStray: true });
+        }}
+      />
 
-      {/*
-        The floating quick-access bar.
-
-        Scan and search live at the TOP of this screen, and this screen grows —
-        after forty bottles the "Just counted" list is several viewports long,
-        so reaching either one meant scrolling back up with the hand that is
-        not holding a bottle. That is the whole reason this bar exists: the two
-        controls used constantly are always within thumb reach, in the same
-        place, no matter how far down the list you are.
-
-        Scan is the wide accent target because it is what happens 150 times a
-        count. Search is a 44px icon beside it rather than a second wide button
-        — it is the fallback for damaged labels and house infusions, not the
-        primary path, and CLAUDE.md's rule is that it is always *beside* scan,
-        never behind it. It focuses the real field at the top rather than
-        opening a second search UI, so there is exactly one search input on
-        this screen and no question about which one is live.
-
-        Finish section stays, in the same place it already was, and stays
-        `outline` — promoting it to a filled button next to Scan would put the
-        leg-ending action and the most-repeated action at the same visual
-        weight, one thumb-width apart.
-      */}
+      {/* Floating Bottom Action Bar — One-Handed Accessible 56px Floor */}
       <div className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-2 border-t border-border bg-background px-bar-pad pt-bar-pad pb-safe-bottom">
         <Button
           variant="outline"
@@ -981,10 +1172,6 @@ export function CountLeg({
           <ScanLine className="size-5" aria-hidden="true" />
           <span className="text-label uppercase">Scan</span>
         </Button>
-        {/* Still "Finish section" verbatim — AGENTS.md's counting loop and the
-            pick-location screen's own copy both name this button by that
-            exact string. Shortening it to "Finish" here would leave two
-            documents pointing at a control that no longer exists. */}
         <Button
           variant="outline"
           size="primary"
@@ -999,22 +1186,18 @@ export function CountLeg({
 }
 
 // ---------------------------------------------------------------------------
-// Optimistic reducers. These mirror the server's own rules — increments add,
-// SET replaces — so the row on screen matches what the write will produce.
+// Optimistic Reducers
 // ---------------------------------------------------------------------------
 
-function baseLine(
-  product: ProductSummary,
-  location: LocationSummary,
-): LocalLine {
+function baseLine(product: ProductSummary, location: LocationSummary): LocalLine {
   return {
     lineId: null,
     productId: product.id,
     locationId: location.id,
     productName: product.name,
     category: product.category,
-    sizeMl: product.sizeMl,
-    unitType: product.unitType,
+    sizeMl: product.sizeMl ?? 0,
+    unitType: (product.unitType as "bottle" | "can" | "keg") ?? "bottle",
     locationName: location.name,
     sealedCaseQty: 0,
     sealedEachQty: 0,
@@ -1044,18 +1227,11 @@ function applyIncrement(
     sealedEachQty,
     partialFills,
     units: computeUnits(sealedCaseQty, sealedEachQty, partialFills, existing.caseSizeAtCount),
-    // Invariant 3 made visible: a second scan increments the existing line
-    // rather than creating a second one, and the UI says so.
     note: existing.lineId != null ? "Already on this count — updated, not duplicated" : undefined,
   });
   return next;
 }
 
-/**
- * A fill correction REPLACES `partial_fills`, mirroring the server's
- * `editCountLineFills`. Sealed quantities are untouched — the two halves of a
- * line are counted separately and corrected separately (invariant 4).
- */
 function applyFillCorrection(
   prev: Map<string, LocalLine>,
   product: ProductSummary,
@@ -1103,7 +1279,6 @@ function applySet(
   return next;
 }
 
-/** Mirrors lib/domain/valuation.ts's computeLineUnits, including its null case. */
 function computeUnits(
   cases: number,
   eaches: number,
@@ -1114,7 +1289,44 @@ function computeUnits(
   return cases * (caseSize ?? 0) + eaches + fills.reduce((s, f) => s + f, 0);
 }
 
-// ---------------------------------------------------------------------------
+/**
+ * Inline "throw away what I typed?" row — deliberately NOT a modal. The safe
+ * answer (Keep editing) takes focus so a stray tap or Enter doesn't discard,
+ * and Discard sits where Cancel does so the thumb path stays the same.
+ */
+function DiscardRow({
+  className,
+  onKeep,
+  onDiscard,
+}: {
+  className?: string;
+  onKeep: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Discard unsaved entry?"
+      className={cn("rounded-md border border-negative bg-negative-bg p-3", className)}
+    >
+      <p className="text-caption font-semibold text-negative">Discard unsaved entry?</p>
+      <div className="mt-2 flex gap-3">
+        <Button variant="destructive" size="primary" className="flex-1" onClick={onDiscard}>
+          Discard
+        </Button>
+        <Button
+          variant="primary"
+          size="primary"
+          className="flex-[1.5]"
+          autoFocus
+          onClick={onKeep}
+        >
+          Keep editing
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function SyncIndicator({ pending }: { pending: number }) {
   return (
@@ -1136,159 +1348,6 @@ function SyncIndicator({ pending }: { pending: number }) {
           Synced
         </>
       )}
-      {/* Visible on purpose (spec §11): a dropped access point should be
-          visible rather than silent. "12 pending" tells someone the walk-in
-          killed the WiFi; nothing at all tells them everything is fine. */}
-    </div>
-  );
-}
-
-function LocationPicker({
-  countId,
-  locations,
-  counted,
-  onPick,
-}: {
-  countId: number;
-  locations: LocationSummary[];
-  counted: Map<string, LocalLine>;
-  onPick: (id: number) => void;
-}) {
-  return (
-    <div className="px-bar-pad pb-8 pt-6">
-      <Link
-        href={`/count/${countId}`}
-        className="mb-4 flex items-center gap-1 text-caption text-muted-foreground"
-      >
-        <ChevronLeft className="size-4" aria-hidden="true" /> Count #{countId}
-      </Link>
-
-      <h1 className="text-header-title text-foreground">Which section?</h1>
-      <p className="mt-1 text-row-subtitle text-muted-foreground">
-        Pick one and count it through. You stay in it until you tap{" "}
-        <em className="not-italic text-foreground">Finish section</em>.
-      </p>
-
-      <div className="mt-section-gap flex flex-col gap-card-gap">
-        {locations.map((location) => {
-          const n = [...counted.values()].filter((l) => l.locationId === location.id).length;
-          return (
-            <button
-              key={location.id}
-              type="button"
-              onClick={() => onPick(location.id)}
-              className="flex min-h-tap-primary items-center justify-between rounded-lg border border-border bg-card p-card-pad text-left"
-            >
-              <span>
-                <span className="block text-row-title text-card-foreground">{location.name}</span>
-                <span className="block text-row-subtitle text-muted-foreground">
-                  {location.countMode === "tenths" ? "Fill levels" : "Quantities only"}
-                  {n > 0 ? ` · ${n} counted` : ""}
-                </span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/**
- * The escape hatch. A stray bottle found in the wrong place gets recorded
- * where it actually is, and then you land back in the leg you were already
- * in — the active location is never silently reassigned.
- */
-function StrayPicker({
-  locations,
-  onProduct,
-}: {
-  locations: LocationSummary[];
-  onProduct: (product: ProductSummary, locationId: number) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [target, setTarget] = useState<number | null>(null);
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<ProductSummary[]>([]);
-
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="flex min-h-tap-min w-full items-center justify-center rounded-lg border border-dashed border-border text-caption text-muted-foreground"
-      >
-        Count something elsewhere
-      </button>
-    );
-  }
-
-  return (
-    <div className="rounded-lg border border-border bg-card p-card-pad">
-      <p className="text-label uppercase text-foreground">Stray bottle</p>
-      <p className="mt-1 text-caption text-muted-foreground">
-        Records into another section and brings you straight back here.
-      </p>
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        {locations.map((l) => (
-          <button
-            key={l.id}
-            type="button"
-            onClick={() => setTarget(l.id)}
-            className={cn(
-              "min-h-tap-min rounded-full border px-3 text-label uppercase",
-              target === l.id
-                ? "border-accent bg-accent text-accent-foreground"
-                : "border-input text-foreground",
-            )}
-          >
-            {l.name}
-          </button>
-        ))}
-      </div>
-
-      {target != null ? (
-        <div className="mt-3">
-          <input
-            type="search"
-            value={query}
-            placeholder="Find the product"
-            onChange={async (e) => {
-              setQuery(e.target.value);
-              if (e.target.value.trim().length < 2) return setResults([]);
-              const found = await searchProductsAction({ query: e.target.value, limit: 10 });
-              if (found.ok) setResults(found.data);
-            }}
-            className="min-h-tap-min w-full rounded-md border border-input bg-background px-3 text-body text-foreground"
-          />
-          <div className="mt-2 flex flex-col gap-2">
-            {results.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                className="rounded-md border border-border p-3 text-left"
-                onClick={() => {
-                  setOpen(false);
-                  setResults([]);
-                  setQuery("");
-                  onProduct(p, target);
-                }}
-              >
-                <span className="block text-row-subtitle text-foreground">{p.name}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      <button
-        type="button"
-        onClick={() => setOpen(false)}
-        className="mt-3 min-h-tap-min text-caption text-muted-foreground"
-      >
-        Cancel
-      </button>
     </div>
   );
 }

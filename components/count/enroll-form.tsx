@@ -105,7 +105,7 @@ export function EnrollForm({
         <button
           type="button"
           onClick={onCancel}
-          className="mb-4 flex items-center gap-1 text-caption text-muted-foreground"
+          className="mb-2 flex min-h-tap-min items-center gap-1 text-caption text-muted-foreground"
         >
           <ChevronLeft className="size-4" aria-hidden="true" /> Back
         </button>
@@ -140,7 +140,7 @@ export function EnrollForm({
               <button
                 type="button"
                 onClick={() => setMode({ kind: "confirm", product: mode.from!.product })}
-                className="mb-4 flex items-center gap-1 text-caption text-muted-foreground"
+                className="mb-2 flex min-h-tap-min items-center gap-1 text-caption text-muted-foreground"
               >
                 <ChevronLeft className="size-4" aria-hidden="true" /> Back to{" "}
                 {nameWithSize(mode.from.product)}
@@ -156,7 +156,7 @@ export function EnrollForm({
               <button
                 type="button"
                 onClick={onCancel}
-                className="mb-4 flex items-center gap-1 text-caption text-muted-foreground"
+                className="mb-2 flex min-h-tap-min items-center gap-1 text-caption text-muted-foreground"
               >
                 <ChevronLeft className="size-4" aria-hidden="true" /> Back
               </button>
@@ -400,7 +400,7 @@ function ConfirmLink({
       <button
         type="button"
         onClick={onBack}
-        className="mb-4 flex items-center gap-1 text-caption text-muted-foreground"
+        className="mb-2 flex min-h-tap-min items-center gap-1 text-caption text-muted-foreground"
       >
         <ChevronLeft className="size-4" aria-hidden="true" /> Back to results
       </button>
@@ -563,6 +563,7 @@ function CreateNew({
   const [nameCollision, setNameCollision] = useState(false);
   const [owner, setOwner] = useState<ProductSummary | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const nameMissing = name.trim().length === 0;
 
   const sizes = bottleSizesFor({ category, unitType });
 
@@ -661,7 +662,18 @@ function CreateNew({
         className="mt-section-gap flex flex-col gap-4"
         noValidate
       >
-        <Field label="Name" htmlFor="p-name" error={fieldErrors.name}>
+        {/*
+          The placeholder is an "e.g." and italic: a bare product name in muted
+          grey read as a pre-filled value on the phone test of 2026-10-25, which
+          left a disabled Save with no visible cause. While the field is empty
+          the hint names the reason Save is off.
+        */}
+        <Field
+          label="Name"
+          htmlFor="p-name"
+          error={fieldErrors.name}
+          hint={nameMissing ? "Enter a name to save" : undefined}
+        >
           <Input
             id="p-name"
             value={name}
@@ -672,7 +684,11 @@ function CreateNew({
             autoFocus={!from}
             autoCapitalize="words"
             required
-            placeholder="Tito's Handmade Vodka"
+            aria-describedby={
+              fieldErrors.name ? "p-name-error" : nameMissing ? "p-name-hint" : undefined
+            }
+            placeholder="e.g. Tito's Handmade Vodka"
+            className="placeholder:italic"
           />
         </Field>
 
@@ -751,7 +767,7 @@ function CreateNew({
             type="submit"
             size="primary"
             className="flex-[1.4]"
-            disabled={pending || !name || sizeMl === ""}
+            disabled={pending || nameMissing || sizeMl === ""}
           >
             {pending
               ? "Saving…"

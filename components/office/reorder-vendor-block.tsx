@@ -100,11 +100,16 @@ export function ReorderVendorBlock({
   }
 
   return (
-    <section ref={sectionRef} aria-labelledby={headingId}>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <h2 id={headingId} className="text-label uppercase text-muted-foreground">
-          {vendorName}
-        </h2>
+    <section ref={sectionRef} aria-labelledby={headingId} className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <h2 id={headingId} className="text-label uppercase text-muted-foreground font-semibold">
+            {vendorName}
+          </h2>
+          <span className="inline-flex items-center rounded-full bg-secondary/80 px-2 py-0.5 text-caption font-semibold text-secondary-foreground border border-border/60">
+            {items.length} {items.length === 1 ? "item" : "items"}
+          </span>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           {copyState === "error" ? (
             <span className="text-caption text-negative" role="alert">
@@ -117,11 +122,12 @@ export function ReorderVendorBlock({
             size="tap"
             onClick={handleCopy}
             aria-label={`Copy ${vendorName} order to clipboard`}
+            className="font-semibold shadow-xs"
           >
             {copyState === "copied" ? (
               <Check className="size-4 text-success" aria-hidden="true" />
             ) : (
-              <Copy className="size-4" aria-hidden="true" />
+              <Copy className="size-4 text-accent" aria-hidden="true" />
             )}
             {copyState === "copied" ? "Copied" : "Copy order"}
           </Button>
@@ -131,13 +137,14 @@ export function ReorderVendorBlock({
             size="tap"
             onClick={handlePrint}
             aria-label={`Print ${vendorName} order`}
+            className="font-semibold shadow-xs"
           >
-            <Printer className="size-4" aria-hidden="true" />
+            <Printer className="size-4 text-muted-foreground" aria-hidden="true" />
             Print
           </Button>
         </div>
       </div>
-      <TableContainer className="rounded-md border border-border">
+      <TableContainer className="glass-card">
         <Table className="min-w-[34rem]">
           <TableCaption>{vendorName} reorder, {items.length} items</TableCaption>
           <TableHeader>
@@ -145,7 +152,7 @@ export function ReorderVendorBlock({
               <TableHead>Product</TableHead>
               <TableHead numeric>On hand</TableHead>
               <TableHead numeric>Par</TableHead>
-              <TableHead numeric>Order</TableHead>
+              <TableHead numeric>Suggested Order</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -153,20 +160,20 @@ export function ReorderVendorBlock({
               <TableRow key={item.productId} interactive={false}>
                 <TableCell>
                   <span
-                    className="block max-w-[16rem] truncate text-row-subtitle text-foreground"
+                    className="block max-w-[16rem] truncate font-semibold text-card-foreground"
                     title={item.productName}
                   >
                     {item.productName}
                   </span>
                   <span className="text-caption text-muted-foreground">{item.category}</span>
                 </TableCell>
-                <TableCell numeric className="tabular-nums text-muted-foreground">
+                <TableCell numeric className="tabular-nums text-muted-foreground font-medium">
                   {formatUnits(item.onHand)}
                 </TableCell>
-                <TableCell numeric className="tabular-nums text-muted-foreground">
+                <TableCell numeric className="tabular-nums text-muted-foreground font-medium">
                   {formatUnits(item.parLevel)}
                 </TableCell>
-                <TableCell numeric className="text-numeral-sm tabular-nums text-foreground">
+                <TableCell numeric className="text-numeral-sm tabular-nums font-bold text-accent">
                   {formatUnits(item.suggestedOrderQty)}
                 </TableCell>
               </TableRow>

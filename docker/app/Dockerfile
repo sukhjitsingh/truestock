@@ -19,10 +19,10 @@ FROM node:22-bookworm-slim
 # run the app on Node." scripts/run-tests.sh execs `bun test`, so the suite
 # needs it present.
 #
-# Pinned to match the host's bun (1.3.7) so bun.lock resolves identically
+# Pinned to match the host's bun (1.4.0) so bun.lock resolves identically
 # inside and outside the container. An unpinned installer is how a lockfile
 # quietly drifts between a developer's machine and CI.
-ARG BUN_VERSION=1.3.7
+ARG BUN_VERSION=1.4.0
 ENV BUN_INSTALL=/usr/local
 
 RUN apt-get update \
@@ -43,6 +43,27 @@ WORKDIR /app
 # Manifests first, so the dependency layer caches independently of source
 # edits. Without this split, every touched .tsx file reinstalls the world.
 COPY package.json bun.lock ./
+
+# The dependency bump that triggered this (Next 16.3, Tailwind 4's oxide
+# native build, six new per-platform `@firecrawl/pdf-inspector-*` packages,
+# `unrs-resolver`, `lightningcss`) made this install noticeably heavier, and
+# measured on this host it legitimately takes 600-900+s end to end — not
+# hung, just slow, over a network hop that Docker Desktop on macOS proxies
+# through a single vpnkit/gRPC-FUSE VM. An earlier version of this line
+# wrapped the install in a timeout + retry loop to guard against
+# oven-sh/bun#30325 (bun has no install-level timeout on a stalled HTTP/2
+# stream, so a real stall hangs forever). That made things *worse* on
+# measurement: bun prints nothing incrementally — the whole
+# "+ package@version" summary is buffered and flushed in one shot at the
+# end — so there is no progress signal to time a retry on, and both a 300s
+# and a 900s timeout killed an install that was still working, each retry
+# paying the full network cost again. Removed rather than tuned further.
+#
+# What's left is the one lever that measured as an unambiguous win: the
+# cache mount persists bun's downloaded tarballs on the Docker host across
+# builds, so a rebuild against an unchanged (or mostly-unchanged) bun.lock
+# reads from disk instead of re-hitting the registry — this is what makes
+# the *next* build fast, not this one.
 RUN bun install --frozen-lockfile
 
 # No `COPY . .` — docker-compose.yml bind-mounts the source so host edits are

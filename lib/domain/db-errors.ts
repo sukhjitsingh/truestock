@@ -24,12 +24,20 @@
  * The chain is walked rather than just `.cause` being unwrapped once, because
  * nothing guarantees the nesting depth stays at one.
  */
-function driverErrorInChain(err: unknown): { code?: unknown; errno?: unknown } | null {
+function driverErrorInChain(
+  err: unknown,
+): { code?: unknown; errno?: unknown; message?: unknown; sqlMessage?: unknown } | null {
   let current = err;
   // Bounded so a self-referential cause cannot spin forever.
   for (let depth = 0; depth < 10; depth++) {
     if (typeof current !== "object" || current === null) return null;
-    const e = current as { code?: unknown; errno?: unknown; cause?: unknown };
+    const e = current as {
+      code?: unknown;
+      errno?: unknown;
+      message?: unknown;
+      sqlMessage?: unknown;
+      cause?: unknown;
+    };
     if (e.code !== undefined || e.errno !== undefined) return e;
     if (!("cause" in e)) return null;
     current = e.cause;
@@ -45,10 +53,42 @@ export function isDuplicateKeyError(err: unknown): boolean {
 }
 
 /**
+ * A 1062 on one SPECIFIC unique index, named by `indexName`. `isDuplicateKeyError`
+ * answers "some unique index collided"; a caller that has a meaning for exactly
+ * one index (a duplicate file, say) must not reinterpret a collision on a
+ * different index as that meaning. MariaDB's message is `Duplicate entry '..'
+ * for key '<index>'` (MySQL 8 prefixes the table), so this matches the name as a
+ * substring of the driver's own message, found through the same `cause` walk.
+ */
+export function isDuplicateKeyOnIndex(err: unknown, indexName: string): boolean {
+  if (!isDuplicateKeyError(err)) return false;
+  const driver = driverErrorInChain(err);
+  const text = String(driver?.sqlMessage ?? driver?.message ?? "");
+  return text.includes(indexName);
+}
+
+/**
  * InnoDB gave up on a lock: 1213 `ER_LOCK_DEADLOCK` (it picked us as the
- * deadlock victim) or 1205 `ER_LOCK_WAIT_TIMEOUT` (we waited out
- * innodb_lock_wait_timeout). Both mean "your transaction did not happen";
- * neither means "your transaction was wrong."
+ * deadlock victim), 1205 `ER_LOCK_WAIT_TIMEOUT` (we waited out
+ * innodb_lock_wait_timeout), or 1020 `ER_CHECKREAD` (the row a `SELECT ...
+ * FOR UPDATE` is about to lock has already been changed by another
+ * transaction since this transaction's consistent read of it — MariaDB's own
+ * message is literally "try restarting transaction"). All three mean "your
+ * transaction did not happen"; none means "your transaction was wrong."
+ *
+ * 1020 was added after a review-fix concurrency test (Slice 3, 2026-08-15)
+ * reproduced it deterministically — in isolation, no cross-file contention —
+ * from three simultaneous `submitInvoiceReview` calls converging on the same
+ * `vendor_alias` row via `upsertAliasCore`'s duplicate-key recovery `SELECT
+ * ... FOR UPDATE`. It did not reproduce from the same three-way race driven
+ * through bare `upsertAlias` calls: `submitInvoiceReview`'s surrounding
+ * transaction does more reads/writes (invoice + invoice_line ownership
+ * checks, a product ownership check, an invoice_line UPDATE, the invoice
+ * status CAS) before reaching that recovery SELECT, which is enough extra
+ * time under REPEATABLE READ for a concurrent committer to have changed the
+ * row between this transaction's snapshot and its locking read of it. Same
+ * shape as 1213/1205 — a lock-related race, not a real answer — so it gets
+ * the same treatment: retry the whole transaction.
  *
  * Checked by `errno` as well as `code` because mysql2 populates both and the
  * string form is the friendlier one to read, but only the number is
@@ -60,8 +100,10 @@ export function isTransientLockError(err: unknown): boolean {
   return (
     e.code === "ER_LOCK_DEADLOCK" ||
     e.code === "ER_LOCK_WAIT_TIMEOUT" ||
+    e.code === "ER_CHECKREAD" ||
     e.errno === 1213 ||
-    e.errno === 1205
+    e.errno === 1205 ||
+    e.errno === 1020
   );
 }
 

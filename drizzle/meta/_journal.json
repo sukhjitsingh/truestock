@@ -29,6 +29,62 @@
       "when": 1786560155270,
       "tag": "0003_lovely_gertrude_yorkes",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1786749244904,
+      "tag": "0004_numerous_diamondback",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1786779326341,
+      "tag": "0005_bitter_captain_marvel",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1786840413869,
+      "tag": "0006_colorful_pretty_boy",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1786927732448,
+      "tag": "0007_yielding_gideon",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1787252347082,
+      "tag": "0008_lyrical_romulus",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1787257993576,
+      "tag": "0009_pink_luke_cage",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1794033163874,
+      "tag": "0010_first_hydra",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1794070614541,
+      "tag": "0011_closed_killraven",
+      "breakpoints": true
     }
   ]
 }

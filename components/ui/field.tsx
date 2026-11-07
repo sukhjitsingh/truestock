@@ -27,11 +27,13 @@ export function Field({
           means "this action destroys something", which a validation message
           is not (design-system.md §3). */}
       {error ? (
-        <p className="text-caption text-negative" role="alert">
+        <p id={`${htmlFor}-error`} className="text-caption text-negative" role="alert">
           {error}
         </p>
       ) : hint ? (
-        <p className="text-caption text-muted-foreground">{hint}</p>
+        <p id={`${htmlFor}-hint`} className="text-caption text-muted-foreground">
+          {hint}
+        </p>
       ) : null}
     </div>
   );

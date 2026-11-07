@@ -10,11 +10,11 @@ the **UI redesign and OCR invoice automation now come before go-live**, and
 **Toast PMIX moves to Phase 5**. What follows reflects that order, not the old
 one.
 
-**Re-sequenced again 2026-08-13 by owner decision.** Two changes: **1.3 (the
-owner's data entry) is folded into the field-validation phase**, and that phase
-**moves from 1.9 to 2.9** — after the UI redesign and OCR invoice automation
-rather than before them. So **Phase 1 is now complete**, and Phase 2 is what is
-next.
+**Re-sequenced again 2026-08-13 by owner decision.** The owner's data
+entry moved into field validation, and that phase moved from 1.9 to 2.9 — after
+the UI redesign and invoice automation. Phases 1, 1.5 and 2 then closed; Phase
+2.5 completed all planned A–E slices on its integration branch on 2026-08-21.
+**Phase 2.9 is next after the final Phase 2.5 merge to `main`.**
 
 Phases are ordered by decision, not by dependency alone. Where the new order
 creates a consequence worth knowing about, it is stated under the phase rather
@@ -25,8 +25,8 @@ than left to be discovered.
 | **1** | ~~MVP completion — locations screen, bulk cost entry~~ **DONE 2026-08-12** |
 | **1.5** | ~~Survive daily use — #14, #1b, #23, #24, reorder output~~ **DONE 2026-08-12** |
 | **2** | ~~UI redesign — mobile layout and design flow~~ **DONE 2026-08-14** (PR #13) |
-| **2.5** | OCR invoice automation ← **next** |
-| **2.9** | Field validation + the owner's data entry — the deferred measurements |
+| **2.5** | ~~OCR invoice automation — archive, extraction/review, matching, cost flow, limited audit export~~ **IMPLEMENTATION COMPLETE 2026-08-21** |
+| **2.9** | Field validation + the owner's data entry — **next after Phase 2.5 merges to `main`** |
 | **3** | **Go-live — deploy to production** |
 | **4** | Reports, heatmap, back-office enhancements |
 | **5** | Toast PMIX import + variance |
@@ -227,7 +227,7 @@ the constraint it describes is what the phase was actually built under:
 
 > **This phase used to be fed by measurements, and as of 2026-08-13 it is not.**
 > The field-validation phase moved from 1.9 to **2.9**, so the redesign now happens
-> *before* any timed count, five-location walk, or enroll-budget number exists. That
+> *before* any timed count, six-location walk, or enroll-budget number exists. That
 > is the real cost of the new order and it is worth naming: this phase will be
 > designed from judgement and from the two Dribbble references, not from evidence
 > about where time actually goes. Count 2 showed 29s and 102s between two kegs *on
@@ -263,7 +263,7 @@ Known material for this phase:
   have not.**
 - **Design flow, not just layout.** The leg model (pick a location, count it,
   *Finish section*, move on) is a flow decision that has never been walked
-  end to end across five locations, and under the new order **Phase 2.9 will not
+  end to end across six locations, and under the new order **Phase 2.9 will not
   produce evidence about it until after this phase ships**. Treat the leg model as
   the thing most worth leaving alone here — changing an untested flow on judgement
   alone risks replacing a design that works with one that merely reads better.
@@ -286,13 +286,31 @@ for 7 of 9 is the cautionary tale.
 
 ---
 
-## Phase 2.5 — OCR invoice automation
+## Phase 2.5 — OCR invoice automation — **IMPLEMENTATION COMPLETE 2026-08-21**
 
-**Moved up from a conditional Phase 4.** Costs come from supplier invoices, and
-Phase 1's bulk-entry screen is the manual version of this. Build it in the order
-researched in `docs/invoice-automation-research.md`.
+All Gate 1 A–E slices are built and merged into
+`feat/phase-2.5-invoice-automation`: secure upload/archive, text and Vision
+extraction, owner review, vendor-alias matching, atomic cost history, and a
+limited date-range ZIP of invoice files plus count snapshots. PR #26 delivered
+Slice 5; PR #25 merged its prerequisite fixes and the complete stack into the
+integration branch. Current Linux CI is 449/449 tests with a successful
+production build; browser verification covered the review, cost-posting and
+audit-packet flows against isolated MariaDB stacks.
 
-> **Settle the xtraCHEF question first (spec §13).** That subscription is already
+**What completion does not claim:** the Gate 1 field metric is still unmeasured.
+Phase 2.9 must put 20–25 real invoices — including actual photographed/scanned
+documents through the live Claude Vision API — through review in under 30
+minutes. Phase 3's production gate owns real SendGrid delivery and durable
+Hostinger storage. Auto-approval remains deferred
+until about 100 invoices provide correction data. Open item #39 records two
+accepted production debts in the audit export: whole-file memory buffering and
+no stale-build reaper.
+
+The planning input below is retained as history. The xtraCHEF decision resolved
+to build, and the A–E sequence in `docs/invoice-automation-research.md` is now an
+implementation record rather than an open work list.
+
+> **Original first decision — xtraCHEF (spec §13).** That subscription is already
 > paid for and already does invoice line-item capture and archival. **One hour of
 > testing decides how much of this phase needs building.** Photograph a month of
 > liquor invoices into it and judge the extraction. The research doc leans build
@@ -357,6 +375,14 @@ unmeasured claims fail silently.
 > never been felt. If a measurement here contradicts a Phase 2 decision, the fix
 > belongs here — do not re-open the redesign wholesale.
 
+> **Status as of 2026-11-07: nothing here is done.** Of the eleven items below, five
+> have partial evidence (the enroll budget, the offline queue, barcode resolution,
+> the redesign on a phone, and the data, but only in throwaway test databases) and
+> the rest have none. Phase 2.5 closed the *code* gaps. It did not produce the field
+> evidence this phase exists for. The sources are `docs/phone-test-2026-10-25-findings.md`,
+> `docs/qa/2026-11-06-*.md`, and open items #45, #46 and #47. The status of each
+> item is tracked in `docs/open-items.md` #48.
+
 ### The data (was Phase 1.3)
 
 **Do this first — the measurements below are close to meaningless without it.**
@@ -367,16 +393,26 @@ header-only on purpose — inventing distributor names in a catalog that drives 
 orders is not acceptable) · 5 wine producers (currently varietals like `Merlot`,
 which cannot be costed or scanned until they name a producer).
 
-**Phase 2.5 should have reduced this.** OCR invoice capture is the automated
-version of exactly this typing, so on arriving here, check what it already
-populated before entering anything by hand. If it populated nothing, that is a
-finding about Phase 2.5, not a reason to skip this.
+**Phase 2.5 reduced this in code, not in data (checked 2026-11-07).** Invoice
+approval now posts costs: it was proven on one real text invoice through the UI
+on 2026-11-07 (open item #47). But every cost it has posted went into a test
+database that was then reset. The shared dev DB still has 9 of 99 products
+costed (the seeded kegs), 0 case sizes (`case_size` is NULL on all 16 bottled
+beers, findings DB-5), 0 pars, 0 vendors and no wine producers. So the data
+still has to be entered. The cheapest route is now real invoices through the
+pipeline, not hand entry. Before that will work, add 1 L product rows for the
+sizes the invoices carry (#47, "found during proof"). Decide whether open item
+#42 (editing a size rewrites history) matters once the owner starts correcting
+sizes.
 
 **The 45-minute budget still stands** (Gate 1 of `docs/plans/phase-1-to-1.5/`):
 all 90 costs in one sitting, unaided, with the dashboard valuation reconciling to
 the cent against a hand-checked SQL total — the way count 2 was reconciled at
 $170.90. Inline cost editing was built specifically to make that possible; if it
-is not, that is a Phase 1.2 regression worth reporting.
+is not, that is a Phase 1.2 regression worth reporting. **Never measured.** Now
+that costs are expected to come from invoices, time the invoice route (the
+Phase 2.5 field metric, below) and keep the 45 minutes as the hand-entry
+fallback's budget.
 
 ### The measurements
 
@@ -388,40 +424,76 @@ session log, because a run that is not written down is an anecdote.
   first walk is essentially all enrolment. Measures the **20-second** enroll
   budget from `AGENTS.md`, not the 20-minute one. Also finally answers open
   question #3, the open-vs-sealed split, which every counting-speed estimate
-  depends on.
+  depends on. *So far:* two enrolments were timed in passing on 2026-10-25
+  (10 s and 5 s from scan to written line). No full pass has run, the split is
+  still unanswered, and the redesigned enroll form's field set (§6 bet 1) has no
+  verdict. Run A also includes naming a producer for each of the 5 wines.
 - **The timed count (Run B).** The **sub-20-minute** target the whole design is
   justified by, and still the one claim with no measurement behind it. Only
   meaningful once barcodes resolve, so it follows Run A over the same bottles.
   Watch the per-line gaps: count 2 saw 29s and 102s between two kegs *on the same
-  screen with no leg switch*.
-- **The five-location walk.** No pass has covered all five. The locked-location
-  design and its "count something elsewhere" escape hatch are both untested, and a
-  wrong active location fails *silently* — the total stays right and only the
-  distribution is wrong.
+  screen with no leg switch*. *So far:* the longest real count is count #3
+  (2026-10-25): 3 lines in 2 m 43 s, with no costs.
+- **The six-location walk** (Storeroom, Speed Rail, Back Bar and the rest,
+  including Tap 1). No pass has covered all six: count #3 touched 2 and closed with
+  4 never visited (findings DB-4). The locked-location design and its "count
+  something elsewhere" escape hatch are both untested (the stray-bottle sheet has
+  never been opened on a phone), and a wrong active location fails *silently*. The
+  total stays right and only the distribution is wrong.
 - **Rapid-scan against a real camera.** The last untested part of scanning and the
   one whose failures are silent by construction. Its frame guard is tested only
   against *modelled* frame sequences. **Count a real shelf in rapid mode, then
   count it by hand, and compare.** Offered only on quantity locations, and
   *hidden* rather than greyed out elsewhere.
-- **The two remaining queue gaps (#9).** The **mount-time flush** has never run —
-  only the `online` listener was observed — and the queue has never held **more
-  than one write at a time**, so ordered replay is still only reasoned about.
+- **The offline queue on the phone (#9 → #46).** Superseded since this was first
+  written. The 2026-11-06 phone offline test **failed**, which was the first time
+  the queue held more than one write. An older queued write overwrote a correction:
+  the phone showed `4 ea` and Synced while the DB held 6 (F2). Nothing retried after
+  the phone fell over to mobile data, and one write sat for more than 7 minutes
+  (F3). The fix in `components/count/count-leg.tsx` (a single lock, oldest write
+  first, a 15 s retry timer, and a flush on mount) is proven only by 3 e2e specs on
+  a production build. **Prove it on the phone:** two or more queued writes, a
+  correction arriving in the right order, falling over to mobile data, and the
+  mount flush after the app is killed. #46 still lists open gaps: the retry timer
+  only runs while the scan screen is mounted; *Finish section* gives no warning
+  with writes pending; `/count/<id>` shows no pending indicator and Submit stays
+  live.
 - **The standalone server entrypoint.** The 2026-08-12 CSP verification ran under
   `next start`, which printed `"next start" does not work with "output:
   standalone" configuration`. Hostinger runs `node .next/standalone/server.js`,
   which has never been started. Cheap to close locally and it is a Phase 3
   blocker, so closing it here removes a deploy-day unknown.
-- **The barcode-resolution branch.** Both real scans so far were *enrolments of
-  unknown codes*. Resolving a barcode to a product the catalog already has is a
-  different branch of `onBarcode` and has never run on a device.
+- **The barcode-resolution branch.** The phone sessions since 2026-10-25 scanned
+  more codes, but no log records a *known* code resolving to an existing product,
+  which is a different branch of `onBarcode`. The 2026-11-06 QA marks "barcode
+  flows" passed without naming that branch, so treat it as unproven. Also
+  unverified: a second scan of the same bottle (increment), SET vs ADD, and which
+  reader actually runs: the built-in `BarcodeDetector` or the app's fallback
+  (the `/count/preflight` readout, #45). Record one known-code scan.
+- **The redesigned UI on a phone (§6 bets).** It has now been on a phone twice
+  (2026-10-25 and 2026-11-06), but none of the four bets in
+  `docs/phone-count-test.md` §6 has a recorded verdict. Before the first real
+  count, fix or explicitly accept these findings from the 2026-10-25 recording:
+  V1 (Save drops a fill that was chosen but not added), A18 (the tab bar stays
+  live during entry), A19 (Android Back), A20 (Submit and Close have no
+  pre-flight check), DB-1 (`$0.00` shown as if it were a value), and DB-4 (a
+  count can close with locations never visited). Also run `bun run docker:reset`
+  once, or accept the stale raw barcodes (#43).
+- **The Phase 2.5 field metric.** 20–25 real invoices reviewed in under 30
+  minutes. So far one real text invoice has been approved through the UI. The one
+  real scan hit `EXTRACTION_UNAVAILABLE` because there is no `ANTHROPIC_API_KEY`.
+  Still open (#47): Vision on a real scan, alias re-matching from a second upload
+  of the same supplier, and F9 past the key check and on Hostinger.
 
 **Done when:** the catalog is costed, a full count runs on a phone in under 20
 minutes, the resulting valuation and reorder list are trusted enough to act on,
-and rapid mode's count matches a hand count.
+and rapid mode's count matches a hand count. The #46 queue fix has to hold on the
+phone, and real invoices have to post real costs within the 30-minute field
+metric, with Vision proven on at least one scan.
 
 **This is the last phase before go-live**, and its output is what makes Phase 3 a
-decision rather than a hope: `docs/go-live.md`'s remaining browser checks and the
-standalone-entrypoint item both close here.
+decision rather than a hope: `docs/go-live.md`'s remaining browser checks, the
+standalone-entrypoint item, and the Vision API key (#47) all close here.
 
 ---
 
@@ -432,8 +504,10 @@ the runbook — how a deploy happens. go-live is the decision of whether it shou
 
 Blocking items, none of which are construction:
 
-- A production database exists and the chain `0000 → 0001 → 0002` has applied to
-  it. It has only ever run against Docker.
+- A production database exists and the full chain `0000 → … → 0011` has applied
+  to it (`docs/go-live.md` notes that `0010`–`0011` still need the clean-from-empty
+  re-run). The first ten migrations apply clean from empty on MariaDB 11.8 in isolated
+  Docker verification; production remains unproven.
 - An owner account created via `scripts/create-user.ts` with the **hidden
   prompt**, never `--password`. There is no signup path, deliberately.
 - Secrets set in GitHub Actions, `DATABASE_URL` pointing at production.
@@ -514,28 +588,31 @@ Phase 3, so by Phase 5 there is history.
 
 ---
 
-## Phase 6 — Compliance packet · *the differentiator, unscheduled*
+## Phase 6 — Full compliance module · *the differentiator, unscheduled*
 
-**Not in the owner's 2026-08-12 sequence and kept deliberately** — it was
-previously Phase 3, and it is the thing no off-the-shelf product produces, which
-is a large part of why building rather than buying was the right call. Slot it
-when the retention obligation becomes real, which is the moment invoices start
-being stored (Phase 2.5) rather than the moment this phase is scheduled.
+Phase 2.5 deliberately pulled forward the legal foundation and a limited export:
+`retention_until`, immutable fill-correction ledger entries, retained invoice
+files, and a date-range ZIP containing invoice originals plus count snapshots
+and a SHA-256 manifest. That is enough to preserve and retrieve the source
+records; it is **not** the full compliance module described here.
 
-Arizona A.A.C. R19-1-501: two years of invoices, monthly beginning/ending
-inventory, produced on request.
+The planned Arizona DLLC workflow still has a broader product layer whose exact
+legal requirements must be confirmed with current rule text and counsel before
+relying on it:
 
-- Month-End Close report, food and liquor separated, locked once closed
-- `retention_until` on every invoice image, never auto-deleted before it —
-  **build this in Phase 2.5**, per that phase's note
-- One-button audit packet export: date range → PDF/ZIP
-- Immutable who-counted-what-and-when
+- Month-End Close with beginning/ending inventory, food and liquor separated,
+  and the close locked once issued
+- A regulator-oriented packet that composes those month-end figures with the
+  retained Phase 2.5 invoice/count artifacts
+- An explicit presentation of immutable who-counted-and-corrected-what-and-when,
+  using the ledger convention now implemented by closed open item #2
+- Legal review of the produced format and current rule text before relying on it
 
-Closes open-item #2 as a prerequisite: fill corrections currently write no ledger
-row, which is exactly the audit-trail gap this phase cannot ship with. Decide the
-ledger convention for replaces deliberately — a full-array replace has no delta
-representation in `count_line_write`'s current shape, and the convention chosen
-changes what the export means.
+This distinction keeps `AGENTS.md`'s deferred compliance scope true without
+pretending the Phase 2.5 retention/export work does not exist. Schedule Phase 6
+when the owner is ready to build and legally validate the reporting layer, not
+to retrofit retention semantics that Phase 2.5 already implements on invoice
+records and their stored originals.
 
 ---
 

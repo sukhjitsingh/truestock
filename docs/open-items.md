@@ -13,14 +13,20 @@ rediscover the hard way. The instruction now matches the practice.)
 
 ---
 
-## 1. Most of the stack has still never run against a real database
+## 1. Remaining real-environment verification: scale, standalone and production
 
-**Trigger: the first time a real database exists. Do this before anything else.**
+**Original trigger fired 2026-07-28 and the database/domain portion is closed.**
+MariaDB-backed CI now covers the core count path and every Phase 2.5 slice; the
+current integration run is 449/449 tests and the full `0000 → … → 0009` chain
+applies clean from empty. What remains is no longer “most of the stack”: the redesigned phone UI at scale (tracked in #20), count-write lock
+contention under forced parallel load, the real standalone artifact, and the
+production host. Keep this item as the umbrella for those environment claims,
+not as a statement that the application has never touched a database.
 
 **Engine correction, 2026-07-28.** Production is **MariaDB 11.8.8**, not MySQL —
 hPanel's "MySQL Databases" label had been taken at face value everywhere.
-The whole chain plus the seed was re-verified against `mariadb:11.8`, and the
-schema proved portable: same 14 tables, same 1452 on a cross-tenant id, same
+The then-current chain plus seed was re-verified against `mariadb:11.8`, and
+that 14-table schema proved portable: same 1452 on a cross-tenant id, same
 1062 on a second overall par, `DECIMAL(10,4)` exact, `partial_fills` still a
 parsed array. No migration needed changing. Local development now runs MariaDB
 via `docker-compose.yml`, so everything below is exercised against the engine
@@ -106,7 +112,9 @@ Still untested on the write path:
 - **Concurrency.** The gap-lock deadlock and `withLockRetry` were reproduced
   manually against MySQL, never against MariaDB, and never as a test — bun's
   test runner needs two genuinely parallel connections to force it.
-- **`editCountLineFills`**, which by design writes no ledger row (item 2).
+- ~~`editCountLineFills`, which by design writes no ledger row (item 2)~~ —
+  now covered by `tests/count-write-path.test.ts`'s fill-correction block; see
+  item 2's close note.
 - **The `scanCountLine` barcode path**, which nothing calls yet (item 10).
 
 **How to close it.** The first four steps are done and reproducible from a cold
@@ -181,9 +189,7 @@ an unbounded one on a large table locks longer than a nightly job should.
 Schema audit 2026-07-27, finding F4. The index half is done; this is the half
 that was deliberately deferred.
 
-## 2. `editCountLineFills` writes no ledger entry
-
-**Trigger: when the compliance packet (spec §10, Phase 3) is built. Not before.**
+## ~~2. `editCountLineFills` writes no ledger entry~~ — **closed 2026-08-20**
 
 **Updated 2026-07-30 — the function is now actually reachable.** It had zero
 callers when this item was written, which made the gap theoretical. `FillEntry`
@@ -191,26 +197,46 @@ now has a correction mode (docs/mvp-gaps.md finding C), so fill corrections are
 a real thing that happens during a real count, and "who changed this bottle's
 fill level, and when" is a real question with no answer.
 
-That raises the priority but does not change the trigger, and it is still not a
-correctness bug. Every other write path to `count_line` records a
-`count_line_write` row. Fill corrections do not, because
-`count_line_write.partial_fills_delta` is modelled for additive appends from
-the scan path, and a full-array replace has no delta representation in that
-shape.
+That raised the priority but did not change the original trigger — it was
+never a correctness bug. A full-array replace is naturally idempotent at the
+`count_line` level (replaying it lands on the same value either way), so this
+was always an **audit-trail** gap, not a double-count risk. Closed early
+anyway once the ledger convention question below was answered, rather than
+waiting for the compliance packet (spec §10, Phase 3) to force the decision
+under more time pressure.
 
-A replace is naturally idempotent, so a replayed fill correction produces the
-identical row state — the count is right either way. It is an **audit trail**
-gap.
+**How it was closed.** Schema half: `count_line_write` gained a discriminator
+column, `write_type` (`countLineWriteTypeEnum = ["scan", "fill_correction"]`,
+`db/enums.ts`) — `NOT NULL DEFAULT 'scan'`, so every pre-existing row
+backfills correctly with no data migration — plus two new nullable columns,
+`partial_fills_before` / `partial_fills_after`. **Before/after arrays were
+chosen over a delta representation**: a full-array replace has no meaningful
+decomposition into `partial_fills_delta`'s additive-append shape, so
+`fill_correction` rows leave that column at its default `[]` and carry the
+transition on the two new columns instead — "who changed this bottle's fill
+level, and when" is answerable by reading one ledger row directly, no replay
+of prior writes needed.
 
-**Half of the work is already done.** `editCountLineFillsSchema` now requires a
-`clientLineId` (the offline queue needs an id to store the write under), so
-closing this is a change to the domain function alone rather than to the
-boundary and every caller of it.
+Domain half (`lib/domain/counts.ts`): `editCountLineFills` now follows the
+exact same idempotency pattern as `applyIncrement`/`setCountLineQuantities` —
+a `findReplayedLine` pre-check, then a transaction whose ledger insert goes
+second and uncaught, with a try/catch outside the transaction that falls back
+to `findReplayedLine` on a duplicate-key error. It never had this shape before
+because it never wrote a ledger row, so there was nothing to replay-protect;
+now that it does, a legitimate retry needed the same protection every other
+write path already had, or it would surface a raw duplicate-key error instead
+of the idempotent success every other write path guarantees.
+`editCountLineFillsSchema`'s `clientLineId` requirement (already in place
+since 2026-07-30) meant this was a change to the domain function alone, not
+to the boundary or any caller.
 
-**How to close it:** decide a ledger convention for replaces (a discriminator
-column, or storing before/after arrays) and write the entry inside the existing
-transaction. Do not invent the convention silently — it changes what the audit
-export means.
+Tests: `tests/count-write-path.test.ts`'s "fill corrections write a ledger
+entry" describe block — a normal correction writes one `fill_correction` row
+with the right before/after/zero-deltas, a replayed `clientLineId` inserts
+nothing new, and the scan/SET paths still default to `writeType: 'scan'`.
+Mutation-checked: deleting the ledger insert makes exactly the first two of
+those three fail. Run against a real MariaDB 11.8 in an isolated worktree
+Docker stack (`docker-compose.worktree-test.yml`) — full suite 410/410.
 
 ## ~~3. No user-management action exists~~ — **closed 2026-08-03**
 
@@ -255,9 +281,11 @@ Two corrections found while verifying, both now fixed:
 
 **Trigger: when the owner enters real costs from supplier invoices.**
 
-97 products are seeded; only the 9 draft kegs carry a real cost (from the
-workbook's Draft Economics tab). Every other product has `current_unit_cost`
-NULL, and no product has a `case_size`.
+The shared dev volume, re-queried 2026-08-21, has 99 active products; only the 9 draft
+kegs carry a real cost (from the workbook's Draft Economics tab). The other 90
+have `current_unit_cost` NULL, and no product has a `case_size`. Phase 2.5 now
+posts approved invoice costs atomically, but its isolated verification stacks
+did not populate this business data in the shared volume.
 
 **Corrected 2026-07-26:** the missing `case_size` is a far smaller job than the
 missing costs, and mostly is not a gap at all. `case_size` applies to **bottled
@@ -265,7 +293,8 @@ beer only** — 16 products. Liquor is counted as bottles, kegs are counted in
 tenths, and for both a NULL case size is correct, not missing. `computeLineUnits`
 only treats NULL as indeterminate when `sealed_case_qty > 0`, so it never
 excludes a line counted purely as eaches or partials. So: 16 case sizes to enter,
-88 unit costs to enter, and the costs are the real work.
+up to 90 unit costs to source (fewer after real invoices are approved), and the
+costs are the real work.
 
 The code handles this correctly — `unit_cost_at_count` and `case_size_at_count`
 are nullable, NULL means "unpriced at count time", unpriced lines are excluded
@@ -329,24 +358,22 @@ Not blocking, but they shape work that is coming:
   be load-bearing (opened vermouth, cream liqueurs), the columns are already
   there.
 
-## 8. New reads are written but still unexercised against a real database
+## 8. Previous-count comparison still lacks a direct regression test
 
-**Trigger: folded into item 1 — verify when a real database first exists.**
+**Trigger: Phase 2.9's second real closed count, or the next change to dashboard
+comparison logic.**
 
-The read-side gaps this section used to list are closed (see the commit that
-removed them). What replaces the item is narrower: the four reads added to
-close them have been typechecked but, like everything else, never run.
+The broad read-side claim this item used to make is obsolete. `listCounts` has
+rendered real MariaDB rows in the browser, and `getCountTotals` is covered in
+`tests/count-write-path.test.ts`, including owner/manager cost shaping. The one
+narrow query still supported mainly by reasoning is `previousCountComparison`:
+it compares against nullable `closed_at`, where SQL NULL behavior correctly
+excludes never-closed counts, but no focused test proves selection and deltas
+across two closed counts plus an open negative control.
 
-- `listCounts` aliases `user` twice in one query (`opened_by`, `closed_by`)
-  and LEFT-joins both. Worth eyeballing the generated SQL once.
-- `previousCountComparison` filters on `lt(count.closedAt, ...)` against a
-  **nullable** column. NULL comparisons are never true in SQL, which is the
-  behaviour wanted here — a count that was never closed must not be a
-  comparison candidate — but it is worth confirming rather than assuming, as
-  a silently empty "vs. previous" reads exactly like a first count.
-- `getCountTotals` runs `computeCountTotals` against the pool while
-  `closeCount` runs the same function inside its `FOR UPDATE` transaction.
-  Confirm the two agree on a count with unpriced lines.
+Close this with a MariaDB-backed test that creates two closed counts and one
+newer open count, then asserts the chosen predecessor and both unit/value deltas.
+Do not keep the old “new reads have never run” wording after that test lands.
 
 ## ~~9. The offline write queue has never been exercised in a browser~~ — **closed 2026-08-12**
 
@@ -446,7 +473,7 @@ actual detector, or glossy labels in a dim bar. The numbers that matter —
 whether the sweep cadence and the 250ms flicker floor hold up in the hand —
 need the timed count this item originally asked for.
 
-## 11. One location count mode was assigned without the owner — CONFIRMED 2026-07-31
+## ~~11. One location count mode was assigned without the owner~~ — **CLOSED 2026-07-31**
 
 **Confirmed 2026-07-31.** The owner answered the one question this item asked:
 Walk-In holds sealed packaged beer only, no open kegs. `count_mode` stays
@@ -588,16 +615,20 @@ and the last-closed-count tile searched inside `listCountsAction({ limit: 50 })`
 been closed yet" against a database full of them. Both were correct against the
 97-product seed and would have stayed *plausible* while becoming wrong.
 
-## 15. The dashboard's owner-only value branch has never rendered
+## 15. The dashboard value branch lacks a positive browser assertion
 
-**Trigger: the first time a count is actually closed.**
+**Trigger: the next browser-harness pass that touches `/office`.**
 
-The "last closed count" tile's `Money` value and its vs-previous `valueDelta`
-have never executed — no closed count exists yet, so that branch has only ever
-taken its empty path. The "count in progress" branch *has* now rendered with
-real data (a draft count, with its Resume action).
+The old premise — “no count has ever closed” — is false. Several counts are
+closed, `getLastClosedCount` has MariaDB-backed owner/manager tests, and the
+redesigned dashboard was opened against the shared volume. What is still absent
+is a named browser assertion proving the owner's DOM renders the closed-count
+money value and comparison while a manager's DOM omits them.
 
-Cheap to close: close one count and look at the tile.
+Close this by seeding two closed counts, asserting the owner's value/delta, and
+keeping the existing manager negative control. A visual visit without a named
+positive assertion is not enough; the branch could fail to render and the
+cost-leak check would still pass.
 
 ## 16. ~~A scanned barcode cannot be attached to an existing product~~ — CLOSED 2026-07-30
 
@@ -750,6 +781,12 @@ The other two halves of finding H stay as they were: users are CLI-only (item
 
 **Trigger: the first phone test — fold into `docs/phone-count-test.md` rather
 than doing separately.**
+
+**Status, 2026-11-07: partly overtaken.** The redesigned counting screens ran on
+a phone on 2026-10-25 and 2026-11-06, so they have now been used on a phone.
+They have not been evaluated: none of the checks below and none of the §6 bets
+has a recorded verdict. The 2026-10-25 recording found V1, A18, A19 and A20
+(`docs/phone-test-2026-10-25-findings.md`). Tracked in Phase 2.9, #48.
 
 **Widened 2026-08-14 by Phase 2.** This item was written about six changes made
 on 2026-07-30. The UI redesign then rebuilt the whole counting surface —
@@ -1284,7 +1321,745 @@ migration that reached four of seven surfaces. Recorded so it is not mistaken fo
 a decision. The whole-row-click hazard, which *was* a hazard, is gone everywhere:
 no `<tr>` in the codebase carries an `onClick` (item #27, closed 2026-08-12).
 
-## 31. Changing a product's size rewrites history and re-points its barcodes
+---
+
+## 31. One Slice 1 security finding was considered and deliberately not fixed
+
+**Trigger: this becomes due the moment any code path lets `invoice.file_path`
+be set by anything other than `invoiceStorageKey()`.**
+
+Opened 2026-08-14, from the Slice 1 backend security audit. Reported as low
+severity, a real description of the code, and not being fixed now. Recorded here
+so a later reader does not mistake the silence for an oversight and does not
+re-litigate it from scratch.
+
+A second item was recorded here on the same day and has since been **fixed** —
+see "(b), superseded" below. It is left in place rather than deleted because the
+reasoning that closed it is the correction of reasoning written on this page.
+
+**(a) `resolveStoredPath` does not `realpath` — a symlink planted inside the
+storage root would be served.** The containment check
+(`lib/storage/invoice-files.ts:103`) is on the string result of `path.resolve()`,
+so `var/invoices/7/42.pdf` → `/etc/passwd` would pass as contained. Not reachable
+today: `file_path` is written exclusively by `invoiceStorageKey(org, id,
+contentType)` from a zod-enum'd extension allowlist, and planting the symlink
+already requires filesystem write access outside the app — a compromise that makes
+this the least of the problems. The module's own header frames it as
+defence-in-depth against a *future* path, which is exactly the trigger above.
+A one-line `fs.realpath` check is the fix when that day comes.
+
+**(b), superseded — CLOSED 2026-08-14, the same day it was opened. The row lock
+was the fix; the argument recorded here for declining it was wrong.** What
+follows is the original entry's claim, kept verbatim, and then why it fails.
+
+The original claim: the write-once guard is check-then-write, not atomic, and
+the suggested `SELECT ... FOR UPDATE` on the `extraction_job` row does not fix
+it, because *a `PUT` changes no state a second `PUT` would observe* — the job
+sits in `awaiting_upload` until confirm, so serialising two `PUT`s leaves both
+reading the identical value and both passing. "The lock buys nothing."
+
+That reasoning is sound and answers the wrong question. It considers only
+`PUT`-versus-`PUT`, where last-write-wins genuinely is correct retry semantics.
+The dangerous interleaving is `PUT`-versus-**confirm**, which the code review
+raised as High after the security audit had rated it Low:
+
+1. `PUT` A and `PUT` B are both in flight; both pass the status check.
+2. A's bytes land.
+3. `confirmUploadAction` reads the file, hashes it, matches A's declared
+   SHA-256, and CAS's the job `awaiting_upload -> queued`.
+4. B — already past its check — writes afterward and overwrites the verified
+   file.
+
+The row now says confirmed, `file_sha256` describes A's bytes, the disk holds
+B's, and nothing ever re-hashes it. The hash check does **not** save this: it
+ran, it passed, and it passed against a file that no longer exists. Unverified
+bytes are accepted as a confirmed invoice under a 3-year statutory retention,
+surfacing years later in an audit packet (Slice 5) when the original is
+unrecoverable.
+
+The lock closes it *because both sides take it*, which is the part the original
+argument never got to. `lockJobForUpload` (`lib/domain/extraction.ts`) holds the
+`extraction_job` row's write lock; the `PUT` takes it via `withUploadSlot`
+around the write, and `markUploadConfirmed` takes it around read-hash-CAS
+together. Step 4 can then no longer interleave with step 3: either confirm runs
+first and B is refused with the job at `queued`, or B lands first and confirm
+hashes what is actually on disk. Both orderings are correct; only the
+interleaving was not.
+
+The handler keeps its unlocked status check as a *fast path* — it rejects the
+common already-confirmed case without reading 25 MB off the wire — but it is no
+longer the guarantee, and its comment says so. The two 409s carry deliberately
+different messages so a test can prove which one fired.
+
+Covered by `invoice_file_write_once_survives_a_concurrent_put` and
+`confirm_replay_is_safe_under_concurrency` in `tests/invoice-write-path.test.ts`,
+both mutation-checked. Worth knowing about the first: its **initial version was a
+false pass** — it asserted only `status === 409`, and the 409 it was actually
+getting came from the fast path, so deleting the entire fix left it green
+(45 pass / 0 fail). It now asserts the lock's specific message. With the fix
+verifiably removed in the same shell command, the file runs 44 pass / 1 fail,
+deterministically. The earlier apparent flake was the mutation being reverted
+between two commands, not a timing race.
+
+A second-order lesson worth keeping: a *sound* argument for declining a fix is
+not a *complete* one, and the gap between the two is invisible from inside it.
+Both reviewers were looking at the same code; the security audit rated this Low
+and the code review rated it High, and the difference was entirely which second
+actor they imagined.
+
+The audit found no critical or high issues, and all seven surfaces it probed —
+traversal/containment, AR-1 static exposure, authorization, upload abuse,
+write-once ordering, error-message leakage, and hash verification — came back
+clean apart from the two above. Note that its "no high issues" verdict did not
+survive: write-once ordering was one of the seven, and the code review's High
+sat inside it. The one item it raised that *did* produce a change
+is now a go-live check (§2.2): `invoiceStorageRoot()`'s refusal-if-inside-`public/`
+guard resolves `./public` against `process.cwd()`, so a wrong cwd defeats that
+guard silently while `resolveStoredPath`'s containment check still holds.
+
+---
+
+## ~~32. A failed header-field extraction has no correction path on the review screen~~ — **CLOSED 2026-08-20**
+
+**Trigger: the first time a real invoice reaches `needs_review` with a NULL
+`invoiceDate`, `invoiceNumber`, `totalGross`, `totalNet`, `currency`, or
+`retentionUntil` — i.e. the first time this is tested against a real scanned
+or smudged invoice rather than the seeded fixture, which always populates all
+six.**
+
+Opened 2026-08-15, from the Slice 2 code review
+(`docs/plans/phase-2.5-invoice-automation/04-slices.md`'s "Slice 2 —
+Extraction + Review"). `REQUIRED_FOR_REVIEW` (`lib/domain/invoices.ts`) blocks
+`needs_review → reviewed` while any of those six header columns is NULL — a
+Slice 1 guard that Slice 2 is the first code to actually drive from live UI.
+Slice 2's spec, both in "What's new" and "What the user can see", describes
+only **line-level** editing (`reviewInvoiceAction`'s `corrections` carry
+`rawGross`/`rawDiscount`/`rawNet`/`matchedProductId` per line, nothing at
+invoice-header granularity); the review screen renders the six header fields
+read-only in the page header
+(`app/(office)/office/invoices/[invoiceId]/page.tsx`). This is in scope as
+specified — not a Slice 2 defect — but it leaves a real dead end: if
+extraction can't determine one of those six fields, Approve fails every time
+with a correctly-worded but unfixable `InvoiceNotWritableError`, and the only
+other action, "Retry extraction" (`resendToExtractionAction`), reruns the same
+pipeline against the same document and will most likely reproduce the exact
+same gap. No test exercises this — the fixture invoice
+(`tests/helpers/test-db.ts`) always populates all six.
+
+Fix, when the trigger fires: either extend `lineCorrectionSchema`/
+`reviewInvoiceSchema` and the review form to also accept header-field
+corrections (mirroring the line-correction pattern), or give Reject a way to
+also record which header field blocked it so it surfaces as more than a raw
+domain-error string. Whichever is chosen should have a test using a fixture
+invoice with one of the six fields NULL, not the always-fully-populated one.
+
+**Closed 2026-08-20 — the option this item itself suggested first: header
+corrections, mirroring the line-correction pattern.**
+
+Backend half: `headerCorrectionSchema` (`lib/validation/invoices.ts`) validates
+the six `REQUIRED_FOR_REVIEW` columns as bare optional strings — no `null`
+case, since clearing a required field back to NULL could only ever fail its
+own check — wired into `reviewInvoiceSchema` as an optional `headerCorrections`
+field. `lib/domain/invoices.ts` gained a matching `HeaderCorrection` interface
+and `resolveHeaderCorrectionData`, which shapes a correction into the `data`
+argument `updateInvoiceStatusTx` already accepted — no new null-check path,
+that function already merged `data` onto the current row and validated
+`REQUIRED_FOR_REVIEW` against the merge. `submitInvoiceReview`
+(`lib/domain/invoice-lines.ts`) takes a 4th param, `headerCorrections:
+HeaderCorrection = {}`, passed through in the same transaction as line
+corrections, and `reviewInvoiceAction` (`app/actions/invoices.ts`) forwards
+`parsed.headerCorrections`. `tests/helpers/test-db.ts` gained
+`createInvoiceMissingHeaderField(organizationId, field)`, and
+`tests/invoice-review-path.test.ts` gained 6 tests built against it — the
+fixture-always-populated gap this item itself named.
+
+Frontend half: `InvoiceReviewForm` (`components/office/invoice-review-form.tsx`)
+renders the six header fields inline in a new "Invoice details" card, above the
+line table but inside the same `<form method="post">` the line corrections
+already submit through — editable exactly when the line fields are
+(`invoice.status === "needs_review"`), read-only otherwise. Same conventions as
+the line-correction cells: `Field`/`Input`/`Select` from `components/ui/field`,
+client-side validation via `headerCorrectionSchema` imported directly (never
+re-implemented), and inline per-field error text. `invoiceDate`/`retentionUntil`
+use native `type="date"` inputs (their value format is exactly the schema's
+`YYYY-MM-DD`); `totalGross`/`totalNet` use `inputMode="decimal"` like the line
+Gross/Discount/Net cells; `currency` uppercases on input to match the schema's
+own normalization. A blank field is omitted from the submitted
+`headerCorrections` object rather than sent as `null` — the schema has no clear
+case, per its own comment — so an untouched, still-missing field reaches the
+server exactly as before and still fails Approve with the existing, unchanged
+`InvoiceNotWritableError` message; no regression to that path. **A NULL field
+renders as an empty, clearly-editable input**, not a blank label — the specific
+UX gap this item's fix instructions called out.
+
+Verification: `tsc --noEmit` and `eslint` both clean (the one pre-existing
+`catalog-table.tsx` React Compiler warning is unrelated and unchanged). No new
+component-level test was added for the inline header-editing UI itself — the
+6 new backend tests exercise the same `headerCorrectionSchema` and
+`resolveHeaderCorrectionData` this form calls into.
+
+**Browser-verified 2026-08-20**, closing the gap the paragraph above used to
+flag. Isolated stack (separate `truestock_browsercheck` database + a second
+app container on port 3001, so the running dev containers on port 3000 were
+never touched), one seeded `needs_review` invoice with `currency` NULL. All
+six header fields rendered as visibly editable inputs; the NULL `currency`
+field rendered as a genuinely empty, clearly-bordered input with a gray
+placeholder ("USD") and hint text — not a blank label that looks broken, the
+exact hazard this item's own fix instructions called out. The live uppercase
+transform worked (`usd` → `USD` on type). Clicking Approve transitioned the
+invoice from `needs_review` to `reviewed` on screen with no error, confirmed
+independently at the database level (`SELECT status, currency FROM invoice`
+returned `reviewed` / `USD`, not just inferred from the UI). Console was
+clean (no errors, no hydration-mismatch warnings) and the submit was a real
+`POST /office/invoices/1` — AGENTS.md's `method="post"` rule holds.
+
+Environmental finding surfaced along the way, unrelated to this item's own
+correctness but worth recording: bare `bun run dev` cannot start natively on
+an Intel Mac (`darwin-x64`) in this repo — `@firecrawl/pdf-inspector`, loaded
+unconditionally at server boot via `instrumentation-node.ts` →
+`lib/domain/extraction-pipeline.ts`, has never published a `darwin-x64`
+native binding (confirmed against the npm registry: only `darwin-arm64`,
+`linux-*`, `win32-x64` exist). This is exactly why local dev already runs
+through `docker/app/Dockerfile` rather than bare `bun run dev` — not a new
+gap, just newly confirmed as the reason, and worth remembering before
+reaching for `bun run dev` directly on this machine again.
+
+---
+
+## ~~33. `matchLinesToProducts` is only proven in isolation, never through the real extraction pipeline~~ — **CLOSED 2026-08-20**
+
+**Trigger: whenever `@firecrawl/pdf-inspector`'s native binding starts loading
+in this dev environment (see the memory `pdf-inspector-no-darwin-x64-binary`),
+or `classifyPdf`/`processPdf` get added to `ProcessExtractionQueueDeps` so
+they can be mocked instead.**
+
+Opened 2026-08-15, from the Slice 3 code review (vendor SKU matching and
+alias learning, commit 7843806). `tests/matching.test.ts` calls
+`matchLinesToProducts` directly, and other extraction tests re-derive the
+same matching loop inline, both of which prove the matching logic correct on
+its own — but no test drives it through the actual production entry point,
+`runClaimedJob` → `processExtractionQueue`, where it is really invoked mid
+pipeline after `classifyPdf`/`processPdf`. That path is currently untestable
+in this environment: `@firecrawl/pdf-inspector` has no native binding for
+Intel-Mac (`darwin-x64`) dev machines, so anything importing
+`extraction-pipeline.ts` fails to load before a test body even runs — which
+blocks every `processExtractionQueue` integration test, not just this one.
+
+Fix, when the trigger fires: add a real end-to-end test that calls
+`processExtractionQueue` (or `runClaimedJob`) against a seeded vendor alias
+and asserts the resulting `invoice_line` rows carry the matched
+`matchedProductId`/`matchedVendorAliasId`/`matchConfidence` — closing the gap
+between "the matching function is correct" and "the pipeline actually calls
+it correctly with the right `vendorId`."
+
+**Progress note, 2026-08-15/16 — half the trigger fired, the fix is still not done.** Verifying
+the `ANTHROPIC_API_KEY` mis-routing fix (see the memory `pdf_inspector_no_darwin_x64_binary.md`)
+required getting `@firecrawl/pdf-inspector`'s native binding to actually load in this dev
+environment, which this item's first trigger clause names directly. It now has a documented,
+working answer: a throwaway `node:22-bookworm-slim` container, source bind-mounted, `node_modules`
+as an anonymous volume, `DATABASE_URL` pointed at the host's published MariaDB port. That
+technique produced three new DB-backed tests in `tests/extraction-pipeline.test.ts`
+("text-PDF queue routing") that drive real `processExtractionQueue`/`runClaimedJob` calls end to
+end against a real database — the first tests in this repo to do that. But those three are about
+the `text`/`scanned` **routing** split (does the job avoid Claude when it should, does it fail in
+the right branch when the key is missing) — none of them assert `matchedProductId` /
+`matchedVendorAliasId` / `matchConfidence` on the resulting rows, which is the actual gap this item
+names. Still open; the blocker just moved from "untestable in this environment" to "not yet
+written," and the container technique above is the way to write it.
+
+**Closed 2026-08-20 — test-only, no production code changed.** Added a fourth DB-backed
+test to `tests/extraction-pipeline.test.ts`'s `"text-PDF queue routing"` describe block,
+alongside the three routing tests and item #34's `mixed`-classification test. It seeds a
+`vendor_alias` row (`organizationId`, `fx.vendorId`, `vendorItemCode: "FD252"` ->
+`fx.pricedProductId`) before calling `processExtractionQueue` against the same
+`PERFORMANCE_TEXT_INVOICE_MARKDOWN` fixture the first routing test already uses (three
+product lines, one of which carries `vendorItemCode: "FD252"`), then reads back the saved
+`invoice_line` rows and asserts the previously-unverified fields directly: the matched
+line carries `matchedProductId: fx.pricedProductId`, `matchedVendorAliasId: alias.id`,
+`matchMethod: "vendor_alias_code"`, `matchConfidence: "0.500"` (the schema's own default on
+first alias creation), and no `"unmatched item"` exception flag — while the other two lines
+(no alias seeded for their codes) stay fully unmatched and flagged, proving the alias lookup
+is scoped to the code it actually matches rather than matching everything on the invoice.
+Verified with the same throwaway `node:22-bookworm-slim` container technique as items
+#34-#38, pointed at the already-running shared `truestock-mariadb` container's
+`truestock_test` database: `tests/extraction-pipeline.test.ts` 30/30, full suite
+**411 pass, 0 fail, 1151 `expect()` calls, 30 files**. `tsc --noEmit` and `eslint` both clean
+(the one pre-existing `catalog-table.tsx` React Compiler warning is unrelated and unchanged).
+
+---
+
+## ~~34. `mixed` PDF classification has no DB-backed regression test — only `text` and `scanned` do~~ — **CLOSED 2026-08-19**
+
+Fixed alongside items #35-#38 and the Southern Glazer's vendor template
+(`docs/vendor-templates/southern-glazers.md`). A fourth DB-backed test was
+added to the `"text-PDF queue routing"` describe block in
+`tests/extraction-pipeline.test.ts`, seeding a `mixed`-classified job and
+asserting both `processPdf` (markdown, cross-check ground truth) and
+`extractInvoice`/Claude Vision are invoked, and that the saved `invoice_line`
+rows are Vision-derived, not markdown-derived. Verified against a real
+MariaDB via the project's Docker-container technique (not `docker:up` — see
+[[extraction_pipeline_text_pdf_mis_routing_fix]] agent memory for why):
+**407 pass, 0 fail** across the full suite, `tests/extraction-pipeline.test.ts`
+29/29.
+
+**Trigger (historical): the next real invoice classified `mixed`, or before `runClaimedJob`'s
+classification-routing logic is next touched.**
+
+Opened 2026-08-16, from this session's verification of the `ANTHROPIC_API_KEY` mis-routing
+fix (`lib/domain/extraction-pipeline.ts`, `tests/extraction-pipeline.test.ts`). The new
+"text-PDF queue routing" tests prove the fix for `text` (reaches review without calling Claude)
+and `scanned` (fails specifically in the Vision branch when the key is missing) — see item #33's
+progress note for how they were run. `mixed` is the one classification that exercises **both**
+halves of the split inside a single job: `processPdfFn` for markdown (kept as cross-check ground
+truth) and `extractFn`/Claude Vision for the actual line extraction. It has no equivalent test. A
+regression that swapped which result feeds `parseLinesFromVision` versus `pdfInspectorCrossCheck`,
+specifically on the `mixed` branch, would pass the current suite unnoticed.
+
+Fix, when the trigger fires: add a fourth DB-backed test alongside the other three, seeding a
+`mixed`-classified job and asserting both the markdown fetch and the Vision call happen, and that
+`pdfInspectorCrossCheck` runs against the markdown as ground truth.
+
+---
+
+## ~~35. `parseDateValue`'s US-date regex has no month/day bounds check~~ — **CLOSED 2026-08-19**
+
+Fixed alongside items #34, #36-#38. `parseDateValue` now bounds month to
+1-12 and day to 1-31 on **both** the ISO and US regex branches, returning
+`null` on an out-of-range match instead of silently rolling over via
+`Date.UTC` — falling through to the existing NULL-and-flag-for-review path.
+Two new tests in `tests/extraction-pipeline.test.ts` assert an out-of-range
+US date (`13/45/2026`) and an out-of-range ISO date (`2026-13-45`) both
+resolve `invoiceDate` to `null` rather than a rolled-over date.
+
+**Trigger (historical): the first real invoice date that fails to parse into a sane `retentionUntil` —
+i.e. the first garbled or non-US-format date on a real vendor invoice, since every fixture
+used so far carries a valid date.**
+
+Found 2026-08-16 while reviewing `lib/domain/extraction-pipeline.ts` during verification of the
+`ANTHROPIC_API_KEY` mis-routing fix. `parseDateValue`'s US-date regex,
+`/\b(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})\b/`, captures month/day/year positionally with no range
+check — `13/45/26` matches, and the out-of-range values go straight into `Date.UTC`, which
+JavaScript normalizes by rolling over into a different month/day instead of throwing. That value
+feeds `computeRetentionUntil` (`lib/domain/invoices.ts`), so a garbled or OCR-misread date
+silently produces a **wrong** statutory retention date instead of failing extraction or flagging
+it for review — the retention window is 2 years (spec §10), so a wrong date here surfaces only
+much later, in an audit.
+
+Fix, when the trigger fires: bound month to 1–12 and day to 1–31 (or switch to a real date
+library's strict-parse mode) and treat an out-of-range match as unparseable, falling through to
+the existing NULL-and-flag-for-review path instead of a silently rolled-over date.
+
+---
+
+## ~~36. The real Southern Glazer's invoice used to reproduce the routing bug is untracked, not gitignored~~ — **CLOSED 2026-08-19**
+
+Fixed both ways item #36 itself suggested: `.gitignore` gained a `tests/*.pdf`
+rule (with a comment explaining why), and the table structure the real PDF
+exposed was extracted into `SOUTHERN_GLAZERS_SYNTHETIC_MARKDOWN` — an
+entirely fabricated, arithmetic-self-consistent fixture in
+`tests/extraction-pipeline.test.ts` — so no real vendor PDF needs to sit in
+`tests/` at all going forward. A security-review pass on this same change
+also caught that the new vendor template doc (`docs/vendor-templates/
+southern-glazers.md`, see #37) had reproduced the real invoice's numbers in
+prose; those were redacted to the same synthetic values before commit.
+
+**Trigger (historical): before the next commit that touches `tests/` — confirm it is still excluded, and
+either replace it with a synthetic fixture or add it to `.gitignore` explicitly instead of
+relying on it simply not being staged.**
+
+`tests/Southern Glazer's Invoice-[redacted].pdf` — a real vendor invoice with real pricing — was
+placed in `tests/` on 2026-08-15 to reproduce and verify the `ANTHROPIC_API_KEY` mis-routing bug
+end to end. It is untracked, and excluded from this fix's commit by hand rather than by
+`.gitignore`, so nothing stops a future `git add -A` from putting real supplier pricing into git
+history.
+
+Fix: add a `.gitignore` rule for it (or a broader `tests/*.pdf` rule if more real invoices
+accumulate this way), or — better — extract the specific table structure it exposed (see item
+#37) into a small synthetic markdown fixture that carries no real vendor data.
+
+---
+
+## ~~37. `parseLinesFromMarkdown` doesn't recognize "Item Name" as a description-column header — a real vendor's table is silently skipped~~ — **CLOSED 2026-08-19**
+
+Fixed with the wider option this item itself suggested — not just widening
+the regex, but making header recognition and skip-vs-fail behavior explicit.
+`DESCRIPTION_HEADER_PATTERNS` (now a shared constant used by both
+`parseLinesFromMarkdown` and `countMarkdownTableDataRows`, closing a drift
+risk between the two) includes `/^item\s+name$/` and bare `/^item$/`.
+Gross/Discount/Net amount patterns gained an optional `(?:\s+amount)?`
+suffix and a new `parseCompoundQuantityCell` helper splits compound
+quantity cells like `"1 Cases"`/`"2 Units"` — all needed for Southern
+Glazer's real column set. Critically, per the "if the data isn't ready
+properly, we don't have data at all" directive, a table that's *partially*
+recognized (some numeric/description signal, but not enough to trust) now
+throws and refuses to write a partial result, rather than silently dropping
+just that table's lines — see the new `looksLikeUnrecognizedLineItemTable`
+guard. A code-review pass on this same change caught and fixed a real false
+positive in that guard (it initially misclassified an ordinary 2-column
+Subtotal/Tax/Total summary table as an unrecognized line-item table); the
+fix narrows it to tables with 3+ columns, with a regression test proving a
+bare Subtotal/Tax/Total table no longer trips it.
+
+Southern Glazer's specific format — all headers, the compound-cell quirks,
+the footnote-polluted totals row, and what the vendor never provides
+(no Unit Price, Item Number/SKU, Brand, or UOM column) — is now documented
+as a template at `docs/vendor-templates/southern-glazers.md`, per the "build
+a template so it's mapped automatically in the future" requirement.
+
+**Trigger (historical): the next real invoice that reaches `needs_review` with fewer line items than it
+actually has — i.e. the next vendor whose description-column header isn't `description` /
+`item description` / `product description` / `product`.**
+
+Found 2026-08-15 while reproducing the `ANTHROPIC_API_KEY` mis-routing bug against a real
+Southern Glazer's invoice. `columnIndex`'s description-column regex allowlist
+(`lib/domain/extraction-pipeline.ts`) is `[/^description$/, /^(?:item|product)\s+description$/,
+/^product$/]`. Southern Glazer's actual header is **"Item Name"**, which matches none of these,
+so `descriptionIndex` comes back `-1` and that table is skipped entirely — even though
+pdf-inspector correctly extracted it as markdown. This fails safe rather than silently *only
+when it's the sole table on the invoice*: the "zero recognizable lines" throw fires and the job
+lands in `needs_review` for a human to catch. On a multi-table invoice where another table's
+header does match, this table's real line items are dropped with no error anywhere — quieter and
+worse than the all-tables-fail case, and the same shape of defect `AGENTS.md` opens with (a
+plausible-looking result that is actually wrong).
+
+Fix, when the trigger fires: widen the regex allowlist to include `item name`/`item` (checking
+it doesn't collide with a real "item #"/"item code" column elsewhere), or — better — log/flag
+when a table is skipped specifically for header-recognition reasons, distinct from "no table
+matched at all," so review-queue triage can tell the two failure modes apart.
+
+---
+
+## ~~38. A stray non-directory file at `var/invoices/{orgId}` throws a raw `EEXIST` — environment-only, not reachable from application code~~ — **CLOSED 2026-08-19**
+
+Fixed as specified, then extended by review: `writeInvoiceFile`'s `mkdir`
+call is wrapped in try/catch and, on `err.code === "EEXIST"`, throws a clear
+`Error` naming the specific directory path and stating a non-directory file
+occupies it. A code/security review pass on this same change caught that
+the fix's own reasoning ("a stray file somewhere in this path") didn't
+match its code ("only the exact leaf directory") — Node throws `ENOTDIR`,
+not `EEXIST`, when the stray file is an *ancestor* segment (e.g.
+`INVOICE_STORAGE_DIR` itself), which is arguably the more likely deployment
+mistake. The catch now matches both codes with one message. A new test in
+`tests/invoice-storage.test.ts` plants a real file at the target directory
+path and asserts the new message (not a raw `EEXIST`/`ENOTDIR`).
+
+**Trigger (historical): the next time local dev environment setup (not application logic) leaves a stray
+file where `var/invoices/{orgId}` should be a directory.**
+
+Found 2026-08-15 during this session's E2E verification of the `ANTHROPIC_API_KEY` mis-routing
+fix. `writeInvoiceFile`'s (`lib/storage/invoice-files.ts`) `mkdir` call throws a raw Node
+`EEXIST` when a non-directory file already occupies `var/invoices/{orgId}` — hit once in this dev
+environment from stale local state, not from any application code path (nothing in the codebase
+writes a file at that path segment; it is always `mkdir`'d as a directory). Not a defect in
+normal operation — no invariant is violated and no user-triggerable path produces it — but the
+resulting error is Node's raw `EEXIST` rather than a message naming the actual problem, which
+would be confusing if it ever recurred (a bad manual `touch`, a broken backup restore, a future
+change that writes at the wrong path segment).
+
+Fix, when the trigger fires: catch `EEXIST` specifically around the `mkdir` call and re-throw
+with a message naming the offending path and stating it must be a directory, rather than letting
+Node's raw error surface.
+
+---
+
+## 39. Two Slice 5 (Audit Packet) review findings were considered and deliberately not fixed
+
+**Trigger (a): the first date range wide enough to plausibly buffer more invoice
+bytes than the deploy target has free RAM for. Trigger (b): the first
+production incident (deploy, crash, OOM kill) that lands mid-build and is
+noticed by an owner still staring at a stuck "processing" screen.**
+
+Opened 2026-08-20, from the Slice 5 code/security review (`lib/domain/audit-packets.ts`,
+`buildAuditPacketJob`). Both rated low severity; a third finding from the same
+review (no per-organization concurrency guard, rated medium) *was* fixed same-day
+— see `createAuditPacket`'s header comment — and is not repeated here. Recorded so
+a later reader does not mistake either remaining gap for an oversight.
+
+**(a) `buildAuditPacketJob` buffers every matched invoice's full file bytes in
+memory before archiving, with no per-request size or count cap.** The date-range
+schema (`createAuditPacketSchema`) deliberately has no minimum *or maximum* span —
+04-slices.md's spec never asked for one, and owners are expected to request
+sensible ranges (a month, a quarter). On Truestock's small Hostinger Cloud
+Startup plan, an owner requesting a genuinely large range (a full year of a busy
+bar's invoices) could exhaust the Node process's memory before the ZIP is ever
+written. Not fixed now because the honest fix is streaming each file straight
+into the archive rather than staging it in memory first, which is a real
+`archiver`-usage change, not a guard clause — disproportionate to make as a
+same-day patch on top of a workflow-generated slice. The now-fixed concurrency
+guard (`createAuditPacket`'s pre-insert check) already caps this at one build
+per organization at a time, which bounds the *number of simultaneous* buffers
+even though it does nothing about the size of any one of them.
+
+**(b) No stale-job reclaim if the Node process dies mid-build.** Unlike
+`extraction_job` (`db/schema.ts`'s comment on `extractionJobStatusEnum`), which
+has a reaper (`reapStuckJobs`) that returns a stuck `running` job to `queued`,
+`audit_packet` has no equivalent.
+A process restart (deploy, crash, OOM from (a) above) while a build is in flight
+leaves that row at `status = 'building'` forever — the concurrency guard just
+added then permanently blocks that organization from ever requesting another
+packet, and `AuditPacket`'s poll loop (`components/office/audit-packet.tsx`) has
+no timeout of its own, so the owner is left watching "processing" indefinitely
+with no path back to a working state short of a manual database update. Not
+fixed now because a correct reclaim sweep needs the same in-process interval
+pattern `instrumentation-node.ts` already uses for `extraction_job` (a periodic
+"building for longer than N minutes → failed" sweep), and building that
+mechanism — plus deciding its threshold, plus the tests for it — is a new,
+separable unit of work, not a same-day patch.
+
+A third, lower finding from the same review is worth a one-line note rather than
+its own entry: `archiver@8`'s transitive dependency chain
+(`readdir-glob → minimatch → brace-expansion`) carries known high-severity DoS
+advisories in `minimatch`'s glob-matching. Currently dormant — nothing in this
+codebase calls `archive.glob()` or `archive.directory()`, only `archive.append()`
+against files this code has already resolved itself — so no action is needed
+unless the archiving strategy changes to accept glob patterns from anywhere.
+
+Covered by `tests/audit-packet.test.ts` for everything that *is* enforced today:
+the per-organization concurrency guard (`audit_packet_rejects_concurrent_build`,
+`audit_packet_allows_concurrent_build_once_prior_is_resolved`,
+`audit_packet_concurrent_build_guard_is_per_organization`). Neither (a) nor (b)
+above has a test, because neither has a fix yet to test.
+
+---
+
+## 40. Post-merge QA of `feat/phase-2.5-invoice-automation`: what was found and not fixed, and what was never verified
+
+**Trigger: the first real-phone count, or the next change that touches a count
+screen, a shared `cn()` call, or the invoice upload path — whichever comes
+first.**
+
+Opened 2026-10-25, after the two redesign/backend PRs merged into
+`feat/phase-2.5-invoice-automation` and a second QA pass ran against the merged
+tree. The defects that pass confirmed were fixed with tests in
+`fix/phase-2.5-post-merge-qa`; this item records what was *deliberately left*
+and what *no browser or device ever exercised*, so a clean harness run is not
+mistaken for coverage it does not have.
+
+**Known gaps, not fixed (each is a judgement, not an oversight):**
+
+1. **`cn()` drops a custom font-size token next to a text colour.** Default
+   `tailwind-merge` files an unknown `text-<name>` under text *colour*, so
+   `text-label` + `text-primary-foreground` conflict and the later one wins —
+   the `Button` labels rendered without their size. Fixed for `Button` only
+   (`cnSized` in `lib/utils.ts`, pinned by `tests/cn-font-size.test.ts`, which
+   also fails if a `--text-*` token is added to `globals.css` without being
+   listed). About 21 other `cn()` call sites combine a size token with a colour
+   and are exposed to the same collision; the Add/Set tabs in
+   `components/count/quantity-entry.tsx` lose `text-label` today. A global fix
+   changes how every screen renders and needs a visual pass first.
+2. **The scan deep link carries `productId` but nothing reads it.** An Edit link
+   lands in the right leg and does not open the product
+   (`ScanParams.productId` is parsed and validated, unconsumed).
+3. **A level picked in `FillEntry` but not yet added is dropped by that editor's
+   own Save**, and likewise a typed-but-unadded `QuantityEntry` Add/Set input.
+   Cross-panel switching and Back are guarded (`lib/entry-drafts.ts`); the
+   same-editor Save is not.
+4. **No `popstate` / `beforeunload` guard** on the scan screen, so the browser
+   Back button or a tab close can still drop an unsaved draft.
+5. **Finish section has no confirmation.** Deliberate under the "no modal on
+   count controls" rule in AGENTS.md, but a mis-tap there is not undoable from
+   the leg.
+6. **The hidden mobile tab bar stays in the tab order**; **the scanner overlay is
+   not a `dialog`** (no focus trap, no `aria-modal`); **the invoice review rail
+   narrows the preview** on mid-width screens.
+7. **Photo invoices: no magic-byte sniffing** (the stored path extension is the
+   only file-type record), **no downscale step and no pixel-dimension check**
+   (the API limit is 8000×8000 px), and the 7.5 MB cap
+   (`MAX_VISION_IMAGE_BYTES`) is sized for the Anthropic API's 10 MB base64
+   limit, not Bedrock's 5 MB. The extraction system prompt still says "attached
+   PDF" (`PROMPT_VERSION` unchanged on purpose — changing it re-baselines
+   extraction). Photo extraction has only been run against a **stubbed** Vision
+   response; HEIC is refused rather than converted.
+8. **`challenger-*` tests assert copies of the logic they check**, not the
+   shipped function, so they can pass while the code regresses.
+9. **`withTimeout` around OCR cannot cancel native work**; a timeout abandons the
+   promise, it does not stop the CPU.
+10. **The invoices list is capped at 50** while its caption says "N total".
+    `contentTypeForStoredPath` in the file route is case-sensitive and ignores
+    `.jpeg`, unlike `contentTypeForPath`.
+11. **Harness safety guard accepts any loopback database** that matches
+    `VERIFY_ALLOW_DB` exactly; it could additionally require a `*_test` or
+    throwaway name. `verify-ui-redesign.mjs` makes unauthenticated GETs
+    unguarded. Neither harness may be imported by a test (`main` runs on import).
+12. **The save button's wording differs from the AGENTS.md "quantity SET shows
+    its before/after" example.** It reads `SAVE (3 EA)` / `12 ea → 15 ea` and
+    `SAVE CORRECTION (3 EA)` / `was 12 ea · −9`, not `ADD 3 EA / 12 → 15` and
+    `SET TO 3 EA / was 12 ea · −9`. The before, the after and the delta are all
+    still shown live, which is what the rule is for; only the verb differs, and
+    AGENTS.md was not changed to match.
+13. **The bottom tab bar (Catalog, Reports, Account) and the browser Back button
+    leave a screen with a pending draft silently.** The draft guard covers only
+    the in-screen Back and Cancel controls (item 4 is the same gap seen from the
+    other side).
+14. **The quantity stepper's decrease is not disabled at 0**; it floors at 0, so
+    a tap there does nothing and says nothing.
+15. **The oversize-photo refusal is server-side only.** The upload form checks
+    the content type before sending but not the 7.5 MB cap, so a 12 MB photo
+    uploads in full before the refusal comes back.
+16. **A tenth picked but not yet added counts as an unsaved draft.** By design
+    (it is unsaved), but it means Back asks "Discard unsaved entry?" for a tap
+    that looks like nothing.
+17. **`invoice_file_write_once_survives_a_concurrent_put` failed once** in one
+    full-suite run (`tests/invoice-write-path.test.ts`), while the app was
+    restarting beside it, and passed alone (46/46) and on the next full run
+    (808/808). The failure output was not captured. The test is written to be
+    deterministic (it holds B's body stream open), so this is **not understood**,
+    only not reproduced. If it recurs, capture the assertion text before
+    rerunning.
+
+**Fixed in `fix/phase-2.5-post-merge-qa` (each with a test, then re-checked in a
+real browser on the rebuilt bundle at 390×844 and 360×740):**
+
+- The scanner polyfill never decoded under the CSP (wasm now self-hosted).
+- `Button` labels rendered without their size (`cnSized`, item 1 above).
+- The dark-theme destructive button was white on `#f87171`, 2.77:1; it is now
+  `#08090a` on it, 7.2:1 (`tests/theme-contrast.test.ts` reads the real tokens).
+- Three controls under the 44 px floor: "+ New bottle", "Session Details →", the
+  catalog scan button.
+- The oversize-photo message at 7,500,001 bytes said "7.5 MB … over 7.5 MB"; it
+  now rounds up ("7.6 MB").
+- The SET-mode save button's label and figure broke apart at 360 px; each part
+  now wraps as a unit.
+- A photographed invoice could be uploaded but not extracted: it went through
+  pdf-inspector and reached Claude as a PDF `document` block, and HEIC was
+  advertised although Claude cannot read it. Photos now skip the PDF stages and
+  go to Vision as `image` blocks (`buildSourceBlock`); HEIC and photos over
+  7.5 MB are refused at upload and re-checked against the real bytes in the
+  pipeline. Verified with a stubbed Vision response only (item 7).
+
+**Never verified (absence of a failure here is not evidence):**
+
+- A **real camera** on real hardware: all scanner evidence is a fake-camera feed
+  in desktop Chrome. The wasm is self-hosted (`/vendor/zxing_reader.wasm`,
+  copied by `scripts/copy-zxing-wasm.mjs` on `predev`/`prebuild`) because the
+  `barcode-detector` default fetches it from a CDN that the CSP's
+  `connect-src 'self'` blocks silently — the camera opens and nothing decodes.
+  Whether the user's phone uses the native `BarcodeDetector` or the polyfill is
+  not known until it is tried.
+- **iOS Safari**, **safe-area insets**, **landscape**, an on-screen keyboard
+  covering the fixed action bar, and hardware keyboard navigation.
+- Open item 26 (dev-only origin banner), the catalog stock bar for a *counted*
+  product with no par, and slice 6 copy/print.
+
+The count/UI claims above were checked in a desktop Chrome with a phone
+viewport and touch emulation, not on a phone. `docs/phone-count-test.md` is the
+checklist for the part that only a phone can answer.
+
+---
+
+## 41. The automated test foundation: what it proves, what it does not, and the defects it found
+
+**Trigger: fixing any defect in "Known defects" below (its `test.failing` test or
+its e2e KNOWN DEFECT probe will start failing — flip it to a plain test, that is the signal),
+or the next change to the count write path or a count screen, whichever comes
+first.**
+
+Opened 2026-10-26 on `test/playwright-foundation`. The branch adds a Playwright
+e2e suite (`e2e/`, 62 runs across a phone and a desktop project, against a
+production build) and nine business-logic files in `tests/` (187 pass, 5 todo,
+against a real MariaDB). It changes no application code. `e2e/README.md` says how
+to run it; this item records how far to trust it.
+
+**Mutation results — which tests were shown to fail when the code they guard
+breaks.** A green test whose guarded change was never reverted proves nothing
+about that change, so each regression test was run against its reverted fix:
+
+| Guarded change | Result |
+|---|---|
+| 7 backend mutations: `lib/authz.ts` inactive-account check removed; `deriveUnitCost` pack size multiplied instead of divided; `counts.ts` closed-status guard; `reports.ts` cost gate forced open; `setUserActive` update moved out of its transaction; `setUserActive` session delete skipped; `valuation.ts` case size ignored | all 7 caught, each by the test file written for it |
+| Phone fix 3 (enroll form: reason text, `aria-describedby`, `e.g.` placeholder, italic) | all 4 mutations caught |
+| Phone fix 1: `RefreshOnOpen` made inert, production build | caught by 3 of 4 specs |
+| Phone fix 1: `prefetch={false}` deleted (alone, and together with `RefreshOnOpen` inert) | **no spec fails** |
+| Phone fix 2: `busy` cleared on success again | **no spec fails** |
+
+**Not verified, and why:**
+
+- **Phone fix 2 (Save re-enables after a successful save).** `e2e/specs/phone-round2.e2e.ts`
+  pins the contract, but reverting the fix does not fail it. The bug was a render
+  landing between two microtasks on a real phone; headless Chromium did not
+  reproduce that interleaving. The phone is the only evidence. Next thing to try:
+  production build with CPU throttling (CDP `Emulation.setCPUThrottlingRate`).
+- **`prefetch={false}` on the picker's Back link.** The reasoning in the code
+  comment may be right, but no test reproduced a stale page without it. Do not
+  cite the in-app-links spec as evidence for it.
+- The older harness checks this branch could not exercise still stand: the vendors
+  Edit button, the catalog stock bar for a counted product with no par, slice 6
+  copy/print, the dev-only origin banner, and `verify-browser.mjs` Decision 5
+  (opt-in via `VERIFY_DECISION5_BASE`; reported NOT VERIFIED otherwise).
+- `tests/extraction-pipeline.test.ts` and `tests/invoice-photo-extraction.test.ts`
+  fail on import on an Intel Mac (`@firecrawl/pdf-inspector` has no darwin-x64
+  binding). They pass in Docker (`bun run test:docker`); the host-side run is
+  expected to show exactly those two.
+
+**Known defects the suite found (none fixed; each encoded as a test that is green
+today and goes red when the defect is fixed).** The full write-up (where each lives,
+impact, suggested fix, the test to flip) is in [`docs/known-defects.md`](known-defects.md);
+this list is the short form:
+
+1. **A deactivated product is still countable** (`tests/known-defects.test.ts`).
+   First write, increment and scan-by-barcode all succeed against an
+   `active = false` product. This is invariant 6 on the write path;
+   `resolveBarcodeForCount` does not join `product`. The location equivalent was
+   fixed 2026-08-12.
+2. **`deriveUnitCost` accepts a zero or negative net** (`lib/domain/cost-derivation.ts`:
+   `-60.00` becomes `-6.0000`; `0.00`, `""` and `" "` become `0.0000`), and
+   `approveInvoice` posts that as a product cost plus a history row.
+3. **`productUpdateSchema.wasteFactor` accepts values of 1 or more** (`.max(9.999)`),
+   which divides by zero or goes negative in the draft gross-up (invariant 10).
+4. **Judgement call:** `createProduct` has no waste-factor input, so a keg enrolled
+   through scan-to-enroll gets `0.000`, not the `0.100` the catalog gives draft.
+5. **The last-owner guard in `setUserActive` races.** `countActiveOwners` runs
+   before `db.transaction`, so two owners deactivating each other at once leave
+   zero active owners (reproduced on the first try and on 8 reruns).
+   `setUserRole` has the same shape and is untested.
+6. **The owner's inline cost cell never shows "Saved"** (`office-catalog.e2e.ts`,
+   KNOWN DEFECT probe, which proves the save reached the database and then asserts
+   "Saved" never appears). The value persists; only the confirmation is lost.
+
+**Smaller surprises worth knowing:** a non-numeric session user id surfaces as a
+`DrizzleQueryError`, not an `AuthzError` (still fail-closed; see
+`tests/authz-fail-closed.test.ts`). `AGENTS.md` cites
+`tests/user-management.test.ts`, which did not exist — corrected on this branch to
+`tests/user-write-path.test.ts`.
+
+**Running the suite: bun's 5 s timeout and a database that sometimes stalls.**
+Found 2026-10-26 while validating this branch; it is why `scripts/run-tests.sh`
+and `test:docker` pass `--timeout 30000`.
+
+- bun 1.4.0's default is 5 s per test **and per hook**, and the DB-backed files run
+  `resetDatabase()` (about 20 TRUNCATEs) in a `beforeEach`. The Docker MariaDB
+  intermittently stalls a single statement for several seconds: measured an INSERT
+  at 3.0 s and TRUNCATEs at 2.3 s and 4.6 s, with nothing locked in the
+  processlist, DNS under 5 ms, and no leaked connection in the new tests. The
+  cause of the stalls is not established; a host disk at 96% full is a plausible,
+  unproven contributor.
+- A timed-out hook is **not aborted**. The next test starts while the previous
+  `resetDatabase()` is still truncating, so the failure that gets reported is a
+  foreign-key or `Duplicate entry` error two tests later. It reads like a real
+  defect and is not one. If a run shows those errors, look for `timed out` first.
+- Before the flag, 2 of 5 full Docker runs failed this way (0–3 failures, a
+  different file each time). The committed suite carries the same exposure; the new
+  files add roughly 190 DB-heavy tests, so it shows more often. With the flag, 3 of
+  3 consecutive full runs of `scripts/run-tests.sh` in Docker were green: 1086 pass,
+  5 todo, 0 fail. Three runs shows the flake is gone far less than it shows the
+  flag works; rerun it a few times after any change to `resetDatabase()`.
+- Only the CLI flag works. `timeout` under `[test]` in `bunfig.toml` is ignored by
+  bun 1.4.0, and `setDefaultTimeout()` called from a `preload` or from a helper
+  every test file imports reaches only the first file loaded (measured with a
+  three-file probe). A bare `bun test` still gets the 5 s default, as does the
+  `docker compose … bun test` line in `docker-compose.worktree-test.yml`; use
+  `bun run test` / `bun run test:docker`, or add the flag.
+- One pre-existing test failed once at 306 ms during a loaded Docker run:
+  `concurrent upserts of the same alias key — the lock-conflict retry fix > 3
+  simultaneous submitInvoiceReview calls …`. It is a genuine concurrency test, so a
+  flake there may be a real retry-budget question rather than a timeout. Not
+  reproduced since; not investigated.
+- The Docker VM goes read-only when the host disk fills (see the
+  `docker-vm-readonly-when-host-disk-full` memory). At the time of writing the host
+  was at 96% with about 11.9 GB of reclaimable Docker build cache. Nothing was
+  pruned; that is the owner's call.
+
+## 42. Changing a product's size rewrites history and re-points its barcodes
 
 **Trigger: before the back office is used to correct a size on any product
 that has been counted or has a barcode — in practice, the first size edit
@@ -1309,7 +2084,7 @@ change; matches AGENTS.md's "a handle needs its own row"); **B** — allow, but
 state the consequence live as the quantity SET button does; **C** — snapshot
 `size_ml` onto `count_line` (migration, widens invariant 2).
 
-## 32. Local databases enrolled before barcode integrity hold raw barcodes
+## 43. Local databases enrolled before barcode integrity hold raw barcodes
 
 **Trigger: the first time the owner's local Docker stack runs code from the
 barcode-integrity branch.** Production is unaffected — it holds no barcodes.
@@ -1324,7 +2099,7 @@ during Gate 2 — there is no production data to convert). **Run
 `bun run docker:reset` once after merging.** Close this item when that has
 been done.
 
-## 33. ~~Some JSX text renders two words glued together~~ — CLOSED 2026-11-06
+## 44. ~~Some JSX text renders two words glued together~~ — CLOSED 2026-11-06
 
 **Closed.** The rule, established by compiling controlled snippets with
 Next's own SWC `transform`: a JSX text run loses its **leading** space when it
@@ -1351,10 +2126,13 @@ screens were fixed with an explicit `{" "}`. Not every such run is affected —
 their space — so the exact rule is not yet established; find it from the
 compiled output, then fix every instance and verify in a browser.
 
-## 34. The built-in barcode reader branch has never run
+## 45. The built-in barcode reader branch has never run
 
 **Trigger: the next time the counting app is opened on a phone (Phase 2.9's
 walk), or in Chrome on a Mac.**
+
+**Status, 2026-11-07: still open.** The 2026-11-06 phone session did not record
+the `/count/preflight` readout. Part of Phase 2.9, #48.
 
 Since 2026-11-05 the scanner uses the phone's built-in `BarcodeDetector` only if
 `getSupportedFormats()` includes UPC-A, UPC-E, EAN-13 and EAN-8, and otherwise
@@ -1371,3 +2149,157 @@ polyfill fetched its engine from `fastly.jsdelivr.net`, which that CSP refuses �
 reproduced in a browser. So either that handset used a built-in reader after
 all, or the engine came from somewhere other than the CDN. Preflight now answers
 which.
+
+## 46. The count queue after the 2026-11-06 fix: what is proven and what is left
+
+**Trigger:** before relying on offline counting in a real count. The first
+three bullets under "Still open" are small and can go in any count-screen work.
+
+**Fixed (branch `fix/count-queue-order-and-retry`, merged into
+`feat/phase-2.5-invoice-automation`, pushed 2026-11-07).** Two
+defects found on a real phone. A new write went straight to the server past
+queued ones, so a correction landed first and the older write replayed on top:
+the phone showed `4 ea` and Synced while the database held 6. And the queue
+drained only on mount and on the `online` event, which never fires when a phone
+falls over to mobile data, so one write sat unsent for over 7 minutes. Writes in
+`components/count/count-leg.tsx` now go through one lock with older queued writes
+first, a new write waits behind a blocked queue, and pending writes retry every
+15 seconds.
+
+**Proven.** Three tests in `e2e/specs/count-flow.e2e.ts`, on a production build.
+Mutation-checked: with the original file, exactly those three fail and the older
+four pass. They abort only the count POSTs, because `context.setOffline` flips
+`navigator.onLine` and so cannot reproduce the phone case.
+
+**Not proven.** The fix has not been run on the real phone, which is where both
+defects were found. Phase 2.9 (#48) now puts this first: two or more queued
+writes, a correction arriving in the right order, falling over to mobile data,
+and the flush after the app is killed. Whether either defect predates the Phase 2.5 merge was not
+tested on `main`.
+
+**Still open:**
+
+- The retry timer lives in the scan screen, so the queue only retries while that
+  screen is mounted.
+- Finish section gives no warning with writes pending.
+- `/count/<id>` shows no pending indicator and left Submit live with 1 pending.
+  `canSubmitCount` in `components/count/session-actions.tsx` exists to guard this;
+  it was read, not tested.
+- `verify-browser` leaves a second `Jameson` (1.75 L) in `truestock_e2e`, so
+  `count-flow` fails with a strict-mode error if it runs afterwards. That looks
+  like an app failure and is not one.
+
+## 47. Eight invoice failures from the 2026-11-06 QA run
+
+**Trigger:** next work on `feat/phase-2.5-invoice-automation`, and before any
+real invoice is trusted to post costs.
+
+Real invoices found failures the automated suites did not, including approval
+posting no costs with nothing on screen to show it. The findings, code pointers,
+suggested order and decisions needed are in
+`docs/qa/2026-11-06-invoice-failures-handoff.md`. Close this item when that
+document's "Open findings" are closed or moved here individually.
+
+**Status, 2026-11-07: all eight findings and the three minor items are fixed
+on `feat/phase-2.5-invoice-automation`, pushed, and in PR #37 to `main`. This item stays open
+for the three unverified paths below.** The plan is `docs/plans/invoice-qa-fixes/`.
+
+**Proven on real invoice A, through the UI against a production build, with the
+result read back from the database:**
+
+- **F1:** approval reported 3 of 4 lines posted and named the skipped line.
+  `product_cost_history` gained exactly three rows, and each unit cost equals the
+  line's net divided by its units.
+- **F5:** the free-goods line posted nothing and showed "net of zero (free goods)".
+- **F4:** the blank-discount line was repaired, the arithmetic and cross-check
+  passed, and the only alert left is a true one.
+- **F6:** three aliases were learned on item-code keys. Two lines sharing a code
+  made one alias.
+- **F7:** a second upload was refused with a link to the existing invoice. After
+  Return released the claim, the same file was accepted.
+- **F8:** a failed extraction shows the reason and Retry, and Approve is disabled
+  at 0 lines. This one was driven on real scan B.
+- **F10:** the packet holds approved invoices only and names all four omissions,
+  on screen and in the manifest.
+- **Minors:** the size warning shows, the currency field is empty, and the end-date
+  message appears once.
+- **Item Name reading (added 2026-11-07):** item code and case pack read correctly
+  on all four lines.
+
+**Gates at `a5ef5f2`:** 1384 unit and integration tests pass, 5 todo, 0 fail.
+Playwright 65 of 65, none skipped, with `E2E_REQUIRE_ALL=1`. Typecheck, lint and
+production build pass. Code and security reviews found nothing blocking. Those
+reviews read the code and ran nothing.
+
+**Not verified. Skipped means unverified, never passed:**
+
+1. **Vision.** There is no `ANTHROPIC_API_KEY`, so no scanned document has been read.
+   That also leaves Item Name reading on the Vision path unit-tested only.
+2. **Invoice B's lines.** It is a scan, so it needs Vision.
+3. **F9 past the key check, and on Hostinger.** Scan B reached the Vision route and
+   stopped at `EXTRACTION_UNAVAILABLE`. The canary is in `docs/go-live.md`.
+
+**Built and tested, not driven with a real file:**
+
+- Re-matching on a code-key alias from a later upload. The same file is now refused,
+  so it needs a second real invoice from this vendor.
+- F7's refusal at confirm time, which is a race. A test covers it.
+
+**Found during proof, not fixed:**
+
+- A packet that fails on a missing stored file says only "expired or the export
+  failed to build" and names no invoice.
+- Uploads that were never confirmed appear as undated omissions in every packet
+  range. Over time that could teach the owner to ignore the list.
+- Approved invoices with a NULL `file_path` drop out of a packet silently: neither
+  included nor named.
+- `DuplicateInvoice.invoiceId` reaches a manager who cannot open that invoice. It
+  carries no money. Low severity, from the security review.
+- A vintage after a 2–3 digit number (`MERLOT 13 2019`) reads as an item code. The
+  reviewer confirms each match, so the harm is limited.
+- A sum or cross-check failure still flags every line.
+- The catalog holds these products at 750 ml or 355 ml while the invoice says 1 L,
+  so costs posted with the size warning showing. Real use needs 1 L product rows.
+
+**Decisions nobody explicitly made:**
+
+- A pack read from the item name overrides a remembered alias pack.
+- The wording of the F7 refusal.
+- `live_file_sha256` has no backfill (`02-architecture.md`). This holds only while
+  production has never been deployed. Invoices already live on a migrated database
+  would hold no claim.
+
+**Differences from the approved mockups:** the "Approve: post 3 costs, skip 2" button
+label and the pack "Remembered" chip were not built. The panel lists no per-line
+unit costs.
+
+## 48. Phase 2.9 field validation: status of each item as of 2026-11-07
+
+**Trigger:** the start of Phase 2.9 work, and each phone or invoice session after
+that. Update this item, not a session log, as each part closes. Close it when
+ROADMAP.md's Phase 2.9 "Done when" holds.
+
+**Status, 2026-11-07: nothing is done.** Of the eleven items, five have partial
+evidence and six have none. Phase 2.5 closed the *code* gaps. It did not produce
+the field evidence this phase exists for. ROADMAP.md Phase 2.9 has the full text.
+The sources are `docs/phone-test-2026-10-25-findings.md`, `docs/qa/2026-11-06-*.md`,
+and items #45, #46 and #47.
+
+| Item | Status | What exists |
+|---|---|---|
+| The data (costs, case sizes, pars, vendors, wine producers) | Not started on real data | Shared dev DB: 9 of 99 costed (seeded kegs), 0 case sizes, 0 pars, 0 vendors. Invoice-posted costs went only into test DBs that were reset. |
+| 45-minute cost-entry budget | Not started | Never timed. Costs are now expected to come from invoices. |
+| Run A: enrolment, 20 s enroll, open-vs-sealed | Partial | Two enrolments timed in passing (10 s, 5 s) on 2026-10-25. No full pass, and the split is unanswered. |
+| Run B: full count under 20 min | Not started | Longest real count: 3 lines in 2 m 43 s. |
+| Six-location walk and stray-bottle sheet | Not started | Count #3 touched 2 of 6 and closed with 4 unvisited (DB-4). |
+| Rapid-scan vs hand count | Not started | — |
+| Offline queue on the phone | Partial | Failed on 2026-11-06 (F2, F3). The fix is proven by e2e tests only (#46). |
+| Standalone `server.js` | Not started | Never started. Also a Phase 3 blocker. |
+| Known barcode resolving on a device | Partial | Not recorded. Second scans, SET vs ADD and #45 are unverified. |
+| Phase 2.5 field metric and Vision | Not started | One real text invoice approved. Vision never run (#47). |
+| Redesigned UI on a phone (§6 bets) | Partial | On a phone twice, with no verdict on any bet. V1, A18, A19, A20, DB-1 and DB-4 to fix or accept. |
+
+**Suggested order.** First the two things that would quietly corrupt the first
+real count: prove the #46 fix on the phone, and fix or accept the pre-count
+findings. Then enter data through real invoices (add the 1 L product rows first,
+#47), and run Vision with a real key. Then Run A, then Run B.

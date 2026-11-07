@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Zap, ZapOff } from "lucide-react";
 import { createRescanGuard, offerFrame } from "@/lib/rescan-guard";
-import { chooseBarcodeReader, ZXING_WASM_PATH } from "@/lib/barcode-reader";
+import { chooseBarcodeReader } from "@/lib/barcode-reader";
+import { locateScannerFile } from "@/lib/scanner-assets";
 
 /**
  * Live barcode scanning with the phone's built-in `BarcodeDetector` when it can
@@ -145,14 +146,13 @@ export function BarcodeScanner({
         } else {
           const mod = await import("barcode-detector/pure");
           try {
-            // Load the engine from THIS app's origin, and wait for it, so a
-            // failure surfaces here rather than as a camera that silently never
-            // reads anything. See ZXING_WASM_PATH for why it must be same-origin.
+            // The library's default fetches its .wasm from a CDN, which the CSP
+            // (connect-src 'self') blocks — the camera runs and nothing decodes.
+            // Load it from this origin instead (lib/scanner-assets.ts), and WAIT
+            // for it, so a failure shows here rather than as a camera that
+            // silently never reads anything.
             await mod.prepareZXingModule({
-              overrides: {
-                locateFile: (path: string, prefix: string) =>
-                  path.endsWith(".wasm") ? ZXING_WASM_PATH : prefix + path,
-              },
+              overrides: { locateFile: locateScannerFile },
               fireImmediately: true,
             });
           } catch {

@@ -1,0 +1,1111 @@
+"use client";
+
+/**
+ * The review-invoice screen's interactive body — Phase 2.5, Slice 2
+ * (docs/plans/phase-2.5-invoice-automation/04-slices.md, "Slice 2 —
+ * Extraction + Review"). Owner-only end to end: the page that renders this
+ * component already refused a non-owner via `getInvoiceAction`'s 403
+ * (see app/(office)/office/invoices/[invoiceId]/page.tsx), and every action
+ * called from here (`reviewInvoiceAction`, `rejectInvoiceAction`,
+ * `resendToExtractionAction`) re-checks `requireRole("owner")` itself
+ * (invariant 7) — this component's own role gate is belt, not buckle.
+ *
+ * ## Coded against the landed contract
+ *
+ * `getInvoiceLinesAction`, `reviewInvoiceAction`, `rejectInvoiceAction`, and
+ * `resendToExtractionAction` all exist in `app/actions/invoices.ts`. The
+ * shapes this file codes against — validated client-side via the SAME Zod
+ * schemas the server uses (`lib/validation/invoices.ts`), imported directly
+ * rather than re-implemented here, so client and server validation cannot
+ * drift apart:
+ *
+ *   reviewInvoiceAction(input: {
+ *     invoiceId: number,
+ *     corrections: Array<{
+ *       id: number,
+ *       // DECIMAL(12,2) as the string mysql2 round-trips — never a JS
+ *       // number. `/^-?\d{1,10}(\.\d{1,2})?$/`. `null` clears the column;
+ *       // `undefined`/omitted leaves it unchanged (this form always sends
+ *       // an explicit value for every editable line, never omits one).
+ *       rawGross?: string | null,
+ *       rawDiscount?: string | null,
+ *       rawNet?: string | null,
+ *       matchedProductId?: number | null,
+ *     }>,
+ *     // Open item #32's fix. Every field optional; unlike the line
+ *     // corrections above, there is no `null`-clears-the-column case here
+ *     // (see `headerCorrectionSchema`'s own comment) — omitted means "leave
+ *     // this column alone," so this form only includes a key when the
+ *     // reviewer actually typed a non-blank value into it.
+ *     headerCorrections?: {
+ *       invoiceDate?: string,     // YYYY-MM-DD
+ *       invoiceNumber?: string,
+ *       totalGross?: string,      // DECIMAL(10,4) string, up to 4 decimals
+ *       totalNet?: string,        // DECIMAL(10,4) string, up to 4 decimals
+ *       currency?: string,        // 3-letter ISO 4217, case-insensitive input
+ *       retentionUntil?: string,  // YYYY-MM-DD
+ *     },
+ *   }) => ActionResult<InvoiceRow>
+ *
+ *   rejectInvoiceAction(input: { invoiceId: number, reason: string })
+ *     => ActionResult<InvoiceRow>
+ *
+ *   resendToExtractionAction(input: { invoiceId: number })
+ *     => ActionResult<{ invoiceId: number, extractionJobId: number, status: InvoiceStatus }>
+ *
+ * `InvoiceLineRow` is imported from `lib/domain/invoice-lines.ts` (the read
+ * shape `getInvoiceLinesAction` actually returns), not redeclared here.
+ *
+ * ## Status branching
+ *
+ * `needs_review` — the only status with editable money fields (line AND
+ * header, open item #32) and an Approve action (`reviewInvoiceAction`'s CAS
+ * only knows `needs_review -> reviewed`; offering the button on any other
+ * status would just produce a conflict error every time). If Approve still
+ * fails after header corrections — a genuinely different required field is
+ * still missing — the existing `InvoiceNotWritableError` message surfaces
+ * the same way it always has; nothing about this form changes that path.
+ * `reviewed` — read-only line values (nothing left in this slice writes
+ * corrections to an already-reviewed line), but Return is still offered —
+ * `lib/domain/invoices.ts`'s `INVOICE_TRANSITIONS` allows `reviewed ->
+ * rejected`.
+ * `rejected` — read-only (diagnostic) line values plus "Retry extraction"
+ * (`resendToExtractionAction`), never Approve/Return — `rejected`'s only
+ * legal edge is `-> processing`.
+ * `approved` — fully terminal, read-only, no actions at all.
+ * `uploaded` / `processing` never reach this component — the page renders a
+ * plain "not ready for review" state instead (no lines exist yet to show).
+ *
+ * ## Approve & post costs (Phase 2.5, Slice 4)
+ *
+ * A SEPARATE control from the `needs_review` "Approve" button above —
+ * `reviewInvoiceAction` (that button) and `approveInvoiceAction` (this one)
+ * are different actions on different legal edges of `INVOICE_TRANSITIONS`
+ * (`needs_review -> reviewed` vs. `reviewed -> approved`) and are never
+ * offered on the same status, so there is no ambiguity about which one a tap
+ * triggers. Only rendered when `invoice.status === "reviewed"`; this
+ * component's own role gate is belt, not buckle — `approveInvoiceAction`
+ * re-checks `requireRole("owner")` itself, same as every other action here.
+ */
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { FileText, ExternalLink } from "lucide-react";
+import {
+  reviewInvoiceAction,
+  rejectInvoiceAction,
+  resendToExtractionAction,
+  approveInvoiceAction,
+  getInvoicePostingReportAction,
+} from "@/app/actions/invoices";
+import type { PostingReport } from "@/lib/domain/invoice-approval";
+import {
+  postingHeadline,
+  describeSkipReason,
+  livePanelModel,
+  panelModelFromReport,
+  showsPackSizeInput,
+  parsePackSizeInput,
+} from "@/lib/invoice-posting-view";
+import type { InvoiceRow, InvoiceExtractionOutcome } from "@/lib/domain/invoices";
+import { previewKind } from "@/lib/invoice-preview";
+import { reviewOutcomeView } from "@/lib/invoice-review-outcome";
+import { initialCurrencyInput } from "@/lib/invoice-review-currency";
+import { lineSizeWarning } from "@/lib/invoice-line-size";
+import { noVendorNote, productOptionLabel, rememberedMatchText } from "@/lib/invoice-remembered-match";
+import type { InvoiceLineRow, InvoiceLineUom } from "@/lib/domain/invoice-lines";
+import type { ProductSummary } from "@/lib/domain/catalog";
+import {
+  lineCorrectionSchema,
+  headerCorrectionSchema,
+  rejectInvoiceSchema,
+  type ReviewInvoiceInput,
+  type HeaderCorrectionInput,
+} from "@/lib/validation/invoices";
+import { Button } from "@/components/ui/button";
+import { Field, Input, Select } from "@/components/ui/field";
+import { NullValue } from "@/components/ui/null-value";
+import { StatusPill } from "@/components/ui/status-pill";
+import {
+  TableContainer,
+  Table,
+  TableCaption,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table";
+import { InvoiceExceptionBadges } from "@/components/office/invoice-exception-badges";
+import { computeLineAlerts } from "@/lib/invoice-line-alerts";
+import { InvoiceDuplicateNotice } from "@/components/office/invoice-duplicate-notice";
+import { buildRetryDuplicateView, type RetryDuplicateView } from "@/lib/invoice-duplicate-view";
+import { formatCostForInput, formatCalendarDate } from "@/lib/utils";
+
+/** One `corrections[]` entry, exactly as `reviewInvoiceSchema` (the SAME
+ * schema `reviewInvoiceAction` validates with) shapes it — see the header
+ * comment above. */
+type LineCorrectionInput = ReviewInvoiceInput["corrections"][number];
+
+const PACK_SIZE_MESSAGE = "Enter a whole number from 1 to 9999.";
+
+const UOM_LABEL: Record<InvoiceLineUom, string> = {
+  each: "Each",
+  case: "Case",
+  keg: "Keg",
+  other: "Other",
+};
+
+/** Only the reason textarea uses a raw element now — the three money fields
+ * below use the shared `Input` component (product-edit-form.tsx's own
+ * money-input convention: `inputMode="decimal"`, no `type` attribute). */
+const textareaClassName =
+  "min-h-tap-min w-full rounded-md border border-input bg-card px-3 py-2 text-body text-foreground placeholder:text-muted-foreground";
+
+interface LineFieldState {
+  rawGross: string;
+  rawDiscount: string;
+  rawNet: string;
+  matchedProductId: string;
+  /** Units per case as typed; "" is none. Only used on lines that show the input. */
+  packSize: string;
+}
+
+function initialFieldState(line: InvoiceLineRow): LineFieldState {
+  return {
+    rawGross: formatCostForInput(line.rawGross),
+    rawDiscount: formatCostForInput(line.rawDiscount),
+    rawNet: formatCostForInput(line.rawNet),
+    matchedProductId: line.matchedProductId == null ? "" : String(line.matchedProductId),
+    packSize: line.packSize == null ? "" : String(line.packSize),
+  };
+}
+
+const productLabel = productOptionLabel;
+
+/**
+ * Open item #32's fix: the six `REQUIRED_FOR_REVIEW` header columns
+ * (`lib/domain/invoices.ts`), editable inline the same way a line's
+ * Gross/Discount/Net cell is — see this component's header comment. Keys
+ * match `HeaderCorrectionInput` exactly so `HEADER_FIELD_KEYS` can drive both
+ * the render loop and the submit-time candidate object below.
+ */
+type HeaderFieldState = Record<keyof HeaderCorrectionInput, string>;
+
+const HEADER_FIELD_KEYS = [
+  "invoiceDate",
+  "invoiceNumber",
+  "totalGross",
+  "totalNet",
+  "currency",
+  "retentionUntil",
+] as const satisfies readonly (keyof HeaderCorrectionInput)[];
+
+const HEADER_FIELD_LABELS: Record<keyof HeaderCorrectionInput, string> = {
+  invoiceDate: "Invoice date",
+  invoiceNumber: "Invoice number",
+  totalGross: "Total gross",
+  totalNet: "Total net",
+  currency: "Currency",
+  retentionUntil: "Retain until",
+};
+
+/**
+ * Unlike `initialFieldState` (line corrections), a blank header field is NOT
+ * a rare edit case — it is the exact gap open item #32 exists to fix
+ * (extraction couldn't determine the field at all). A NULL column renders as
+ * an empty, clearly-editable input here, never a blank label that could read
+ * as "nothing to do" — see this component's header comment.
+ */
+function initialHeaderFieldState(invoice: InvoiceRow): HeaderFieldState {
+  return {
+    invoiceDate: invoice.invoiceDate ?? "",
+    invoiceNumber: invoice.invoiceNumber ?? "",
+    totalGross: formatCostForInput(invoice.totalGross),
+    totalNet: formatCostForInput(invoice.totalNet),
+    currency: initialCurrencyInput(invoice.currency),
+    retentionUntil: invoice.retentionUntil ?? "",
+  };
+}
+
+export function InvoiceReviewForm({
+  invoice,
+  lines,
+  products,
+  outcome = null,
+  canSeeCost,
+}: {
+  /** From the server page (`canSeeCost(role)`). The posting panel carries unit
+   * costs and is owner-only (invariant 8); the report action refuses anyone
+   * else regardless of this prop. */
+  canSeeCost: boolean;
+  invoice: InvoiceRow;
+  lines: InvoiceLineRow[];
+  products: ProductSummary[];
+  /** Newest extraction job's outcome; fetched for needs_review only. */
+  outcome?: InvoiceExtractionOutcome | null;
+}) {
+  const router = useRouter();
+
+  const orderedLines = useMemo(
+    () => [...lines].sort((a, b) => a.lineNumber - b.lineNumber),
+    [lines],
+  );
+  const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+
+  const [fields, setFields] = useState<Record<number, LineFieldState>>(() =>
+    Object.fromEntries(orderedLines.map((line) => [line.id, initialFieldState(line)])),
+  );
+  const [lineErrors, setLineErrors] = useState<
+    Record<number, Partial<Record<"rawGross" | "rawDiscount" | "rawNet" | "packSize", string>>>
+  >({});
+
+  const [headerFields, setHeaderFields] = useState<HeaderFieldState>(() =>
+    initialHeaderFieldState(invoice),
+  );
+  const [headerErrors, setHeaderErrors] = useState<
+    Partial<Record<keyof HeaderCorrectionInput, string>>
+  >({});
+
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [returning, setReturning] = useState(false);
+  const [reason, setReason] = useState("");
+  const [reasonError, setReasonError] = useState<string | null>(null);
+
+  const [approvingCosts, setApprovingCosts] = useState(false);
+
+  const editable = invoice.status === "needs_review";
+  const vendorNote = noVendorNote(invoice, editable);
+  const canReturn = invoice.status === "needs_review" || invoice.status === "reviewed";
+  const canRetry = invoice.status === "rejected";
+  const canApproveCosts = invoice.status === "reviewed";
+  const outcomeView = reviewOutcomeView(invoice.status, outcome);
+  // Stays true after a successful resend (the page re-renders as "processing"
+  // and unmounts this form); only a failure re-arms the button. A second click
+  // in the gap would otherwise hit a ConflictError.
+  const [retrying, setRetrying] = useState(false);
+  // The refusal renders right under the Retry button that was pressed.
+  const [retryRefusal, setRetryRefusal] = useState<{
+    view: RetryDuplicateView;
+    place: "panel" | "actions";
+  } | null>(null);
+
+  function updateField(lineId: number, key: keyof LineFieldState, value: string) {
+    setFields((prev) => ({ ...prev, [lineId]: { ...prev[lineId], [key]: value } }));
+  }
+
+  function updateHeaderField(key: keyof HeaderFieldState, value: string) {
+    setHeaderFields((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function handleApprove(event: React.FormEvent) {
+    event.preventDefault();
+    const corrections: LineCorrectionInput[] = [];
+    const nextLineErrors: typeof lineErrors = {};
+    let hasError = false;
+
+    for (const line of orderedLines) {
+      const state = fields[line.id];
+      // Blank field -> `null` (explicitly clears the column); a non-blank
+      // field is validated by `lineCorrectionSchema` itself — the SAME
+      // schema `reviewInvoiceAction` parses with, so this can never accept
+      // something the server would then reject (or vice versa).
+      // Units per case: always sent for a line that shows the input (a number,
+      // or null when blank), so a correction that carries a match never clears
+      // the alias's remembered value by omission. Typed text that is not a
+      // valid whole number goes through as NaN so the shared schema refuses it
+      // and the message shows on the line.
+      const packText = state.packSize.trim();
+      const packField = showsPackSizeInput(line)
+        ? { packSize: packText === "" ? null : (parsePackSizeInput(packText) ?? Number.NaN) }
+        : {};
+      const candidate = {
+        id: line.id,
+        ...packField,
+        rawGross: state.rawGross.trim() === "" ? null : state.rawGross.trim(),
+        rawDiscount: state.rawDiscount.trim() === "" ? null : state.rawDiscount.trim(),
+        rawNet: state.rawNet.trim() === "" ? null : state.rawNet.trim(),
+        matchedProductId: state.matchedProductId === "" ? null : Number(state.matchedProductId),
+      };
+      const parsed = lineCorrectionSchema.safeParse(candidate);
+      if (!parsed.success) {
+        const rowErrors: Partial<Record<"rawGross" | "rawDiscount" | "rawNet" | "packSize", string>> = {};
+        for (const issue of parsed.error.issues) {
+          const key = issue.path[0];
+          if (key === "rawGross" || key === "rawDiscount" || key === "rawNet") {
+            rowErrors[key] = issue.message;
+          } else if (key === "packSize") {
+            rowErrors.packSize = PACK_SIZE_MESSAGE;
+          }
+        }
+        nextLineErrors[line.id] = rowErrors;
+        hasError = true;
+        continue;
+      }
+      corrections.push(parsed.data);
+    }
+
+    // Open item #32: a blank header field means "leave this column alone"
+    // (headerCorrectionSchema has no null/clear case — see that schema's own
+    // comment), so a field is only included when the reviewer actually typed
+    // something into it. `headerCorrectionSchema` is the SAME schema
+    // `reviewInvoiceAction` validates with, so this can never accept
+    // something the server would then reject.
+    const headerCandidate: Record<string, string> = {};
+    for (const key of HEADER_FIELD_KEYS) {
+      const value = headerFields[key].trim();
+      if (value !== "") headerCandidate[key] = value;
+    }
+    const headerParsed = headerCorrectionSchema.safeParse(headerCandidate);
+    let headerCorrections: HeaderCorrectionInput | undefined;
+    if (!headerParsed.success) {
+      const nextHeaderErrors: typeof headerErrors = {};
+      for (const issue of headerParsed.error.issues) {
+        const key = issue.path[0];
+        if (typeof key === "string" && key in HEADER_FIELD_LABELS) {
+          nextHeaderErrors[key as keyof HeaderCorrectionInput] = issue.message;
+        }
+      }
+      setHeaderErrors(nextHeaderErrors);
+      hasError = true;
+    } else {
+      setHeaderErrors({});
+      headerCorrections =
+        Object.keys(headerParsed.data).length > 0 ? headerParsed.data : undefined;
+    }
+
+    setLineErrors(nextLineErrors);
+    if (hasError) {
+      setError("Some fields need attention before this can be approved.");
+      return;
+    }
+
+    setPending(true);
+    setError(null);
+    try {
+      const result = await reviewInvoiceAction({
+        invoiceId: invoice.id,
+        corrections,
+        headerCorrections,
+      });
+      setPending(false);
+      if (!result.ok) {
+        setError(result.error.message);
+        return;
+      }
+      router.refresh();
+    } catch {
+      setPending(false);
+      setError("Could not reach the server. Check your connection and try again.");
+    }
+  }
+
+  // No-arg, not a form `onSubmit` — this button lives inside the outer
+  // `<form onSubmit={handleApprove}>` (the "reviewed" status never renders
+  // `editable`, so that outer submit is a no-op for this status regardless,
+  // but a NESTED `<form>` here would be invalid HTML). `type="button"` plus
+  // `onClick` avoids that, matching the "Return" button a few lines below.
+  // Posting report, fetched on page load. `undefined` = loading, `null` =
+  // failed (plain message shown; no count is invented).
+  // Not fetched while the lines are editable: the panel then follows the form's
+  // own values, through the same classifier the server runs. Not fetched at all
+  // for a viewer who cannot see cost (invariant 8).
+  const [report, setReport] = useState<PostingReport | null | undefined>(undefined);
+  const showPostingPanel = canSeeCost && invoice.status !== "rejected";
+  const needsServerReport = showPostingPanel && !editable;
+  useEffect(() => {
+    if (!needsServerReport) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await getInvoicePostingReportAction({ invoiceId: invoice.id });
+        if (!cancelled) setReport(result.ok ? result.data : null);
+      } catch {
+        if (!cancelled) setReport(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [invoice.id, invoice.status, needsServerReport]);
+
+  const livePanel = useMemo(
+    () => (showPostingPanel && editable ? livePanelModel(orderedLines, fields) : null),
+    [showPostingPanel, editable, orderedLines, fields],
+  );
+  const serverPanel = report ? panelModelFromReport(report) : null;
+  const panel = editable ? livePanel : serverPanel;
+
+  async function handleApproveCosts() {
+    setApprovingCosts(true);
+    setError(null);
+    try {
+      const result = await approveInvoiceAction({ invoiceId: invoice.id });
+      setApprovingCosts(false);
+      if (!result.ok) {
+        setError(result.error.message);
+        return;
+      }
+      router.refresh();
+    } catch {
+      setApprovingCosts(false);
+      setError("Could not reach the server. Check your connection and try again.");
+    }
+  }
+
+  async function handleConfirmReturn(event: React.FormEvent) {
+    event.preventDefault();
+    const parsed = rejectInvoiceSchema.safeParse({ invoiceId: invoice.id, reason });
+    if (!parsed.success) {
+      setReasonError(parsed.error.issues[0]?.message ?? "Enter a reason.");
+      return;
+    }
+    setPending(true);
+    setError(null);
+    setReasonError(null);
+    try {
+      const result = await rejectInvoiceAction(parsed.data);
+      setPending(false);
+      if (!result.ok) {
+        setError(result.error.message);
+        return;
+      }
+      setReturning(false);
+      setReason("");
+      router.refresh();
+    } catch {
+      setPending(false);
+      setError("Could not reach the server. Check your connection and try again.");
+    }
+  }
+
+  async function handleRetry(event: React.FormEvent, place: "panel" | "actions") {
+    event.preventDefault();
+    if (retrying) return;
+    setRetrying(true);
+    setError(null);
+    setRetryRefusal(null);
+    try {
+      const result = await resendToExtractionAction({ invoiceId: invoice.id });
+      if (!result.ok) {
+        setRetrying(false);
+        setError(result.error.message);
+        return;
+      }
+      if (result.data.outcome === "duplicate") {
+        setRetrying(false);
+        setRetryRefusal({ view: buildRetryDuplicateView(result.data.duplicate, result.data.canOpen), place });
+        return;
+      }
+      router.refresh();
+    } catch {
+      setRetrying(false);
+      setError("Could not reach the server. Check your connection and try again.");
+    }
+  }
+
+  // 8 columns always render (Description, Qty, UOM, Pack, Units per case, Vendor code,
+  // Matched product, Gross/Discount/Net) — `editable` only changes what's
+  // rendered INSIDE the last two cells, never how many columns exist. A
+  // conditional count here previously gave the empty-lines row colSpan={6}
+  // against a 7-column table for any non-editable status.
+  const columnCount = 8;
+
+  // What the stored file actually is decides how the pane shows it (see
+  // `previewKind`): an <iframe> over a photo has no fit-to-width and is clumsy
+  // to pinch on a phone, over a stored .heic it is blank, and with no
+  // `filePath` it frames a route that 404s.
+  const fileUrl = `/api/invoices/${invoice.id}/file`;
+  const kind = previewKind(invoice.filePath);
+
+  return (
+    <div className="mt-6 flex flex-col gap-6">
+      {invoice.status === "reviewed" ? (
+        <p className="rounded-xl border border-warning/30 bg-warning-bg/80 p-3 text-caption text-warning backdrop-blur-md" role="status">
+          Reviewed — awaiting approval. Lines are locked; use Return below if this needs another
+          look before it&apos;s approved.
+        </p>
+      ) : null}
+      {invoice.status === "rejected" ? (
+        <p className="rounded-xl border border-negative/30 bg-negative-bg/80 p-3 text-caption text-negative backdrop-blur-md" role="status">
+          Returned for re-extraction. The lines below are from the last attempt, kept for
+          diagnosis — retry to run extraction again.
+        </p>
+      ) : null}
+      {invoice.status === "approved" ? (
+        <p className="rounded-xl border border-success/30 bg-success-bg/80 p-3 text-caption text-success backdrop-blur-md" role="status">
+          Approved. This is a permanent record and can no longer be changed here.
+        </p>
+      ) : null}
+
+      {outcomeView.showFailurePanel ? (
+        <div
+          className="flex flex-col gap-3 rounded-xl border-2 border-negative bg-negative-bg p-card-pad"
+          role="alert"
+        >
+          <h2 className="text-label uppercase font-semibold text-negative">Extraction failed</h2>
+          <p className="text-row-title text-foreground">{outcomeView.failureMessage}</p>
+          {outcomeView.canRetryNow ? (
+            <form method="post" onSubmit={(event) => handleRetry(event, "panel")}>
+              <Button type="submit" size="primary" disabled={retrying || pending} className="w-fit font-semibold shadow-xs">
+                {retrying ? "Retrying…" : "Retry extraction"}
+              </Button>
+            </form>
+          ) : null}
+          {retryRefusal?.place === "panel" ? <InvoiceDuplicateNotice view={retryRefusal.view} /> : null}
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Left Column: Document Viewer Pane (Sticky on desktop) */}
+        <div className="lg:col-span-5 flex flex-col gap-4">
+          <div className="rounded-xl border border-border/80 bg-card/85 backdrop-blur-md p-4 shadow-xs lg:sticky lg:top-20">
+            <div className="flex items-center justify-between pb-3 border-b border-border/80">
+              <div className="flex items-center gap-2">
+                <FileText className="size-4 text-accent" aria-hidden="true" />
+                <h2 className="text-label uppercase text-muted-foreground font-semibold">
+                  Source Document Preview
+                </h2>
+              </div>
+              {kind !== "none" ? (
+                <a
+                  href={fileUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-caption text-accent font-semibold hover:underline"
+                >
+                  Open file <ExternalLink className="size-3.5" aria-hidden="true" />
+                </a>
+              ) : null}
+            </div>
+            {kind === "pdf" ? (
+              <div className="mt-3 overflow-hidden rounded-lg border border-border/80 bg-muted/30 w-full h-[650px]">
+                <iframe
+                  src={fileUrl}
+                  title={`Source Invoice Document #${invoice.id}`}
+                  className="h-full w-full border-0"
+                />
+              </div>
+            ) : kind === "image" ? (
+              // Same fixed-height pane as the PDF, but scrolling: a tall
+              // receipt photo fits the pane width and scrolls inside it
+              // rather than stretching the page. "Open file" is the
+              // full-size, pinch-zoomable view.
+              <div className="mt-3 overflow-auto rounded-lg border border-border/80 bg-muted/30 w-full h-[650px]">
+                {/* A plain <img>: next.config sets `images.unoptimized`, so
+                    next/image would add a wrapper and required dimensions for
+                    no optimisation, on a file whose size we don't know. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={fileUrl}
+                  alt={`Source invoice photo #${invoice.id}`}
+                  className="h-auto w-full object-contain"
+                />
+              </div>
+            ) : (
+              <p className="mt-3 rounded-lg border border-border/80 bg-muted/30 p-4 text-caption text-muted-foreground">
+                {kind === "unsupported"
+                  ? "This file type can't be previewed here."
+                  : "No file is stored for this invoice."}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Right Column: Extracted Ledger & Review Actions */}
+        <div className="lg:col-span-7 flex flex-col gap-6">
+          <form method="post" onSubmit={editable ? handleApprove : (e) => e.preventDefault()} className="flex flex-col gap-6">
+            <div className="rounded-xl border border-border/80 bg-card/85 backdrop-blur-md p-card-pad shadow-xs">
+              <h2 className="mb-3 text-label uppercase text-muted-foreground font-semibold">Invoice Details</h2>
+              {editable ? (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  <Field
+                    label={HEADER_FIELD_LABELS.invoiceDate}
+                    htmlFor="header-invoiceDate"
+                    error={headerErrors.invoiceDate}
+                  >
+                    <Input
+                      id="header-invoiceDate"
+                      type="date"
+                      value={headerFields.invoiceDate}
+                      onChange={(e) => updateHeaderField("invoiceDate", e.target.value)}
+                      className="w-full"
+                    />
+                  </Field>
+                  <Field
+                    label={HEADER_FIELD_LABELS.invoiceNumber}
+                    htmlFor="header-invoiceNumber"
+                    error={headerErrors.invoiceNumber}
+                  >
+                    <Input
+                      id="header-invoiceNumber"
+                      value={headerFields.invoiceNumber}
+                      onChange={(e) => updateHeaderField("invoiceNumber", e.target.value)}
+                      placeholder="Not entered"
+                      className="w-full"
+                    />
+                  </Field>
+                  <Field
+                    label={HEADER_FIELD_LABELS.totalGross}
+                    htmlFor="header-totalGross"
+                    error={headerErrors.totalGross}
+                  >
+                    <Input
+                      id="header-totalGross"
+                      inputMode="decimal"
+                      value={headerFields.totalGross}
+                      onChange={(e) => updateHeaderField("totalGross", e.target.value)}
+                      placeholder="0.00"
+                      className="w-full"
+                    />
+                  </Field>
+                  <Field
+                    label={HEADER_FIELD_LABELS.totalNet}
+                    htmlFor="header-totalNet"
+                    error={headerErrors.totalNet}
+                  >
+                    <Input
+                      id="header-totalNet"
+                      inputMode="decimal"
+                      value={headerFields.totalNet}
+                      onChange={(e) => updateHeaderField("totalNet", e.target.value)}
+                      placeholder="0.00"
+                      className="w-full"
+                    />
+                  </Field>
+                  <Field
+                    label={HEADER_FIELD_LABELS.currency}
+                    htmlFor="header-currency"
+                    error={headerErrors.currency}
+                    hint="3-letter code, e.g. USD"
+                  >
+                    <Input
+                      id="header-currency"
+                      value={headerFields.currency}
+                      onChange={(e) => updateHeaderField("currency", e.target.value.toUpperCase())}
+                      maxLength={3}
+                      className="w-full uppercase"
+                    />
+                  </Field>
+                  <Field
+                    label={HEADER_FIELD_LABELS.retentionUntil}
+                    htmlFor="header-retentionUntil"
+                    error={headerErrors.retentionUntil}
+                    hint="Auto-fills from date if blank"
+                  >
+                    <Input
+                      id="header-retentionUntil"
+                      type="date"
+                      value={headerFields.retentionUntil}
+                      onChange={(e) => updateHeaderField("retentionUntil", e.target.value)}
+                      className="w-full"
+                    />
+                  </Field>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+                  {HEADER_FIELD_KEYS.map((key) => {
+                    const raw = invoice[key];
+                    const display =
+                      raw == null
+                        ? null
+                        : key === "invoiceDate" || key === "retentionUntil"
+                          ? formatCalendarDate(raw)
+                          : key === "totalGross" || key === "totalNet"
+                            ? formatCostForInput(raw)
+                            : raw;
+                    return (
+                      <div key={key} className="flex flex-col gap-1">
+                        <span className="text-label uppercase text-muted-foreground font-semibold">
+                          {HEADER_FIELD_LABELS[key]}
+                        </span>
+                        <span className="text-body font-medium text-card-foreground">
+                          {display ?? <NullValue reason="not-entered" />}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {vendorNote ? (
+              <p className="text-body text-warning" role="status">
+                {vendorNote}
+              </p>
+            ) : null}
+
+            <TableContainer className="glass-card">
+              <Table>
+                <TableCaption>
+                  Invoice {invoice.invoiceNumber ?? `#${invoice.id}`} lines, {orderedLines.length} total
+                </TableCaption>
+                <TableHeader>
+                  <TableRow interactive={false}>
+                    <TableHead>Description</TableHead>
+                    <TableHead numeric>Qty</TableHead>
+                    <TableHead>UOM</TableHead>
+                    <TableHead>Pack</TableHead>
+                    <TableHead>Units per case</TableHead>
+                    <TableHead>Vendor code</TableHead>
+                    <TableHead>Matched product</TableHead>
+                    <TableHead>Gross / Discount / Net</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {orderedLines.length === 0 ? (
+                    <tr>
+                      <td colSpan={columnCount}>
+                        <p className="py-section-gap text-center text-row-subtitle text-muted-foreground">
+                          {outcomeView.showFailurePanel
+                            ? "No lines. See the failure above."
+                            : "No lines were extracted from this document."}
+                        </p>
+                      </td>
+                    </tr>
+                  ) : (
+                    orderedLines.map((line) => {
+                      const state = fields[line.id];
+                      const rowErrors = lineErrors[line.id];
+                      const matchedProduct =
+                        line.matchedProductId != null ? productById.get(line.matchedProductId) : undefined;
+                      // Follows the dropdown while editing, so the warning appears
+                      // the moment the reviewer picks a different size.
+                      const sizeWarning = lineSizeWarning(
+                        line,
+                        editable
+                          ? state.matchedProductId === ""
+                            ? undefined
+                            : productById.get(Number(state.matchedProductId))
+                          : matchedProduct,
+                      );
+                      const lineAlerts = computeLineAlerts(
+                        editable ? state.rawGross : line.rawGross,
+                        editable ? state.rawDiscount : line.rawDiscount,
+                        editable ? state.rawNet : line.rawNet,
+                      );
+                      const rememberedText = rememberedMatchText(
+                        line,
+                        editable ? state.matchedProductId : String(line.matchedProductId ?? ""),
+                        products,
+                      );
+                      return (
+                        <TableRow key={line.id} interactive={false} className="align-top">
+                          <TableCell>
+                            {/* The table is min-w-max, so a long sentence here used to
+                                widen the column off-screen and read as clipped on a
+                                phone. A capped width makes it wrap instead. */}
+                            <div className="flex w-64 max-w-[70vw] flex-col gap-1.5 whitespace-normal">
+                              <span className="font-medium">
+                                {line.description ?? <NullValue reason="not-entered" />}
+                              </span>
+                              <InvoiceExceptionBadges flags={line.exceptionFlags} />
+                              {rememberedText ? (
+                                <div className="flex flex-wrap gap-1.5">
+                                  <StatusPill
+                                    tone="neutral"
+                                    className="max-w-full whitespace-normal break-words rounded-lg normal-case"
+                                  >
+                                    {rememberedText}
+                                  </StatusPill>
+                                </div>
+                              ) : null}
+                              {sizeWarning ? (
+                                <p className="text-caption text-warning" role="status">
+                                  {sizeWarning}
+                                </p>
+                              ) : null}
+                              {lineAlerts.length > 0 ? (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {lineAlerts.map((alert) => (
+                                    <StatusPill key={alert.key} tone={alert.tone}>
+                                      {alert.label}
+                                    </StatusPill>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          </TableCell>
+                          <TableCell numeric className="text-muted-foreground tabular-nums">
+                            {line.quantity ?? <NullValue reason="not-entered" />}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {line.uom ? UOM_LABEL[line.uom] : <NullValue reason="not-entered" />}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {line.packDescription ?? <NullValue reason="not-entered" />}
+                          </TableCell>
+                          <TableCell>
+                            {showsPackSizeInput(line) ? (
+                              editable ? (
+                                <div className="flex w-28 flex-col gap-1">
+                                  <Input
+                                    id={`line-${line.id}-pack-size`}
+                                    aria-label={`Units per case for line ${line.lineNumber}`}
+                                    aria-invalid={rowErrors?.packSize ? true : undefined}
+                                    aria-describedby={
+                                      rowErrors?.packSize ? `line-${line.id}-pack-size-error` : undefined
+                                    }
+                                    inputMode="numeric"
+                                    value={state.packSize}
+                                    onChange={(e) => updateField(line.id, "packSize", e.target.value)}
+                                    placeholder="?"
+                                    className="min-h-9 w-full"
+                                  />
+                                  {rowErrors?.packSize ? (
+                                    <p
+                                      id={`line-${line.id}-pack-size-error`}
+                                      className="whitespace-normal text-caption text-negative"
+                                      role="alert"
+                                    >
+                                      {rowErrors.packSize}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              ) : (
+                                <span className="tabular-nums text-card-foreground">
+                                  {line.packSize ?? <NullValue reason="not-entered" />}
+                                </span>
+                              )
+                            ) : (
+                              <span className="tabular-nums text-muted-foreground">
+                                {line.uom === "each" || line.uom === "keg" ? "1" : "—"}
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {line.vendorItemCode ?? <NullValue reason="not-entered" />}
+                          </TableCell>
+                          <TableCell>
+                            {editable ? (
+                              <Select
+                                aria-label={`Matched product for line ${line.lineNumber}`}
+                                value={state.matchedProductId}
+                                onChange={(e) => updateField(line.id, "matchedProductId", e.target.value)}
+                                className="min-w-[12rem]"
+                              >
+                                <option value="">Not matched</option>
+                                {products.map((product) => (
+                                  <option key={product.id} value={product.id}>
+                                    {productLabel(product)}
+                                  </option>
+                                ))}
+                              </Select>
+                            ) : matchedProduct ? (
+                              <span className="font-medium">{productLabel(matchedProduct)}</span>
+                            ) : (
+                              <NullValue reason="not-entered" />
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {editable ? (
+                              <div className="grid grid-cols-3 gap-2">
+                                <Field
+                                  label="Gross"
+                                  htmlFor={`line-${line.id}-gross`}
+                                  error={rowErrors?.rawGross}
+                                  className="gap-1"
+                                >
+                                  <Input
+                                    id={`line-${line.id}-gross`}
+                                    inputMode="decimal"
+                                    value={state.rawGross}
+                                    onChange={(e) => updateField(line.id, "rawGross", e.target.value)}
+                                    placeholder="0.00"
+                                    className="min-h-9 w-full"
+                                  />
+                                </Field>
+                                <Field
+                                  label="Discount"
+                                  htmlFor={`line-${line.id}-discount`}
+                                  error={rowErrors?.rawDiscount}
+                                  className="gap-1"
+                                >
+                                  <Input
+                                    id={`line-${line.id}-discount`}
+                                    inputMode="decimal"
+                                    value={state.rawDiscount}
+                                    onChange={(e) => updateField(line.id, "rawDiscount", e.target.value)}
+                                    placeholder="0.00"
+                                    className="min-h-9 w-full"
+                                  />
+                                </Field>
+                                <Field
+                                  label="Net"
+                                  htmlFor={`line-${line.id}-net`}
+                                  error={rowErrors?.rawNet}
+                                  className="gap-1"
+                                >
+                                  <Input
+                                    id={`line-${line.id}-net`}
+                                    inputMode="decimal"
+                                    value={state.rawNet}
+                                    onChange={(e) => updateField(line.id, "rawNet", e.target.value)}
+                                    placeholder="0.00"
+                                    className="min-h-9 w-full"
+                                  />
+                                </Field>
+                              </div>
+                            ) : (
+                              <span className="tabular-nums text-card-foreground font-semibold">
+                                {formatCostForInput(line.rawGross) || "—"} /{" "}
+                                {formatCostForInput(line.rawDiscount) || "—"} /{" "}
+                                {formatCostForInput(line.rawNet) || "—"}
+                              </span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+
+            {error ? (
+              <p className="rounded-xl border border-negative/30 bg-negative-bg/80 p-3 text-caption text-negative backdrop-blur-md" role="alert">
+                {error}{" "}
+                <button
+                  type="button"
+                  onClick={() => router.refresh()}
+                  className="font-semibold underline"
+                >
+                  Reload this invoice
+                </button>
+              </p>
+            ) : null}
+
+            {showPostingPanel ? (
+              <div
+                className={`flex flex-col gap-2 rounded-xl border p-3 ${
+                  panel && panel.skipped.length > 0 ? "border-warning/50" : "border-border/80"
+                } bg-card/85`}
+                role="status"
+              >
+                <p className="text-body font-semibold">
+                  {editable
+                    ? panel
+                      ? postingHeadline(panel.postedLines, panel.totalLines, false)
+                      : null
+                    : report === undefined
+                      ? "Checking which lines will post…"
+                      : report === null
+                        ? "Could not load the posting count. Reload the page to try again."
+                        : postingHeadline(report.postedLines, report.totalLines, report.final)}
+                </p>
+                {panel && panel.skipped.length > 0 ? (
+                  <ul className="flex list-disc flex-col gap-1 pl-5 text-caption text-foreground">
+                    {panel.skipped.map((s) => (
+                      <li key={s.lineNumber}>
+                        {describeSkipReason(s.reason, s.lineNumber)}
+                        {s.description ? (
+                          <span className="text-muted-foreground"> ({s.description})</span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+
+            {editable || canReturn || canApproveCosts ? (
+              <div className="flex flex-wrap items-center gap-3">
+                {editable ? (
+                  <Button
+                    type="submit"
+                    size="primary"
+                    disabled={pending || retrying || outcomeView.approveBlockedReason != null}
+                    className="font-semibold shadow-xs"
+                  >
+                    {pending ? "Approving…" : "Approve"}
+                  </Button>
+                ) : null}
+                {editable && outcomeView.approveBlockedReason ? (
+                  <p className="w-full text-caption text-negative" role="status">
+                    {outcomeView.approveBlockedReason}
+                  </p>
+                ) : null}
+                {canApproveCosts ? (
+                  <Button
+                    type="button"
+                    size="primary"
+                    disabled={pending || approvingCosts}
+                    onClick={handleApproveCosts}
+                    className="font-semibold shadow-xs"
+                  >
+                    {approvingCosts ? "Posting costs…" : "Approve & post costs"}
+                  </Button>
+                ) : null}
+                {canReturn ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="primary"
+                    disabled={pending || approvingCosts}
+                    onClick={() => setReturning(true)}
+                  >
+                    Return
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+          </form>
+
+          {returning ? (
+            <form
+              method="post"
+              onSubmit={handleConfirmReturn}
+              className="flex flex-col gap-3 rounded-xl border border-border/80 bg-card/85 backdrop-blur-md p-card-pad shadow-xs"
+            >
+              <h2 className="text-label uppercase text-muted-foreground font-semibold">
+                Return {invoice.invoiceNumber ?? `invoice #${invoice.id}`} for re-extraction
+              </h2>
+              <Field
+                label="Reason"
+                htmlFor="reject-reason"
+                error={reasonError ?? undefined}
+                hint="Recorded on the invoice. Required."
+              >
+                <textarea
+                  id="reject-reason"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  rows={3}
+                  className={textareaClassName}
+                />
+              </Field>
+              <div className="flex flex-wrap gap-3">
+                <Button type="submit" variant="destructive" size="tap" disabled={pending}>
+                  {pending ? "Returning…" : "Confirm return"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="tap"
+                  disabled={pending}
+                  onClick={() => {
+                    setReturning(false);
+                    setReason("");
+                    setReasonError(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          ) : null}
+
+          {canRetry ? (
+            <form method="post" onSubmit={(event) => handleRetry(event, "actions")} className="flex flex-col gap-3">
+              <Button type="submit" size="primary" disabled={pending || retrying} className="w-fit font-semibold shadow-xs">
+                {retrying ? "Retrying…" : "Retry extraction"}
+              </Button>
+            </form>
+          ) : null}
+          {retryRefusal?.place === "actions" ? <InvoiceDuplicateNotice view={retryRefusal.view} /> : null}
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -34,3 +34,25 @@ without being asked — that's a bigger, riskier side quest (getting a closed
 count's invariants right by hand) than the accessibility/UI fix usually
 being verified, and the script already flags the gap honestly instead of
 hiding it.
+
+**A stronger version of the same gap shows up as red `FAIL`, not `SKIP`, on
+a completely bare database.** Running the script against a freshly
+`db:migrate`'d + `db:seed`'d database (catalog/locations/products only, zero
+`count`/`count_line` rows — 2026-08-15, Phase 2.5 Slice 3 verification in an
+isolated docker stack) fails two unrelated Phase-2 catalog checks every time:
+"a product with no par level renders NO stock bar" (`0 rows show a unit
+count` — the on-hand cell has nothing to render because no count was ever
+recorded, not because the stock-bar logic is broken) and "sorting actually
+reorders the rows" (`first row before="1800 Silver" after="1800 Silver"` — a
+sort on a column where every row ties at 0 is legitimately a no-op). Both
+reproduced identically across two full back-to-back runs, and a `git diff
+--stat` on the script showed a pure insertion (0 deletions) for the
+unrelated change under test, which is what confirmed these were pre-existing
+data gaps rather than a regression. **How to apply:** before reporting any
+`verify:browser` `FAIL` as a real defect, check whether it's actually a
+catalog-display check that needs at least one recorded count line to render
+anything meaningful — a bare `db:seed` never creates one. Re-running the
+script twice back-to-back and diffing the FAIL lines (should be byte-identical)
+is a fast, cheap way to distinguish "pre-existing data gap" from "my change
+broke something," without needing to seed a full count session just to
+verify an unrelated feature.

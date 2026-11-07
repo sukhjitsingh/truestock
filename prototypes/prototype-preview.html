@@ -1,0 +1,1758 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Truestock — Complete Dual-Surface Prototype (All Codebase Screens)</title>
+<style>
+  :root {
+    --radius: 1rem;
+    --background: #f8fafc;
+    --foreground: #0f172a;
+    --card: #ffffff;
+    --card-foreground: #0f172a;
+    --popover: #ffffff;
+    --popover-foreground: #0f172a;
+    --primary: #0f172a;
+    --primary-foreground: #ffffff;
+    --secondary: #f1f5f9;
+    --secondary-foreground: #0f172a;
+    --muted: #f1f5f9;
+    --muted-foreground: #64748b;
+    --accent: #2563eb;
+    --accent-foreground: #ffffff;
+    --destructive: #dc2626;
+    --destructive-foreground: #ffffff;
+    --success: #16a34a;
+    --success-bg: #dcfce7;
+    --warning: #d97706;
+    --warning-bg: #fef3c7;
+    --negative: #e11d48;
+    --negative-bg: #ffe4e6;
+    --border: #e2e8f0;
+    --input: #94a3b8;
+    --ring: #2563eb;
+    --header: #ffffff;
+    --header-foreground: #0f172a;
+
+    --glass-bg: rgba(255, 255, 255, 0.85);
+    --glass-bg-subtle: rgba(248, 250, 252, 0.7);
+    --glass-border: rgba(226, 232, 240, 0.8);
+    --glass-border-highlight: rgba(255, 255, 255, 1);
+    --glass-header: rgba(255, 255, 255, 0.92);
+    --glass-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05), 0 2px 6px -1px rgba(0, 0, 0, 0.03);
+
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+    --radius-full: 9999px;
+
+    --card-gap: 0.75rem;
+    --card-pad: 1rem;
+    --bar-pad: 1rem;
+    --section-gap: 1.5rem;
+    --tap-min: 2.75rem;
+    --tap-primary: 3.5rem;
+    --action-bar: 5.5rem;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  .dark {
+    --background: #08090a;
+    --foreground: #f8fafc;
+    --card: #131418;
+    --card-foreground: #f8fafc;
+    --popover: #131418;
+    --popover-foreground: #f8fafc;
+    --primary: #f8fafc;
+    --primary-foreground: #08090a;
+    --secondary: #1a1c22;
+    --secondary-foreground: #f8fafc;
+    --muted: #121317;
+    --muted-foreground: #94a3b8;
+    --accent: #60a5fa;
+    --accent-foreground: #08090a;
+    --destructive: #f87171;
+    --destructive-foreground: #ffffff;
+    --success: #4ade80;
+    --success-bg: rgba(74, 222, 128, 0.12);
+    --warning: #fbbf24;
+    --warning-bg: rgba(251, 191, 36, 0.12);
+    --negative: #fb7185;
+    --negative-bg: rgba(251, 113, 133, 0.12);
+    --border: rgba(255, 255, 255, 0.08);
+    --input: #64748b;
+    --ring: #60a5fa;
+    --header: #0e0f13;
+    --header-foreground: #f8fafc;
+
+    --glass-bg: rgba(19, 20, 25, 0.72);
+    --glass-bg-subtle: rgba(14, 15, 19, 0.5);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --glass-border-highlight: rgba(255, 255, 255, 0.14);
+    --glass-header: rgba(14, 15, 19, 0.85);
+    --glass-shadow: 0 12px 36px 0 rgba(0, 0, 0, 0.6);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px 12px 60px;
+    transition: background 0.25s ease, color 0.25s ease;
+  }
+
+  .flex { display: flex; }
+  .inline-flex { display: inline-flex; }
+  .grid { display: grid; }
+  .flex-col { flex-direction: column; }
+  .flex-1 { flex: 1 1 0%; }
+  .shrink-0 { flex-shrink: 0; }
+  .min-w-0 { min-width: 0; }
+  .items-center { align-items: center; }
+  .items-start { align-items: flex-start; }
+  .items-baseline { align-items: baseline; }
+  .justify-between { justify-content: space-between; }
+  .justify-center { justify-content: center; }
+  .flex-wrap { flex-wrap: wrap; }
+  .text-center { text-align: center; }
+  .text-right { text-align: right; }
+  .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .uppercase { text-transform: uppercase; }
+  .relative { position: relative; }
+  .w-full { width: 100%; }
+
+  .gap-1 { gap: 0.25rem; }
+  .gap-1_5 { gap: 0.375rem; }
+  .gap-2 { gap: 0.5rem; }
+  .gap-3 { gap: 0.75rem; }
+  .gap-4 { gap: 1rem; }
+  .gap-card-gap { gap: var(--card-gap); }
+
+  .p-2 { padding: 0.5rem; }
+  .p-3 { padding: 0.75rem; }
+  .p-4 { padding: 1rem; }
+  .p-card-pad { padding: var(--card-pad); }
+  .p-bar-pad { padding: var(--bar-pad); }
+  .px-3 { padding-inline: 0.75rem; }
+  .px-4 { padding-inline: 1rem; }
+  .px-bar-pad { padding-inline: var(--bar-pad); }
+  .py-1 { padding-block: 0.25rem; }
+  .py-1_5 { padding-block: 0.375rem; }
+  .py-2 { padding-block: 0.5rem; }
+  .pt-4 { padding-top: 1rem; }
+  .pt-5 { padding-top: 1.25rem; }
+  .pt-6 { padding-top: 1.5rem; }
+  .pb-6 { padding-bottom: 1.5rem; }
+  .pb-8 { padding-bottom: 2rem; }
+  .mt-1 { margin-top: 0.25rem; }
+  .mt-2 { margin-top: 0.5rem; }
+  .mt-3 { margin-top: 0.75rem; }
+  .mt-4 { margin-top: 1rem; }
+  .mt-section-gap { margin-top: var(--section-gap); }
+  .mb-2 { margin-bottom: 0.5rem; }
+  .mb-3 { margin-bottom: 0.75rem; }
+  .mb-4 { margin-bottom: 1rem; }
+
+  .rounded-sm { border-radius: var(--radius-sm); }
+  .rounded-md { border-radius: var(--radius-md); }
+  .rounded-lg { border-radius: var(--radius-lg); }
+  .rounded-xl { border-radius: var(--radius-xl); }
+  .rounded-full { border-radius: var(--radius-full); }
+  .rounded-b-xl { border-bottom-left-radius: var(--radius-xl); border-bottom-right-radius: var(--radius-xl); }
+
+  .border { border: 1px solid var(--border); }
+  .border-input { border: 1px solid var(--input); }
+  .border-t { border-top: 1px solid var(--border); }
+  .border-b { border-bottom: 1px solid var(--border); }
+  .border-r { border-right: 1px solid var(--border); }
+
+  .size-3 { width: 0.75rem; height: 0.75rem; }
+  .size-3_5 { width: 0.875rem; height: 0.875rem; }
+  .size-4 { width: 1rem; height: 1rem; }
+  .size-5 { width: 1.25rem; height: 1.25rem; }
+  .size-6 { width: 1.5rem; height: 1.5rem; }
+  .size-8 { width: 2rem; height: 2rem; }
+  .size-11 { width: 2.75rem; height: 2.75rem; }
+  .size-16 { width: 4rem; height: 4rem; }
+  .size-tap-min { width: var(--tap-min); height: var(--tap-min); }
+  .min-h-tap-min { min-height: var(--tap-min); }
+  .min-h-tap-primary { min-height: var(--tap-primary); }
+  .h-tap-min { height: var(--tap-min); }
+
+  .bg-background { background: var(--background); }
+  .bg-card { background: var(--card); }
+  .bg-muted { background: var(--muted); }
+  .bg-primary { background: var(--primary); }
+  .bg-secondary { background: var(--secondary); }
+  .bg-accent { background: var(--accent); }
+  .bg-header { background: var(--header); }
+  .bg-success-bg { background: var(--success-bg); }
+  .bg-warning-bg { background: var(--warning-bg); }
+  .bg-negative-bg { background: var(--negative-bg); }
+
+  .text-foreground { color: var(--foreground); }
+  .text-card-foreground { color: var(--card-foreground); }
+  .text-muted-foreground { color: var(--muted-foreground); }
+  .text-primary-foreground { color: var(--primary-foreground); }
+  .text-accent { color: var(--accent); }
+  .text-header-foreground { color: var(--header-foreground); }
+  .text-success { color: var(--success); }
+  .text-warning { color: var(--warning); }
+  .text-negative { color: var(--negative); }
+  .font-semibold { font-weight: 600; }
+  .font-bold { font-weight: 700; }
+  .tabular-nums { font-variant-numeric: tabular-nums; }
+
+  /* Type Scale */
+  .text-numeral-lg { font-size: 2.75rem; line-height: 1; font-weight: 700; }
+  .text-header-title { font-size: 1.75rem; line-height: 1.15; font-weight: 600; letter-spacing: -0.02em; }
+  .text-numeral-md { font-size: 1.5rem; line-height: 1.1; font-weight: 600; }
+  .text-row-title { font-size: 1.125rem; line-height: 1.3; font-weight: 600; letter-spacing: -0.01em; }
+  .text-numeral-sm { font-size: 1.0625rem; line-height: 1.2; font-weight: 600; }
+  .text-row-subtitle { font-size: 0.9375rem; line-height: 1.4; font-weight: 400; }
+  .text-body { font-size: 1rem; line-height: 1.5; font-weight: 400; }
+  .text-screen-title { font-size: 0.8125rem; line-height: 1.2; font-weight: 600; letter-spacing: 0.06em; }
+  .text-caption { font-size: 0.8125rem; line-height: 1.4; font-weight: 400; }
+  .text-label { font-size: 0.6875rem; line-height: 1.2; font-weight: 600; letter-spacing: 0.06em; }
+
+  .proto-harness {
+    width: 100%;
+    max-width: 1180px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .proto-toolbar {
+    width: 100%;
+    background: var(--glass-header);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 14px 18px;
+    margin-bottom: 24px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    box-shadow: var(--glass-shadow);
+  }
+
+  .proto-btn {
+    background: var(--secondary);
+    color: var(--foreground);
+    border: 1px solid var(--border);
+    padding: 7px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .proto-btn:hover { background: var(--muted); border-color: var(--input); }
+  .proto-btn.active {
+    background: var(--accent);
+    color: #ffffff;
+    border-color: var(--accent);
+    box-shadow: 0 0 14px rgba(37, 99, 235, 0.35);
+  }
+
+  .surface-toggle-group {
+    display: inline-flex;
+    background: var(--muted);
+    padding: 3px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+  }
+  .surface-toggle-btn {
+    padding: 6px 14px;
+    border-radius: calc(var(--radius-md) - 3px);
+    font-size: 12px;
+    font-weight: 600;
+    border: none;
+    background: transparent;
+    color: var(--muted-foreground);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .surface-toggle-btn.active {
+    background: var(--card);
+    color: var(--card-foreground);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  }
+
+  .sub-nav-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+    margin-bottom: 20px;
+    justify-content: center;
+  }
+
+  .device-stage-container {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+  }
+
+  .device-shell {
+    position: relative;
+    width: 390px;
+    height: 844px;
+    background: var(--background);
+    border-radius: 54px;
+    box-shadow: 0 35px 80px -15px rgba(0,0,0,0.8), 0 0 0 12px #18191d, 0 0 0 14px rgba(255, 255, 255, 0.12);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+
+  .device-status-bar {
+    height: 48px;
+    flex-shrink: 0;
+    background: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 24px 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--foreground);
+    z-index: 90;
+    user-select: none;
+  }
+
+  .device-island {
+    width: 110px;
+    height: 28px;
+    background: #000;
+    border-radius: var(--radius-full);
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 10px;
+  }
+  .device-island-lens {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #111827;
+    border: 1px solid #1f2937;
+  }
+
+  .device-viewport {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--background);
+    color: var(--foreground);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .screen-pane {
+    display: none;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+  }
+  .screen-pane.active {
+    display: flex;
+  }
+
+  .screen-header-bar {
+    flex-shrink: 0;
+    min-height: 56px;
+    border-bottom: 1px solid var(--glass-border);
+    background: var(--glass-header);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    z-index: 40;
+  }
+
+  .screen-scroll-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 16px 16px 24px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .screen-bottom-tabs {
+    flex-shrink: 0;
+    height: 66px;
+    border-top: 1px solid var(--glass-border);
+    background: var(--glass-header);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    align-items: center;
+    z-index: 50;
+    padding-bottom: 8px;
+    box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.1);
+  }
+
+  .screen-action-bar {
+    flex-shrink: 0;
+    min-height: 84px;
+    border-top: 1px solid var(--glass-border);
+    background: var(--glass-header);
+    backdrop-filter: blur(24px) saturate(190%);
+    -webkit-backdrop-filter: blur(24px) saturate(190%);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px 20px;
+    z-index: 50;
+    box-shadow: 0 -8px 25px rgba(0,0,0,0.15);
+  }
+
+  .tab-touch-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-height: var(--tap-min);
+    color: var(--muted-foreground);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .tab-touch-btn.active {
+    color: var(--foreground);
+  }
+  .tab-touch-btn.active svg {
+    stroke: var(--accent);
+    stroke-width: 2.5;
+  }
+
+  .glass-card {
+    background: var(--glass-bg);
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    padding: var(--card-pad);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-shadow: var(--glass-shadow);
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    cursor: pointer;
+  }
+  .glass-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+  }
+  .glass-card:active {
+    transform: scale(0.985);
+  }
+
+  .header-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 36px;
+    min-height: 36px;
+    border-radius: var(--radius-md);
+    background: var(--primary);
+    color: var(--primary-foreground);
+    border: 1px solid var(--border);
+    padding: 0 13px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+  }
+
+  .search-bar-container {
+    position: relative;
+    display: flex;
+    align-items: center;
+    height: 48px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    padding: 0 12px;
+    gap: 10px;
+    transition: all 0.2s ease;
+  }
+  .search-bar-container:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  .search-input-field {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--foreground);
+    font-size: 14px;
+    font-family: inherit;
+  }
+  .search-scan-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    cursor: pointer;
+  }
+
+  .filter-carousel {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 4px 0 10px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .filter-carousel::-webkit-scrollbar { display: none; }
+
+  .filter-chip-btn {
+    flex-shrink: 0;
+    height: 34px;
+    padding: 0 14px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--muted-foreground);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+  }
+  .filter-chip-btn.active {
+    background: var(--primary);
+    color: var(--primary-foreground);
+    border-color: var(--primary);
+  }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+  .form-input {
+    height: 46px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--foreground);
+    padding: 0 14px;
+    font-size: 15px;
+    outline: none;
+    font-family: inherit;
+  }
+  .form-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+
+  .tenths-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    margin: 12px 0;
+  }
+
+  .tenths-key {
+    min-height: 52px;
+    border-radius: var(--radius-md);
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--card-foreground);
+    font-size: 1.125rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.1s ease;
+  }
+  .tenths-key:active { transform: scale(0.94); }
+  .tenths-key.selected {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    box-shadow: 0 0 14px rgba(96, 165, 250, 0.4);
+  }
+
+  .liquid-bottle-vial {
+    width: 44px;
+    height: 110px;
+    border: 2px solid var(--border);
+    border-radius: 8px 8px 14px 14px;
+    background: var(--muted);
+    position: relative;
+    overflow: hidden;
+    margin: 0 auto;
+  }
+  .liquid-bottle-neck {
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    margin: 0 auto -2px;
+    background: var(--muted);
+  }
+  .liquid-fill-level {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
+    transition: height 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .action-btn-primary {
+    min-height: var(--tap-primary);
+    border-radius: var(--radius-md);
+    background: var(--primary);
+    color: var(--primary-foreground);
+    border: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    transition: all 0.15s ease;
+  }
+  .action-btn-primary:active { transform: scale(0.98); }
+
+  .action-btn-outline {
+    min-height: var(--tap-primary);
+    border-radius: var(--radius-md);
+    background: var(--card);
+    color: var(--foreground);
+    border: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .stepper-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius-md);
+    background: var(--muted);
+    border: 1px solid var(--border);
+    color: var(--foreground);
+    font-size: 20px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .mode-switch-btn {
+    flex: 1;
+    min-height: 44px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--muted-foreground);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+  }
+  .mode-switch-btn.active {
+    background: var(--primary);
+    color: var(--primary-foreground);
+    border-color: var(--primary);
+  }
+
+  .location-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    margin: 12px 0;
+  }
+  .location-card-item {
+    border: 1px solid var(--border);
+    background: var(--card);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .location-card-item:hover, .location-card-item.active-leg {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, var(--card));
+  }
+
+  .web-stage-container {
+    display: none;
+    width: 100%;
+    max-width: 1140px;
+    min-height: 780px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--glass-shadow);
+    overflow: hidden;
+  }
+  .web-stage-container.active {
+    display: flex;
+  }
+
+  .office-left-rail {
+    width: 64px;
+    flex-shrink: 0;
+    background: var(--header);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 0;
+    z-index: 20;
+  }
+
+  .rail-nav-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted-foreground);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .rail-nav-btn:hover {
+    background: var(--muted);
+    color: var(--foreground);
+  }
+  .rail-nav-btn.active {
+    background: var(--primary);
+    color: var(--primary-foreground);
+  }
+
+  .office-main-workspace {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--background);
+  }
+
+  .office-top-header {
+    height: 60px;
+    background: var(--header);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    flex-shrink: 0;
+  }
+
+  .office-content-scroll {
+    flex: 1;
+    padding: 24px;
+    overflow-y: auto;
+  }
+
+  .office-table-wrapper {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  }
+
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+    font-size: 14px;
+  }
+  .data-table th {
+    background: var(--secondary);
+    color: var(--muted-foreground);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .data-table td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    color: var(--foreground);
+    vertical-align: middle;
+  }
+  .data-table tr:hover {
+    background: color-mix(in srgb, var(--accent) 4%, var(--card));
+  }
+  .data-table tr:last-child td {
+    border-bottom: none;
+  }
+
+  .stat-grid-4 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .stat-tile {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .web-view-pane {
+    display: none;
+    flex-direction: column;
+  }
+  .web-view-pane.active {
+    display: flex;
+  }
+
+  .specs-container {
+    width: 100%;
+    max-width: 1140px;
+    margin-top: 36px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    box-shadow: var(--glass-shadow);
+  }
+</style>
+</head>
+<body>
+
+<div class="proto-harness">
+
+  <!-- TOP TOOLBAR & CONTROLS -->
+  <header class="proto-toolbar">
+    <div class="flex items-center gap-3">
+      <div class="flex size-8 items-center justify-center rounded-lg bg-accent text-white font-bold text-row-title">T</div>
+      <div>
+        <h1 class="text-row-title font-bold text-foreground">Truestock Master Screen Architecture</h1>
+        <p class="text-caption text-muted-foreground">Exhaustive 18-Route Mobile App & Back-Office Web Prototype</p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-3">
+      <div class="surface-toggle-group">
+        <button class="surface-toggle-btn active" id="btn-surface-mobile" onclick="switchSurface('mobile')">
+          📱 Mobile App (7 Views)
+        </button>
+        <button class="surface-toggle-btn" id="btn-surface-web" onclick="switchSurface('web')">
+          💻 Web Back-Office (8 Views)
+        </button>
+      </div>
+
+      <select id="proto-role" onchange="applyRole(this.value)" class="proto-btn">
+        <option value="owner">Role: Owner (Full Costs & POs)</option>
+        <option value="manager">Role: Manager (Counts/Receiving, No Unit Costs)</option>
+        <option value="staff">Role: Staff (Count Only, Cost-Gated)</option>
+      </select>
+
+      <button class="proto-btn" onclick="toggleTheme()" id="theme-btn">
+        <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        <span id="theme-label">Theme: Dark</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- SUB-NAVIGATION BAR FOR MOBILE SCREENS -->
+  <div class="sub-nav-bar" id="mobile-sub-nav">
+    <button class="proto-btn active" id="btn-m-home" onclick="navMobile('count-home')">1. Hub (/count)</button>
+    <button class="proto-btn" id="btn-m-preflight" onclick="navMobile('count-preflight')">2. Preflight (/preflight)</button>
+    <button class="proto-btn" id="btn-m-session" onclick="navMobile('count-session')">3. Active Session</button>
+    <button class="proto-btn" id="btn-m-scan" onclick="navMobile('count-scan')">4. Scan & Tenths</button>
+    <button class="proto-btn" id="btn-m-sealed" onclick="navMobile('count-sealed')">5. Sealed Stepper</button>
+    <button class="proto-btn" id="btn-m-catalog" onclick="navMobile('mobile-catalog')">6. Mobile Catalog</button>
+    <button class="proto-btn" id="btn-m-account" onclick="navMobile('mobile-account')">7. Account (/account)</button>
+  </div>
+
+  <!-- SUB-NAVIGATION BAR FOR WEB SCREENS -->
+  <div class="sub-nav-bar" id="web-sub-nav" style="display: none;">
+    <button class="proto-btn active" id="btn-w-catalog" onclick="navWeb('web-catalog')">1. Catalog (/catalog)</button>
+    <button class="proto-btn" id="btn-w-locations" onclick="navWeb('web-locations')">2. Locations (/locations)</button>
+    <button class="proto-btn" id="btn-w-invoices" onclick="navWeb('web-invoices')">3. Invoices & OCR (/invoices)</button>
+    <button class="proto-btn" id="btn-w-auditpkt" onclick="navWeb('web-auditpkt')">4. Audit Packet (/audit-packet)</button>
+    <button class="proto-btn" id="btn-w-counts" onclick="navWeb('web-counts')">5. Count Audits (/counts)</button>
+    <button class="proto-btn" id="btn-w-reorder" onclick="navWeb('web-reorder')">6. Reorder (/reorder)</button>
+    <button class="proto-btn" id="btn-w-vendors" onclick="navWeb('web-vendors')">7. Vendors (/vendors)</button>
+    <button class="proto-btn" id="btn-w-users" onclick="navWeb('web-users')">8. Users & Team (/users)</button>
+  </div>
+
+  <!-- SURFACE 1: MOBILE COUNTING APP -->
+  <div id="surface-mobile" class="device-stage-container">
+    <div class="device-shell">
+      <div class="device-island">
+        <div class="device-island-lens"></div>
+      </div>
+      
+      <div class="device-status-bar">
+        <span>9:41</span>
+        <div class="flex items-center gap-1_5">
+          <svg class="size-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg>
+          <span style="font-size: 11px;">5G</span>
+          <svg class="size-4" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="7" width="18" height="10" rx="2"/><path d="M22 11v2"/></svg>
+        </div>
+      </div>
+
+      <div id="mobile-viewport" class="device-viewport">
+
+        <!-- SCREEN 1: COUNT HUB (/count) -->
+        <div id="pane-count-home" class="screen-pane active">
+          <header class="screen-header-bar">
+            <div class="flex items-center gap-2">
+              <span class="text-accent text-row-title">●</span>
+              <span class="text-row-title font-semibold text-card-foreground">Truestock</span>
+            </div>
+            <button class="inline-flex items-center rounded-full border border-border bg-muted px-3 py-1 text-label uppercase text-muted-foreground font-semibold" onclick="navMobile('mobile-account')">
+              <span id="mobile-role-badge">Owner</span> 👤
+            </button>
+          </header>
+
+          <main class="screen-scroll-body">
+            <div class="flex items-center justify-between">
+              <div>
+                <h1 class="text-header-title text-foreground">Floor Count</h1>
+                <p class="mt-1 text-row-subtitle text-muted-foreground">Saturday Night Inventory</p>
+              </div>
+              <button class="proto-btn" style="padding: 4px 8px; font-size: 11px;" onclick="navMobile('count-preflight')">Preflight ⚙️</button>
+            </div>
+
+            <!-- Active Count Session Card -->
+            <section class="mt-section-gap">
+              <p class="mb-3 text-label uppercase text-muted-foreground font-semibold">Active Session</p>
+
+              <article class="glass-card" style="border-color: var(--accent);" onclick="navMobile('count-session')">
+                <div class="flex items-start justify-between gap-2">
+                  <div>
+                    <span class="inline-flex items-center rounded-full bg-warning-bg px-3 py-1 text-label uppercase text-warning font-semibold">● In progress</span>
+                    <h2 class="mt-2 text-row-title text-card-foreground">Count #5 · Full Count</h2>
+                    <p class="text-caption text-muted-foreground">Started today 5:36 PM · Back Bar, Storeroom</p>
+                  </div>
+                  <span class="text-accent text-row-title">→</span>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3 border-t border-b border-border py-3 my-1">
+                  <div>
+                    <p class="text-label uppercase text-muted-foreground">Lines Counted</p>
+                    <p class="text-numeral-md text-card-foreground">5 lines</p>
+                  </div>
+                  <div>
+                    <p class="text-label uppercase text-muted-foreground">Total Units</p>
+                    <p class="text-numeral-md text-card-foreground">31 units</p>
+                  </div>
+                </div>
+
+                <button class="action-btn-primary w-full" onclick="event.stopPropagation(); navMobile('count-session')">
+                  Resume Count #5 →
+                </button>
+              </article>
+            </section>
+          </main>
+
+          <nav class="screen-bottom-tabs" aria-label="Primary">
+            <button class="tab-touch-btn active" onclick="navMobile('count-home')">
+              <svg class="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+              <span class="text-label uppercase font-semibold">Count</span>
+            </button>
+            <button class="tab-touch-btn" onclick="navMobile('mobile-catalog')">
+              <svg class="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+              <span class="text-label uppercase font-semibold">Catalog</span>
+            </button>
+            <button class="tab-touch-btn" onclick="navMobile('mobile-account')">
+              <svg class="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <span class="text-label uppercase font-semibold">Account</span>
+            </button>
+          </nav>
+        </div>
+
+        <!-- SCREEN 2: PREFLIGHT CHECKLIST (/count/preflight) -->
+        <div id="pane-count-preflight" class="screen-pane">
+          <header class="screen-header-bar">
+            <button aria-label="Back" class="flex size-11 items-center justify-center rounded-full border border-border text-foreground" onclick="navMobile('count-home')">
+              <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <span class="text-screen-title uppercase font-semibold">Device Preflight</span>
+            <div class="size-11"></div>
+          </header>
+
+          <main class="screen-scroll-body">
+            <div>
+              <h1 class="text-header-title text-foreground">Device Check</h1>
+              <p class="mt-1 text-row-subtitle text-muted-foreground">What this phone can and cannot do before counting</p>
+            </div>
+
+            <div class="flex flex-col gap-3 mt-4">
+              <div class="glass-card">
+                <div class="flex items-center justify-between">
+                  <span class="font-semibold text-foreground">📷 Camera BarcodeDetector</span>
+                  <span class="inline-flex items-center rounded-full bg-success-bg px-2.5 py-0.5 text-label uppercase text-success font-semibold">✓ Supported</span>
+                </div>
+                <p class="text-caption text-muted-foreground">Native BarcodeDetector API active with WASM polyfill fallback</p>
+              </div>
+
+              <div class="glass-card">
+                <div class="flex items-center justify-between">
+                  <span class="font-semibold text-foreground">💾 IndexedDB Offline Storage</span>
+                  <span class="inline-flex items-center rounded-full bg-success-bg px-2.5 py-0.5 text-label uppercase text-success font-semibold">✓ 100% Ready</span>
+                </div>
+                <p class="text-caption text-muted-foreground">Writes queue offline and sync idempotently via client_line_id UUIDs</p>
+              </div>
+
+              <div class="glass-card">
+                <div class="flex items-center justify-between">
+                  <span class="font-semibold text-foreground">🔒 Origin HTTPS & CSP Nonce</span>
+                  <span class="inline-flex items-center rounded-full bg-success-bg px-2.5 py-0.5 text-label uppercase text-success font-semibold">✓ Secure</span>
+                </div>
+                <p class="text-caption text-muted-foreground">Protected origin verified without hydration script blocks</p>
+              </div>
+            </div>
+          </main>
+
+          <div class="screen-action-bar">
+            <button class="action-btn-primary w-full" onclick="navMobile('count-home')">
+              Return to Floor Hub →
+            </button>
+          </div>
+        </div>
+
+        <!-- SCREEN 3: COUNT SESSION -->
+        <div id="pane-count-session" class="screen-pane">
+          <header class="screen-header-bar shrink-0">
+            <button aria-label="Back" class="flex size-11 items-center justify-center rounded-full border border-border text-foreground" onclick="navMobile('count-home')">
+              <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <span class="text-screen-title uppercase font-semibold">Count Session #5</span>
+            <button aria-label="Review" class="text-label uppercase text-accent font-semibold" onclick="alert('Proceeding to submit review')">Submit</button>
+          </header>
+
+          <main class="screen-scroll-body">
+            <div class="mb-4">
+              <h1 class="text-header-title text-foreground">Saturday Inventory</h1>
+              <div class="mt-2 flex flex-wrap items-center gap-2">
+                <span class="rounded-full border border-border bg-muted px-3 py-1 text-label uppercase font-semibold">Full Count</span>
+                <span class="rounded-full bg-warning-bg px-3 py-1 text-label uppercase text-warning font-semibold">● In progress</span>
+              </div>
+            </div>
+
+            <div class="flex flex-col gap-card-gap">
+              <article class="glass-card" onclick="navMobile('count-scan')">
+                <div class="flex items-start gap-3">
+                  <div class="flex size-16 shrink-0 items-center justify-center rounded-lg bg-muted text-accent text-row-title font-bold">
+                    SP
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-start justify-between gap-1">
+                      <h3 class="truncate text-row-title text-card-foreground font-semibold">Teremana Blanco</h3>
+                      <span class="text-caption text-muted-foreground">Edit ✎</span>
+                    </div>
+                    <p class="truncate text-row-subtitle text-muted-foreground">750ml · Back Bar</p>
+                    <div class="mt-2 flex items-baseline justify-between">
+                      <span class="text-numeral-sm text-card-foreground font-semibold">1 bottle (0.7 fill)</span>
+                      <span class="text-numeral-sm tabular-nums text-card-foreground cost-val font-semibold">$32.00</span>
+                    </div>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </main>
+
+          <div class="screen-action-bar">
+            <button class="action-btn-outline flex-1" onclick="navMobile('count-scan')">
+              Scan Bottle
+            </button>
+            <button class="action-btn-primary flex-1" onclick="alert('Count ready for review!')">
+              Submit Count
+            </button>
+          </div>
+        </div>
+
+        <!-- SCREEN 4: SCAN & TENTHS -->
+        <div id="pane-count-scan" class="screen-pane">
+          <header class="screen-header-bar">
+            <button aria-label="Cancel" class="flex size-11 items-center justify-center rounded-full border border-border text-foreground" onclick="navMobile('count-session')">
+              <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+            <div class="text-center">
+              <p class="text-label uppercase text-muted-foreground font-semibold">Locked Leg</p>
+              <p class="text-row-subtitle font-semibold text-foreground">📍 Back Bar</p>
+            </div>
+            <button class="text-label uppercase text-accent font-semibold" onclick="navMobile('count-sealed')">Sealed Mode</button>
+          </header>
+
+          <main class="screen-scroll-body">
+            <article class="glass-card">
+              <div class="flex items-start justify-between gap-2">
+                <div>
+                  <span class="inline-flex items-center rounded-full bg-success-bg px-3 py-1 text-label uppercase text-success font-semibold">✓ Scanned Match</span>
+                  <h2 class="mt-2 text-row-title text-card-foreground font-semibold">Casamigos Reposado</h2>
+                  <p class="text-row-subtitle text-muted-foreground">750ml · Tequila · UPC: 855553008153</p>
+                </div>
+                <div class="shrink-0 flex flex-col items-center">
+                  <div class="liquid-bottle-neck"></div>
+                  <div class="liquid-bottle-vial">
+                    <div class="liquid-fill-level" style="height: 70%;"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="mt-2 rounded-lg bg-muted p-3 text-center">
+                <p class="text-label uppercase text-muted-foreground font-semibold">Open Bottle Fill Level</p>
+                <p class="text-numeral-lg text-accent">0.7</p>
+              </div>
+
+              <div class="tenths-grid">
+                <button class="tenths-key">.1</button>
+                <button class="tenths-key">.3</button>
+                <button class="tenths-key">.5</button>
+                <button class="tenths-key selected">.7</button>
+                <button class="tenths-key">1.0</button>
+              </div>
+            </article>
+          </main>
+
+          <div class="screen-action-bar">
+            <button class="action-btn-primary w-full" onclick="navMobile('count-session')">
+              Record & Next →
+            </button>
+          </div>
+        </div>
+
+        <!-- SCREEN 5: SEALED STEPPER -->
+        <div id="pane-count-sealed" class="screen-pane">
+          <header class="screen-header-bar">
+            <button aria-label="Back" class="flex size-11 items-center justify-center rounded-full border border-border text-foreground" onclick="navMobile('count-scan')">
+              <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <span class="text-screen-title uppercase font-semibold">Sealed Backstock</span>
+            <button class="text-label uppercase text-accent font-semibold" onclick="navMobile('count-scan')">Tenths</button>
+          </header>
+
+          <main class="screen-scroll-body">
+            <article class="glass-card">
+              <h2 class="text-row-title text-card-foreground font-semibold">Corona Extra 12oz</h2>
+              <p class="text-caption text-muted-foreground">Case Pack: 24 bottles · Storeroom</p>
+
+              <div class="mt-4 flex items-center justify-between rounded-lg bg-muted p-3">
+                <div>
+                  <p class="text-label uppercase text-muted-foreground">Sealed Cases</p>
+                  <p class="text-numeral-md text-foreground">3 cases</p>
+                </div>
+                <div class="flex items-center gap-2">
+                  <button class="stepper-btn">-</button>
+                  <button class="stepper-btn">+</button>
+                </div>
+              </div>
+            </article>
+          </main>
+
+          <div class="screen-action-bar">
+            <button class="action-btn-primary w-full" onclick="navMobile('count-session')">
+              Record 72 Units →
+            </button>
+          </div>
+        </div>
+
+        <!-- SCREEN 6: MOBILE CATALOG -->
+        <div id="pane-mobile-catalog" class="screen-pane">
+          <header class="screen-header-bar">
+            <h1 class="text-row-title font-semibold text-foreground">Catalog (99)</h1>
+            <button class="header-action-btn" onclick="alert('Add New Product Modal')">+ Add SKU</button>
+          </header>
+
+          <main class="screen-scroll-body">
+            <div class="search-bar-container mb-3">
+              <svg class="size-5 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <input type="search" placeholder="Search name or barcode..." class="search-input-field" />
+            </div>
+
+            <div class="glass-card">
+              <h3 class="text-row-title font-semibold text-foreground">Bacardi Superior</h3>
+              <p class="text-caption text-muted-foreground">750ml · Spirits / Rum · SKU-0129</p>
+              <div class="flex justify-between mt-2 text-caption">
+                <span>On-hand: <strong>4 btl</strong></span>
+                <span>Par: 6</span>
+              </div>
+            </div>
+          </main>
+
+          <nav class="screen-bottom-tabs" aria-label="Primary">
+            <button class="tab-touch-btn" onclick="navMobile('count-home')">
+              <svg class="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+              <span class="text-label uppercase font-semibold">Count</span>
+            </button>
+            <button class="tab-touch-btn active" onclick="navMobile('mobile-catalog')">
+              <svg class="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+              <span class="text-label uppercase font-semibold">Catalog</span>
+            </button>
+            <button class="tab-touch-btn" onclick="navMobile('mobile-account')">
+              <svg class="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <span class="text-label uppercase font-semibold">Account</span>
+            </button>
+          </nav>
+        </div>
+
+        <!-- SCREEN 7: MOBILE ACCOUNT (/count/account) -->
+        <div id="pane-mobile-account" class="screen-pane">
+          <header class="screen-header-bar">
+            <h1 class="text-row-title font-semibold text-foreground">Account & Session</h1>
+            <span class="text-label uppercase text-muted-foreground font-semibold">Shift Auth</span>
+          </header>
+
+          <main class="screen-scroll-body">
+            <article class="glass-card">
+              <div class="flex items-center gap-3">
+                <div class="flex size-12 items-center justify-center rounded-full bg-accent text-white font-bold text-row-title">
+                  JD
+                </div>
+                <div>
+                  <h3 class="text-row-title font-semibold text-foreground">John Doe</h3>
+                  <p class="text-caption text-muted-foreground">john@thebrassdoor.com</p>
+                  <span class="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-label uppercase font-bold text-accent mt-1">Owner Role</span>
+                </div>
+              </div>
+
+              <div class="border-t border-border pt-3 mt-2">
+                <p class="text-label uppercase text-muted-foreground font-semibold">Organization</p>
+                <p class="text-row-subtitle text-foreground font-semibold">The Brass Door Bar & Grill</p>
+                <p class="text-caption text-muted-foreground">Tenant ID: org_live_0182930</p>
+              </div>
+
+              <div class="border-t border-border pt-3 mt-2">
+                <p class="text-label uppercase text-muted-foreground font-semibold">Session Status</p>
+                <p class="text-caption text-success font-semibold">● Active 12-hour shift session</p>
+                <p class="text-caption text-muted-foreground mt-1">Sessions expire automatically after 12h or upon manual sign-out.</p>
+              </div>
+            </article>
+
+            <div class="mt-section-gap">
+              <button class="action-btn-outline w-full" style="color: var(--destructive); border-color: var(--destructive);" onclick="alert('Signed out of floor count session'); navMobile('count-home');">
+                Sign Out of Device
+              </button>
+            </div>
+          </main>
+
+          <nav class="screen-bottom-tabs" aria-label="Primary">
+            <button class="tab-touch-btn" onclick="navMobile('count-home')">
+              <svg class="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+              <span class="text-label uppercase font-semibold">Count</span>
+            </button>
+            <button class="tab-touch-btn" onclick="navMobile('mobile-catalog')">
+              <svg class="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+              <span class="text-label uppercase font-semibold">Catalog</span>
+            </button>
+            <button class="tab-touch-btn active" onclick="navMobile('mobile-account')">
+              <svg class="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <span class="text-label uppercase font-semibold">Account</span>
+            </button>
+          </nav>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+
+  <!-- =================================================================== -->
+  <!-- SURFACE 2: WEB BACK-OFFICE WORKSPACE (Desktop First)                -->
+  <!-- =================================================================== -->
+  <div id="surface-web" class="web-stage-container">
+    
+    <aside class="office-left-rail">
+      <div class="flex flex-col items-center gap-4 w-full">
+        <div class="flex size-10 items-center justify-center rounded-xl bg-accent text-white font-bold text-row-title shadow-sm">
+          TS
+        </div>
+
+        <nav class="flex flex-col items-center gap-1.5 w-full mt-2" aria-label="Office Navigation">
+          <button class="rail-nav-btn active" id="rail-catalog" title="Catalog Management" onclick="navWeb('web-catalog')">
+            <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+          </button>
+          <button class="rail-nav-btn" id="rail-locations" title="Locations Management" onclick="navWeb('web-locations')">
+            <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          </button>
+          <button class="rail-nav-btn" id="rail-invoices" title="Invoices & OCR (Phase 2.5)" onclick="navWeb('web-invoices')">
+            <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          </button>
+          <button class="rail-nav-btn" id="rail-auditpkt" title="Compliance Audit Packet" onclick="navWeb('web-auditpkt')">
+            <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </button>
+          <button class="rail-nav-btn" id="rail-counts" title="Count Sessions & History" onclick="navWeb('web-counts')">
+            <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+          </button>
+          <button class="rail-nav-btn" id="rail-reorder" title="Reorder Lists" onclick="navWeb('web-reorder')">
+            <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+          </button>
+          <button class="rail-nav-btn" id="rail-vendors" title="Vendors Directory" onclick="navWeb('web-vendors')">
+            <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </button>
+          <button class="rail-nav-btn" id="rail-users" title="Users & Access Management" onclick="navWeb('web-users')">
+            <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+        </nav>
+      </div>
+
+      <div class="flex flex-col items-center gap-3">
+        <div class="flex size-9 items-center justify-center rounded-full bg-secondary border border-border text-label font-bold text-foreground" id="web-avatar">
+          JD
+        </div>
+      </div>
+    </aside>
+
+    <main class="office-main-workspace">
+      <header class="office-top-header">
+        <div class="flex items-center gap-3">
+          <h2 class="text-row-title font-bold text-foreground" id="web-header-title">Catalog & Inventory</h2>
+          <span class="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-label uppercase text-muted-foreground font-semibold" id="web-badge">99 SKUs</span>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <button class="header-action-btn" onclick="alert('Export triggered')">
+            Export
+          </button>
+          <button class="header-action-btn" style="background: var(--accent); color: #fff; border-color: var(--accent);" id="web-header-action" onclick="alert('New item triggered')">
+            + Action
+          </button>
+        </div>
+      </header>
+
+      <!-- VIEW 1: CATALOG TABLE (/office/catalog) -->
+      <div id="view-web-catalog" class="web-view-pane active office-content-scroll">
+        <div class="office-table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Product & SKU</th>
+                <th>Category</th>
+                <th>Size</th>
+                <th class="text-right">On-Hand Stock</th>
+                <th class="text-right">Par Level</th>
+                <th class="text-right cost-col">Unit Cost</th>
+                <th class="text-right cost-col">Total Value</th>
+                <th class="text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <div class="font-semibold text-foreground">Casamigos Reposado</div>
+                  <div class="text-caption text-muted-foreground">UPC: 855553008153 · SKU-0012</div>
+                </td>
+                <td><span class="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-label uppercase font-semibold">Spirits</span></td>
+                <td>750 ml</td>
+                <td class="text-right font-semibold">4.7 btl</td>
+                <td class="text-right">6 btl</td>
+                <td class="text-right cost-col tabular-nums font-semibold">$52.00</td>
+                <td class="text-right cost-col tabular-nums font-bold">$244.40</td>
+                <td class="text-right">
+                  <button class="proto-btn" style="padding: 4px 10px; font-size: 11px;" onclick="alert('Viewing Product Detail: Casamigos Reposado')">View Detail ✎</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- VIEW 2: LOCATIONS MANAGEMENT (/office/locations) -->
+      <div id="view-web-locations" class="web-view-pane office-content-scroll">
+        <div class="office-table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Location Name</th>
+                <th>Count Mode</th>
+                <th>Sort Order</th>
+                <th>Status</th>
+                <th class="text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong class="text-foreground">Speed Rail</strong></td>
+                <td><span class="inline-flex items-center rounded-full bg-accent px-2.5 py-0.5 text-label uppercase text-white font-semibold">Tenths</span></td>
+                <td>1</td>
+                <td><span class="inline-flex items-center rounded-full bg-success-bg px-2.5 py-0.5 text-label uppercase text-success font-semibold">Active</span></td>
+                <td class="text-right"><button class="proto-btn" style="padding: 4px 10px;">Edit Speed Rail ✎</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- VIEW 3: INVOICES & OCR (/office/invoices) -->
+      <div id="view-web-invoices" class="web-view-pane office-content-scroll">
+        <div class="office-table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Invoice #</th>
+                <th>Vendor</th>
+                <th>Date</th>
+                <th class="cost-col">Extracted Total</th>
+                <th>OCR Status</th>
+                <th class="text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="font-bold text-foreground">INV-849201</td>
+                <td>Southern Glazer's</td>
+                <td>Aug 19, 2026</td>
+                <td class="tabular-nums font-bold cost-col">$1,450.80</td>
+                <td><span class="inline-flex items-center rounded-full bg-success-bg px-2.5 py-0.5 text-label uppercase text-success font-semibold">✓ Verified (100% Math Match)</span></td>
+                <td class="text-right"><button class="header-action-btn" style="height: 32px;" onclick="alert('Opening side-by-side OCR review modal')">Review OCR 👁️</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- VIEW 4: AUDIT PACKET EXPORT (/office/invoices/audit-packet) -->
+      <div id="view-web-auditpkt" class="web-view-pane office-content-scroll">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 class="text-row-title font-bold text-foreground">Audit Packet & Regulatory Export</h3>
+            <p class="text-caption text-muted-foreground">Limited date-range export of invoice files + count snapshots for compliance (Phase 2.5)</p>
+          </div>
+          <button class="header-action-btn" style="background: var(--accent); color: #fff;" onclick="alert('Exporting zip audit packet...')">
+            Generate ZIP Audit Packet 📦
+          </button>
+        </div>
+
+        <article class="glass-card mb-4">
+          <h4 class="text-row-title font-semibold text-foreground">Date Range Selector</h4>
+          <div class="grid grid-cols-2 gap-3 mt-2">
+            <div class="form-group">
+              <label class="text-label uppercase text-muted-foreground font-semibold">Start Date</label>
+              <input type="date" class="form-input" value="2026-08-01" />
+            </div>
+            <div class="form-group">
+              <label class="text-label uppercase text-muted-foreground font-semibold">End Date</label>
+              <input type="date" class="form-input" value="2026-08-22" />
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <!-- VIEW 5: COUNT SESSIONS HISTORY (/office/counts) -->
+      <div id="view-web-counts" class="web-view-pane office-content-scroll">
+        <div class="office-table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Count ID</th>
+                <th>Status</th>
+                <th>Lines</th>
+                <th class="cost-col">Snapshot Value</th>
+                <th class="text-right">Audit</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="font-bold text-foreground">Count #4</td>
+                <td><span class="inline-flex items-center rounded-full bg-success-bg px-2.5 py-0.5 text-label uppercase text-success font-semibold">✓ Closed & Locked</span></td>
+                <td>97 lines</td>
+                <td class="cost-col tabular-nums font-bold">$14,290.00</td>
+                <td class="text-right"><button class="proto-btn" style="padding: 4px 10px;">View Audit Report</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- VIEW 6: REORDER LISTS (/office/reorder) -->
+      <div id="view-web-reorder" class="web-view-pane office-content-scroll">
+        <div class="office-table-wrapper p-4 mb-4">
+          <h4 class="text-row-title font-bold text-foreground mb-2">Southern Glazer's Wine & Spirits</h4>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th>On-Hand</th>
+                <th>Par</th>
+                <th class="text-right">Suggested Order</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="font-semibold text-foreground">Casamigos Reposado (750ml)</td>
+                <td>4.7 btl</td>
+                <td>6.0 btl</td>
+                <td class="text-right font-bold text-accent">2 Bottles</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- VIEW 7: VENDORS DIRECTORY (/office/vendors) -->
+      <div id="view-web-vendors" class="web-view-pane office-content-scroll">
+        <div class="office-table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Supplier</th>
+                <th>Rep Contact</th>
+                <th>Assigned SKUs</th>
+                <th class="text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="font-bold text-foreground">Southern Glazer's</td>
+                <td>Michael Chang · (415) 892-0192</td>
+                <td>64 SKUs</td>
+                <td class="text-right"><button class="proto-btn" style="padding: 4px 10px;">Edit Vendor ✎</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- VIEW 8: USERS & TEAM MANAGEMENT (/office/users) -->
+      <div id="view-web-users" class="web-view-pane office-content-scroll">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 class="text-row-title font-bold text-foreground">User Management & Security Access</h3>
+            <p class="text-caption text-muted-foreground">Manage organization access, roles, and atomic session deactivations (Invariant 11)</p>
+          </div>
+          <button class="header-action-btn" style="background: var(--accent); color: #fff;" onclick="alert('Create user from CLI: bun run create-user')">
+            + New User Info
+          </button>
+        </div>
+
+        <div class="office-table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Name & Email</th>
+                <th>Role</th>
+                <th>Active Sessions</th>
+                <th>Account Status</th>
+                <th class="text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <div class="font-semibold text-foreground">John Doe (You)</div>
+                  <div class="text-caption text-muted-foreground">john@thebrassdoor.com</div>
+                </td>
+                <td><span class="inline-flex items-center rounded-full bg-accent px-2.5 py-0.5 text-label uppercase text-white font-bold">Owner</span></td>
+                <td>1 session (This device)</td>
+                <td><span class="inline-flex items-center rounded-full bg-success-bg px-2.5 py-0.5 text-label uppercase text-success font-semibold">Active</span></td>
+                <td class="text-right">
+                  <span class="text-caption text-muted-foreground">Primary Owner</span>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="font-semibold text-foreground">Marcus Rivera</div>
+                  <div class="text-caption text-muted-foreground">marcus@thebrassdoor.com</div>
+                </td>
+                <td><span class="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-label uppercase font-bold text-foreground">Manager</span></td>
+                <td>0 sessions</td>
+                <td><span class="inline-flex items-center rounded-full bg-success-bg px-2.5 py-0.5 text-label uppercase text-success font-semibold">Active</span></td>
+                <td class="text-right">
+                  <button class="proto-btn" style="padding: 4px 10px; color: var(--destructive);" onclick="alert('Deactivating Marcus Rivera and revoking all active sessions in one transaction (Invariant 11)')">Deactivate 🚫</button>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="font-semibold text-foreground">Elena Rostova</div>
+                  <div class="text-caption text-muted-foreground">elena@thebrassdoor.com</div>
+                </td>
+                <td><span class="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-label uppercase font-bold text-muted-foreground">Staff</span></td>
+                <td>0 sessions</td>
+                <td><span class="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-label uppercase text-muted-foreground font-semibold">Inactive</span></td>
+                <td class="text-right">
+                  <button class="proto-btn" style="padding: 4px 10px; color: var(--success);" onclick="alert('Reactivating Elena Rostova')">Reactivate ✓</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+</div>
+
+<script>
+  let currentSurface = 'mobile';
+
+  function switchSurface(surface) {
+    currentSurface = surface;
+    document.getElementById('surface-mobile').style.display = surface === 'mobile' ? 'flex' : 'none';
+    document.getElementById('surface-web').classList.toggle('active', surface === 'web');
+    
+    document.getElementById('btn-surface-mobile').classList.toggle('active', surface === 'mobile');
+    document.getElementById('btn-surface-web').classList.toggle('active', surface === 'web');
+
+    document.getElementById('mobile-sub-nav').style.display = surface === 'mobile' ? 'flex' : 'none';
+    document.getElementById('web-sub-nav').style.display = surface === 'web' ? 'flex' : 'none';
+  }
+
+  function navMobile(screenId) {
+    document.querySelectorAll('#mobile-viewport .screen-pane').forEach(p => p.classList.remove('active'));
+    const target = document.getElementById('pane-' + screenId);
+    if (target) {
+      target.classList.add('active');
+      const body = target.querySelector('.screen-scroll-body');
+      if (body) body.scrollTop = 0;
+    }
+
+    document.querySelectorAll('#mobile-sub-nav .proto-btn').forEach(b => b.classList.remove('active'));
+    const btnMap = {
+      'count-home': 'btn-m-home',
+      'count-preflight': 'btn-m-preflight',
+      'count-session': 'btn-m-session',
+      'count-scan': 'btn-m-scan',
+      'count-sealed': 'btn-m-sealed',
+      'mobile-catalog': 'btn-m-catalog',
+      'mobile-account': 'btn-m-account'
+    };
+    const bId = btnMap[screenId];
+    if (bId && document.getElementById(bId)) {
+      document.getElementById(bId).classList.add('active');
+    }
+  }
+
+  function navWeb(viewId) {
+    document.querySelectorAll('.web-view-pane').forEach(v => v.classList.remove('active'));
+    document.querySelectorAll('.rail-nav-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#web-sub-nav .proto-btn').forEach(b => b.classList.remove('active'));
+    
+    const target = document.getElementById('view-' + viewId);
+    if (target) target.classList.add('active');
+    
+    const railBtn = document.getElementById('rail-' + viewId.replace('web-', ''));
+    if (railBtn) railBtn.classList.add('active');
+
+    const subBtn = document.getElementById('btn-w-' + viewId.replace('web-', ''));
+    if (subBtn) subBtn.classList.add('active');
+
+    const titles = {
+      'web-catalog': 'Catalog & Inventory Management',
+      'web-locations': 'Locations & Counting Areas',
+      'web-invoices': 'Invoice OCR & Cost Capture Pipeline',
+      'web-auditpkt': 'Compliance Audit Packet Export',
+      'web-counts': 'Count Sessions & Audit History',
+      'web-reorder': 'Reorder & Supplier Purchasing',
+      'web-vendors': 'Vendors & Supplier Directory',
+      'web-users': 'User Management & Security Access'
+    };
+    const badges = {
+      'web-catalog': '99 SKUs',
+      'web-locations': '4 Locations',
+      'web-invoices': '2 Invoices',
+      'web-auditpkt': 'Audit Ready',
+      'web-counts': '5 Sessions',
+      'web-reorder': '12 Suggested',
+      'web-vendors': '2 Suppliers',
+      'web-users': '3 Users'
+    };
+    document.getElementById('web-header-title').innerText = titles[viewId] || 'Dashboard';
+    document.getElementById('web-badge').innerText = badges[viewId] || '';
+  }
+
+  function applyRole(role) {
+    const mobileBadge = document.getElementById('mobile-role-badge');
+    if (mobileBadge) mobileBadge.innerText = role;
+    
+    const costElements = document.querySelectorAll('.cost-val, .cost-col');
+    if (role === 'staff' || role === 'manager') {
+      costElements.forEach(el => el.style.display = 'none');
+    } else {
+      costElements.forEach(el => el.style.display = '');
+    }
+  }
+
+  function toggleTheme() {
+    const isDark = document.documentElement.classList.toggle('dark');
+    document.getElementById('theme-label').innerText = isDark ? 'Theme: Dark' : 'Theme: Light';
+  }
+</script>
+</body>
+</html>

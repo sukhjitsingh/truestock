@@ -114,15 +114,167 @@ open a fresh pool (and fresh database connections) on every file save.
   matters. `scripts/check-migrations-immutable.sh` enforces this in CI.
   (Before that date, `0000` was regenerated in place several times as review
   feedback landed — that era is over.)
-- Nothing has yet been applied to a *production* database. The full chain
-  `0000 → 0001 → 0002` was verified end-to-end in Docker — first against
-  MySQL 8.0 on 2026-07-27, then re-verified against **MariaDB 11.8.8** on
-  2026-07-28 once the production engine was established. Both runs included
-  probe queries proving the composite tenant FKs reject cross-tenant ids
-  (1452), the `product_par` generated column rejects a second overall par
-  (1062), `DECIMAL(10,4)` round-trips exactly, and accented product names
-  survive. The schema is portable across both engines; no migration needed
-  changing.
+- Nothing has yet been applied to a *production* database. The original
+  `0000 → 0001 → 0002` chain was verified against MySQL 8.0 and then MariaDB
+  11.8.8 in July 2026, including the tenant-FK, generated-uniqueness, decimal
+  and accented-text probes. The current full chain is **`0000 → … → 0009`**;
+  all ten migrations apply clean from empty against MariaDB 11.8 in isolated
+  Phase 2.5 verification, including the count-correction ledger and audit-packet
+  tables. Production remains the only engine instance that has not run it.
+- `0004_numerous_diamondback.sql` (Phase 2.5, Slice 1) creates `invoice` and
+  `extraction_job`. `0005_bitter_captain_marvel.sql` (Phase 2.5, Slice 2)
+  creates `invoice_line`, adds `invoice.rejection_reason`, and adds eight
+  provenance/cost-tracking columns to `extraction_job` (`provider`,
+  `model_id`, `prompt_version`, `raw_response`, `input_tokens`,
+  `output_tokens`, `cost_usd`, `error_code`) — see that table's comment in
+  `db/schema.ts` for why they're added to the existing job table rather than
+  a second one. Purely additive; drizzle-kit again emits no down migration,
+  so reversal is:
+
+  ```sql
+  ALTER TABLE invoice DROP COLUMN rejection_reason;
+  ALTER TABLE extraction_job
+    DROP COLUMN error_code, DROP COLUMN cost_usd, DROP COLUMN output_tokens,
+    DROP COLUMN input_tokens, DROP COLUMN raw_response,
+    DROP COLUMN prompt_version, DROP COLUMN model_id, DROP COLUMN provider;
+  DROP TABLE invoice_line;
+  ```
+
+  Verified end-to-end against MariaDB 11.8 in a throwaway database: applying
+  `0005` then running the reversal above leaves `extraction_job` and
+  `invoice` byte-identical (via `SHOW CREATE TABLE`) to their state right
+  after `0004`, and `invoice_line` gone.
+- `0006_colorful_pretty_boy.sql` (Phase 2.5, Slice 3) creates `vendor_alias`
+  and adds `invoice_line.matched_vendor_alias_id`. `vendor_alias` carries a
+  composite tenant foreign key on `(organization_id, vendor_id)` — the
+  specific gap the 2026-08-14 adversarial review's second pass named: "the
+  `vendor_alias` had no tenant foreign key at all... it is the one table
+  whose bad rows persist and re-apply to every future invoice from that
+  vendor." Verified against MariaDB 11.8.8 in the dev database: a
+  cross-tenant `vendor_id` insert is rejected (1452,
+  `vendor_alias_organization_vendor_fk`), a same-tenant insert succeeds, and
+  a duplicate `(organization_id, vendor_id, vendor_item_code)` is rejected
+  (1062, `vendor_alias_organization_vendor_item_code_unique`) — the exact
+  upsert key `lib/domain/matching.ts:upsertAlias` (not yet built) will rely
+  on. `invoice_line.matched_vendor_alias_id` is a bare FK (`ON DELETE SET
+  NULL`), not composite — see that column's comment in `db/schema.ts` for
+  why: it's set by an internal domain function that already has a
+  tenant-scoped `vendorId`, never taken from a raw client payload the way
+  `matched_product_id` is. Purely additive; reversal is:
+
+  ```sql
+  ALTER TABLE invoice_line DROP FOREIGN KEY invoice_line_matched_vendor_alias_id_vendor_alias_id_fk;
+  ALTER TABLE invoice_line DROP INDEX invoice_line_organization_matched_vendor_alias_idx;
+  ALTER TABLE invoice_line DROP COLUMN matched_vendor_alias_id;
+  DROP TABLE vendor_alias;
+  ```
+
+  The `DROP INDEX` line is required, not optional cleanup: MariaDB does not
+  drop a composite index when only one of its columns is dropped, it just
+  narrows the index to whichever columns remain — so
+  `DROP COLUMN matched_vendor_alias_id` alone silently leaves a stray
+  single-column `(organization_id)` index behind instead of removing
+  `invoice_line_organization_matched_vendor_alias_idx` entirely. Verified
+  end-to-end against MariaDB 11.8.8 in a throwaway database: applying `0006`
+  then the corrected reversal above leaves `invoice_line` byte-identical
+  (via `SHOW CREATE TABLE`) to its state right after `0005`, and
+  `vendor_alias` gone — the first attempt, without the `DROP INDEX` line,
+  was caught by exactly that diff.
+
+  Also verified: the full chain `0000` → `0006` applies clean from empty
+  (`tests/helpers/test-db.ts:migrateTestDatabase()` against a fresh
+  `truestock_test` database on MariaDB 11.8.8).
+- `0007_yielding_gideon.sql` (Phase 2.5, Slice 4) creates `product_cost_history`
+  and adds `invoice_line_organization_id_id_unique` — `invoice_line` had no
+  `(organization_id, id)` composite unique index until now because nothing
+  needed to reference an `invoice_line` row by id from another table; this
+  slice's `source_invoice_line_id` composite tenant FK is the first thing
+  that does. `product_cost_history` carries THREE composite tenant foreign
+  keys — `(organization_id, product_id)` → `product`,
+  `(organization_id, source_invoice_id)` → `invoice`, and
+  `(organization_id, source_invoice_line_id)` → `invoice_line` — plus a
+  plain (not tenant-scoped) `UNIQUE(source_invoice_line_id)`, the idempotency
+  backstop named in `docs/plans/phase-2.5-invoice-automation/04-slices.md`
+  Slice 4 [AR-4]: the primary idempotency mechanism is the CAS on
+  `invoice.status` in `approveInvoiceAction`, which skips the cost-writing
+  loop entirely on a replay, so this constraint only ever fires if that CAS
+  logic has a bug. Verified against MariaDB 11.8.8 in a throwaway database:
+  a cross-tenant `product_id` insert is rejected (1452,
+  `product_cost_history_organization_product_fk`), a same-tenant insert
+  succeeds, and a duplicate `source_invoice_line_id` is rejected (1062,
+  `product_cost_history_source_invoice_line_id_unique`). Purely additive;
+  reversal is:
+
+  ```sql
+  DROP TABLE product_cost_history;
+  ALTER TABLE invoice_line DROP INDEX invoice_line_organization_id_id_unique;
+  ```
+
+  Order matters: `product_cost_history`'s FK on `source_invoice_line_id`
+  references that index, so it must be dropped first — MariaDB refuses to
+  drop an index a live foreign key still depends on (1553). No `DROP COLUMN`
+  is involved this time (the addition to `invoice_line` is an index only,
+  not a column), so the `mariadb-composite-index-survives-column-drop`
+  gotcha from `0006`'s entry above does not apply here, but the same
+  "verify with `SHOW CREATE TABLE`, don't assume" discipline does: verified
+  end-to-end against MariaDB 11.8.8 in a throwaway database — applying
+  `0007` then the reversal above leaves `invoice_line` byte-identical (via
+  `SHOW CREATE TABLE`, modulo `AUTO_INCREMENT`/collation, which differ only
+  because the comparison database was created separately) to its state
+  right after `0006`, and `product_cost_history` gone.
+
+  Also verified: the full chain `0000` → `0007` applies clean from empty in
+  a throwaway database (`bun run db:migrate` against a fresh scratch
+  database on MariaDB 11.8.8) — the same proof `schema_matches_live_columns`
+  (Slice 4's own adversarial test, backend stage) makes independently
+  against `truestock_test` via `migrateTestDatabase()`.
+- `0008_lyrical_romulus.sql` (open-items.md #2, schema half) adds three
+  columns to `count_line_write`: `write_type` (new `countLineWriteTypeEnum`
+  in `db/enums.ts` — `'scan' | 'fill_correction'`, NOT NULL DEFAULT `'scan'`)
+  and `partial_fills_before` / `partial_fills_after` (nullable JSON —
+  `longtext` on MariaDB, same as every other JSON column in this file).
+  `editCountLineFills` (`lib/domain/counts.ts`) replaces the whole
+  `partial_fills` array rather than appending to it, so it has no
+  representation in `partial_fills_delta`'s additive shape (that column is
+  modelled so summing every row's delta reconstructs a line's current state
+  — see the comment above `countLineWrite` in `db/schema.ts`); the two new
+  columns instead carry the full before/after state transition on the
+  correction row itself, so "who changed this fill level, and when" is
+  answerable from one ledger row without replaying prior writes. The
+  domain-function change that actually writes these rows — inserting into
+  `count_line_write` inside `editCountLineFills`'s existing transaction — is
+  backend work and is NOT part of this migration; this slice is schema only.
+  The `DEFAULT 'scan'` needs no separate data migration: every row that
+  existed before this column was added genuinely was a scan/increment/
+  quantity-correction write, since `editCountLineFills` wrote no ledger row
+  at all until this change. Purely additive; reversal is:
+
+  ```sql
+  ALTER TABLE count_line_write DROP COLUMN write_type;
+  ALTER TABLE count_line_write DROP COLUMN partial_fills_before;
+  ALTER TABLE count_line_write DROP COLUMN partial_fills_after;
+  ```
+
+  No `DROP INDEX` needed — unlike `0006`'s `matched_vendor_alias_id`, none
+  of these three columns participate in any index on this table, so the
+  `mariadb-composite-index-survives-column-drop` gotcha does not apply here.
+  Verified against MariaDB 11.8.8 in an isolated throwaway database
+  (`docker-compose.worktree-test.yml`, project `truestock-openitem2-test`,
+  db published on host port 3309): the full chain `0000` → `0008` applies
+  clean from empty, `DESCRIBE count_line_write` shows all three new columns
+  with the expected type/null/default, and applying the reversal above then
+  re-adding the same three `ALTER TABLE ... ADD` statements leaves
+  `count_line_write` byte-identical (via `SHOW CREATE TABLE`) both to its
+  state right after `0007` (reversal) and to its freshly-migrated `0008`
+  state (re-add).
+- `0009_pink_luke_cage.sql` (Phase 2.5, Slice 5) creates `audit_packet` and
+  `audit_packet_file`, including tenant-scoped manifest rows, the
+  `building → ready | expired | failed` lifecycle, stored ZIP path/hash,
+  expiration and JSON manifest. It was regenerated on top of `0008` rather
+  than carrying forward Slice 5's earlier colliding migration number. The
+  isolated Slice 5 database proved `0000 → … → 0009` applies clean from empty
+  and that both the `0008` ledger columns and `0009` packet tables coexist with
+  the expected MariaDB types.
 
 ## Seeding
 

@@ -1,5 +1,4 @@
 import { headers } from "next/headers";
-import { Card } from "@/components/ui/card";
 import { StatusPill } from "@/components/ui/status-pill";
 import { isDevOriginAllowed } from "@/lib/dev-origins";
 
@@ -59,9 +58,9 @@ export async function PreflightOriginCheck() {
   const isAllowed = isDevOriginAllowed(requestHostname);
 
   return (
-    <Card>
+    <div className="glass-card p-card-pad">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-row-title text-card-foreground">Origin allowed</p>
+        <p className="text-row-title font-semibold text-card-foreground">Origin allowed</p>
         <StatusPill tone={isAllowed ? "success" : "negative"}>
           {isAllowed ? "Yes" : "No"}
         </StatusPill>
@@ -71,6 +70,7 @@ export async function PreflightOriginCheck() {
           ? `${host} is in the allowed list. Client chunks will load normally.`
           : `${host} is not in the allowed list. The app will render (return 200) but client chunks return 403 — so no JavaScript runs. The form appears but never responds to taps. Fix: run \`bun run docker:up:lan\` instead of \`docker:up\`, then reload this page. See scripts/dev-lan.sh for details.`}
       </p>
-    </Card>
+    </div>
   );
 }
+

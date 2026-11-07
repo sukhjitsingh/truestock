@@ -67,6 +67,15 @@ describe("isTransientLockError", () => {
     expect(isTransientLockError(wrap(driverError("ER_LOCK_WAIT_TIMEOUT", 1205)))).toBe(true);
   });
 
+  test("recognises ER_CHECKREAD (1020) — a SELECT ... FOR UPDATE hitting a row changed since this transaction's snapshot", () => {
+    // Reproduced by a real 3-way concurrent submitInvoiceReview test hitting
+    // the SAME vendor_alias row through upsertAliasCore's recovery SELECT ...
+    // FOR UPDATE (Slice 3 review fix, 2026-08-15). MariaDB's own message says
+    // "try restarting transaction" — the same remedy as 1213/1205.
+    expect(isTransientLockError(driverError("ER_CHECKREAD", 1020))).toBe(true);
+    expect(isTransientLockError(wrap(driverError("ER_CHECKREAD", 1020)))).toBe(true);
+  });
+
   test("does NOT retry a duplicate key — that is a real answer, not a lock", () => {
     // Retrying a replay would defeat the ledger's whole idempotency mechanism.
     expect(isTransientLockError(wrap(driverError("ER_DUP_ENTRY", 1062)))).toBe(false);

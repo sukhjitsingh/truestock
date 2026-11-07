@@ -5,11 +5,12 @@ commit `68d0f15`. Read alongside `STATE.md`, which covers what is *unproven*;
 this file covers what is **absent or wrong in the code as written**, which is a
 different list.
 
-**Status 2026-07-31: A, B, C, D1, D2, E, F, G, H and I are fixed.** J is still
-open and keeps its section below. Each fixed section keeps its original
-text — the reasoning is why the fix looks as it does — with a **FIXED** note
-saying what changed. Nothing is deleted, because the failure *shapes* here are
-the reusable part.
+**Status 2026-08-21: all A–J code gaps and C's later audit-ledger gap are
+closed.** J (`scanCountLine`) shipped in Phase 1.5; C's fill correction now
+writes an immutable before/after `count_line_write` row. The dated findings and
+“Still open” section below are retained as the 2026-07-29 audit record, not as
+current status. Use `STATE.md` and `docs/open-items.md` for live gaps. Each fixed
+section keeps its original text because the failure shapes are reusable.
 
 Verified after the fixes:
 

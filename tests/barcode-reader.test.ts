@@ -14,13 +14,8 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ZXING_WASM_SHA256 } from "barcode-detector/pure";
-import {
-  chooseBarcodeReader,
-  RETAIL_BARCODE_FORMATS,
-  SCAN_BARCODE_FORMATS,
-  ZXING_WASM_PATH,
-} from "@/lib/barcode-reader";
-import { copyZxingWasm } from "../scripts/copy-zxing-wasm.mjs";
+import { chooseBarcodeReader, RETAIL_BARCODE_FORMATS, SCAN_BARCODE_FORMATS } from "@/lib/barcode-reader";
+import { copyZxingWasm } from "../scripts/lib/copy-zxing-wasm.mjs";
 
 describe("chooseBarcodeReader — built-in first, app reader as the fallback", () => {
   test("no built-in reader → the app reader, asking for every scan format", () => {
@@ -60,17 +55,15 @@ describe("chooseBarcodeReader — built-in first, app reader as the fallback", (
   });
 });
 
-describe("the app reader's engine is served by the app, and is the right file", () => {
-  test("it is served from this app's own origin, never a CDN", () => {
-    expect(ZXING_WASM_PATH.startsWith("/")).toBe(true);
-    expect(ZXING_WASM_PATH).not.toMatch(/^\/\//);
-  });
-
+describe("the app reader's engine is the right file", () => {
+  // Same-origin serving, the copy hooks and the "is a real wasm" check live in
+  // tests/scanner-assets.test.ts. This adds the one thing it does not check:
+  // that the copy is byte-for-byte the engine the installed zxing-wasm expects,
+  // against the fingerprint the package itself publishes.
   test("the copy matches the fingerprint the installed zxing-wasm publishes", () => {
-    const publicDir = mkdtempSync(join(tmpdir(), "truestock-zxing-"));
-    const dest: string = copyZxingWasm(publicDir);
-    expect(dest).toBe(join(publicDir, ...ZXING_WASM_PATH.split("/").filter(Boolean)));
-    const sha = createHash("sha256").update(readFileSync(dest)).digest("hex");
+    const dir = mkdtempSync(join(tmpdir(), "truestock-zxing-"));
+    const { to } = copyZxingWasm({ repoRoot: join(import.meta.dir, ".."), publicPath: join(dir, "zxing_reader.wasm") }) as { to: string };
+    const sha = createHash("sha256").update(readFileSync(to)).digest("hex");
     expect(sha).toBe(ZXING_WASM_SHA256);
   });
 });

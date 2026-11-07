@@ -1,0 +1,1 @@
+ALTER TABLE `vendor_alias` ADD `pack_size` int;

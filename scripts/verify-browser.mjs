@@ -19,13 +19,44 @@
  * stay out of the shell history and the process list. `--env-file` is Node's
  * own flag; there is no dotenv dependency.
  *
+ * `INVOICE_STORAGE_DIR` must resolve to the same directory the app under test
+ * uses. The harness writes fixture PDFs for its SQL-seeded invoices and
+ * deletes them again, so against an app in a container (or any process whose
+ * env file differs from the one given here) a mismatch leaves the app unable
+ * to find the file — a 404 on `/api/invoices/<id>/file` — and leaks the
+ * uploaded fixture in the app's directory. Load the app's own env file too:
+ *   node --env-file=<app>/.env.local --env-file=.env.local scripts/verify-browser.mjs
+ *
  * Against a local dev database only — it signs in, changes a role, and
  * creates/renames/retires its own throwaway locations. Everything it mutates
  * it either created itself or restores; see restoreLog at the end of the run.
+ *
+ * ## It refuses to run unless you name the database you mean
+ *
+ * `DATABASE_URL` and `BASE_URL` must both be loopback (127.0.0.1, localhost or
+ * ::1 — not a docker service name, not a remote host), and `VERIFY_ALLOW_DB`
+ * must be set to exactly `<host>:<port>/<database>` of that `DATABASE_URL`:
+ *
+ *   VERIFY_ALLOW_DB=127.0.0.1:3310/truestock bun run verify:browser
+ *
+ * It is per run on purpose and is NOT in the `verify:browser` script: a stale
+ * `DATABASE_URL` in the shell (or an env file for the wrong database) must not
+ * be able to point this script's inserts, cost edits and deletes at real data.
+ * The refusal message prints the exact value to export. See
+ * scripts/lib/assert-local-target.mjs.
+ *
+ * Cleanup deletes only rows this run created, by id and organization: its own
+ * locations, its own seeded invoices, its own vendor_alias (and the vendor only
+ * if the run made it). Product costs are put back by id from a snapshot taken
+ * before the first edit. Nothing is matched by name pattern.
  */
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
+import path from "node:path";
 import mysql from "mysql2/promise";
 import { chromium } from "playwright";
+import { assertLocalTarget } from "./lib/assert-local-target.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ean13Modules, writeBarcodeY4m } from "./lib/fake-barcode-camera.mjs";
@@ -56,6 +87,17 @@ if (!EMAIL || !PASSWORD) {
       "Then:\n" +
       "  CHECK_EMAIL=you@bar.local CHECK_PASSWORD='...' node scripts/verify-browser.mjs",
   );
+  process.exit(2);
+}
+
+// Before the browser launches and before the database is opened: this script
+// inserts, edits and deletes rows, so it must know it is aimed at a local
+// database the operator named for this run. See the header and
+// scripts/lib/assert-local-target.mjs.
+try {
+  assertLocalTarget(process.env.DATABASE_URL, BASE);
+} catch (err) {
+  console.error(err.message);
   process.exit(2);
 }
 
@@ -145,9 +187,18 @@ page.on("console", (m) => {
   if (m.type() === "error") consoleErrors.push(m.text());
 });
 page.on("pageerror", (e) => consoleErrors.push(String(e)));
+// Chrome's "Failed to load resource: ... 404" console error names no URL, which
+// makes it undiagnosable on its own. Keep the failing responses so the
+// "no console errors" detail below can say which request it was.
+const failedResponses = [];
+page.on("response", (r) => {
+  if (r.status() >= 400) failedResponses.push(`${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}`);
+});
 await page.addInitScript(() => {
   document.addEventListener("securitypolicyviolation", (e) => {
-    (window.__csp ??= []).push(`${e.violatedDirective} blocked ${e.blockedURI}`);
+    // sourceFile:line is what tells a first-party violation from a library's
+    // feature probe (the zod `Function("")` check), so keep it.
+    (window.__csp ??= []).push(`${e.violatedDirective} blocked ${e.blockedURI} (${e.sourceFile}:${e.lineNumber})`);
   });
 
   /**
@@ -173,6 +224,88 @@ await page.addInitScript(() => {
  * counting its own truncated array.
  */
 const sql = await mysql.createConnection(process.env.DATABASE_URL);
+
+/**
+ * The organization this run acts in: the signed-in account's own. Every
+ * cleanup statement below is scoped to it as well as to an id this run
+ * recorded, so a stray id can never reach another tenant's row.
+ *
+ * Resolved up front and fatal if missing — the sign-in below could not succeed
+ * for an account that is not in this database anyway, and a cleanup pass that
+ * cannot scope itself must not run unscoped.
+ */
+const [[runUserRow]] = await sql.query("SELECT organization_id AS organizationId FROM user WHERE email = ?", [EMAIL]);
+const runOrgId = runUserRow?.organizationId ?? null;
+if (!runOrgId) {
+  console.error(
+    `${EMAIL} has no user row in the database DATABASE_URL points at, so there is no organization to scope the ` +
+      "run's cleanup to. Check that DATABASE_URL is the database the app under test uses.",
+  );
+  await sql.end();
+  await browser.close();
+  process.exit(2);
+}
+
+// Set by the locations section below. `locationStamp` makes the two throwaway
+// names unique to this run; `createdLocationIds` is what cleanup deletes — by
+// id and organization, never by name pattern. Recorded as soon as the row
+// exists, and re-resolved from the exact stamped names at cleanup in case the
+// run died between the click and the lookup.
+let locationStamp = null;
+const createdLocationIds = new Set();
+async function trackLocationByName(name) {
+  const [rows] = await sql.query("SELECT id FROM location WHERE organization_id = ? AND name = ?", [runOrgId, name]);
+  for (const row of rows) createdLocationIds.add(row.id);
+}
+
+// Set by the Phase 2.5 invoices section below; read by the cleanup pass at
+// the end of the run so the fixture this script creates doesn't accumulate
+// in the dev archive on every re-run, mirroring the throwaway-locations
+// cleanup already at the bottom of this file.
+let invoiceIdToCleanup = null;
+
+// Set by the Phase 2.5 Slice 3 matching section below; read by the cleanup
+// pass at the end of the run. `slice3CreatedVendor` distinguishes "we made
+// a throwaway vendor" from "we reused an existing one" so cleanup never
+// deletes a vendor real invoices in this org depend on.
+let slice3UnmatchedInvoiceId = null;
+let slice3PrematchedInvoiceId = null;
+let slice3VendorId = null;
+let slice3CreatedVendor = false;
+// The vendor_item_code this run minted (`VERIFY-<ms>`), the only thing that
+// identifies the vendor_alias row the Approve click creates. When the run
+// reuses a pre-existing vendor, cleanup deletes aliases by this code and no
+// other: that vendor's real aliases are not this run's to remove.
+let slice3VendorItemCode = null;
+
+/**
+ * Smallest well-formed one-page PDF. The slice 3 invoices are seeded with SQL
+ * rather than uploaded, and the review page renders the stored file in an
+ * iframe unconditionally. A seeded row with no file therefore makes the
+ * browser request `/api/invoices/<id>/file`, get a 404, and log a console
+ * error — a harness artefact, since a real invoice always has a file.
+ */
+const FIXTURE_PDF = Buffer.from(
+  "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n" +
+    "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\n" +
+    "xref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000052 00000 n \n0000000101 00000 n \n" +
+    "trailer<</Size 4/Root 1 0 R>>\nstartxref\n160\n%%EOF\n",
+);
+
+function invoiceStorageRoot() {
+  return path.resolve((process.env.INVOICE_STORAGE_DIR ?? "").trim() || "./var/invoices");
+}
+
+/** Gives a SQL-seeded invoice a real stored file, keyed the way the app keys them. */
+async function attachFixtureFile(sql, orgId, invoiceId) {
+  const key = path.posix.join(String(orgId), `${invoiceId}.pdf`);
+  await mkdir(path.join(invoiceStorageRoot(), String(orgId)), { recursive: true });
+  await writeFile(path.join(invoiceStorageRoot(), key), FIXTURE_PDF);
+  await sql.execute(
+    "UPDATE invoice SET file_path = ?, file_sha256 = ?, file_size_bytes = ? WHERE id = ? AND organization_id = ?",
+    [key, createHash("sha256").update(FIXTURE_PDF).digest("hex"), FIXTURE_PDF.length, invoiceId, orgId],
+  );
+}
 
 try {
   // ---- sign in ------------------------------------------------------------
@@ -350,6 +483,7 @@ try {
 
   // ---- slice 2: create, rename, re-mode ----------------------------------
   const stamp = Date.now();
+  locationStamp = stamp;
   const created = `Verify Bar ${stamp}`;
   const renamed = `Verify Patio ${stamp}`;
 
@@ -369,6 +503,7 @@ try {
   const navsBeforeCreate = documentLoads;
   await page.getByRole("button", { name: /create location/i }).click();
   await page.locator("table tbody").getByText(created, { exact: false }).first().waitFor({ timeout: 15000 });
+  await trackLocationByName(created);
   record(
     "a new location appears without a page navigation",
     documentLoads === navsBeforeCreate,
@@ -388,7 +523,9 @@ try {
    * looking wrong.
    */
   const row = page.locator("tbody tr", { hasText: created });
-  await row.getByRole("button", { name: /^edit$/i }).click();
+  // The button's accessible name is "Edit <location name>" (aria-label names the
+  // row it acts on), so match the verb, not the whole name.
+  await row.getByRole("button", { name: /^edit\b/i }).click();
   const nameField = page.locator('input[placeholder="e.g., Patio Bar"]');
   const editingWhich = await nameField.inputValue();
   record(
@@ -415,21 +552,34 @@ try {
 
   // ---- slice 3: retire, and the picker stops offering it ------------------
   const retireRow = page.locator("tbody tr", { hasText: renamed });
-  await retireRow.getByRole("button", { name: /^retire$/i }).click();
-  await retireRow.getByRole("button", { name: /confirm retire/i }).click();
+  // "Retire <name>" — `\b` keeps this from matching the "Retired" status text.
+  await retireRow.getByRole("button", { name: /^retire\b/i }).click();
+  // Armed state swaps in "Confirm retiring <name>" (visible text "Confirm
+  // retire?"). Match the aria-label's stem: "retiring" does not contain "retire".
+  await retireRow.getByRole("button", { name: /^confirm retiring\b/i }).click();
   await page.locator("tbody tr", { hasText: renamed }).getByText("Retired").waitFor({ timeout: 15000 });
   record("a retired location stays listed and is marked Retired", true, renamed);
 
   // The point of Decision 5: this happens with no scan-page code changed.
-  const scanPageTouched = execSync("git diff main...HEAD --name-only", { cwd: process.cwd() })
-    .toString()
-    .split("\n")
-    .some((f) => f.includes("count/[countId]/scan/page.tsx"));
-  record(
-    "the scan page was not modified to make retirement work (Decision 5)",
-    !scanPageTouched,
-    scanPageTouched ? "scan/page.tsx IS in the diff" : "scan/page.tsx untouched in main...HEAD",
-  );
+  // This is a statement about one change set (the slice-3 locations work), so it
+  // needs that change set's base ref. Diffing against `main` made it a landmine:
+  // any later, legitimate edit to the scan page (the phone-round-2 refresh fix
+  // was one) turned it into a false FAIL. Opt in with VERIFY_DECISION5_BASE=<ref>.
+  const decision5Base = process.env.VERIFY_DECISION5_BASE;
+  if (decision5Base) {
+    const scanPageTouched = execSync(`git diff ${decision5Base}...HEAD --name-only`, { cwd: process.cwd() })
+      .toString()
+      .split("\n")
+      .some((f) => f.includes("count/[countId]/scan/page.tsx"));
+    record(
+      "the scan page was not modified to make retirement work (Decision 5)",
+      !scanPageTouched,
+      scanPageTouched ? `scan/page.tsx IS in ${decision5Base}...HEAD` : `scan/page.tsx untouched in ${decision5Base}...HEAD`,
+    );
+  } else {
+    skip("the scan page was not modified to make retirement work (Decision 5)", "set VERIFY_DECISION5_BASE=<ref> to check a change set");
+    skipped.push("Decision 5 — scan page untouched by the locations change: needs VERIFY_DECISION5_BASE=<base ref of that change set>");
+  }
 
   // ---- open item 27: /office/vendors has the same Edit affordance ---------
   // The identical row-click pattern lived here first — locations-table.tsx was
@@ -444,7 +594,7 @@ try {
     skipped.push("open item 27 — /office/vendors Edit button: needs at least one vendor row");
   } else {
     const firstVendorName = (await vendorRows.first().locator("td").first().innerText()).trim();
-    await vendorRows.first().getByRole("button", { name: /^edit$/i }).click();
+    await vendorRows.first().getByRole("button", { name: /^edit\b/i }).click();
     const vendorNameField = page.locator("#name");
     const editingVendor = await vendorNameField.inputValue();
     record(
@@ -495,7 +645,7 @@ try {
     );
   }
 
-  // ---- open-item #33: no words glued together by the build ------------------
+  // ---- open-item #44: no words glued together by the build ------------------
   // SWC drops the leading space of a multi-line JSX text run that contains an
   // HTML entity (tests/jsx-entity-spacing.test.ts). This sentence shipped as
   // "closedcount, and there isn't one" and shows whenever no count has closed.
@@ -504,7 +654,7 @@ try {
     const text = (await page.locator("main").innerText()).replace(/\s+/g, " ");
     if (!/on-hand comes from the most recent/.test(text)) {
       skip("the reorder page's no-closed-count sentence reads correctly", "a count has closed, so that sentence is not shown");
-      skipped.push("open item 33 — reorder no-closed-count sentence: only shown before any count closes");
+      skipped.push("open item 44 — reorder no-closed-count sentence: only shown before any count closes");
     } else {
       record(
         "the reorder page's no-closed-count sentence reads correctly",
@@ -524,9 +674,26 @@ try {
 
   const EDITS = Math.min(4, cellCount);
   const navsBeforeEdits = documentLoads;
+  // Snapshot every cost in this organization BEFORE the first edit, straight
+  // from the database (not the formatted value the input displays), keyed by
+  // product id. The cell's aria-label only carries a name, and names repeat
+  // across sizes (a 750 ml and a 1.75 L of the same spirit), so each edited
+  // cell is mapped to every product in this org with that name; restoring an
+  // unedited namesake to its own snapshot value is a no-op.
+  const [costSnapshot] = await sql.query(
+    "SELECT id, name, current_unit_cost AS cost FROM product WHERE organization_id = ?",
+    [runOrgId],
+  );
   for (let i = 0; i < EDITS; i++) {
     const cell = costCells.nth(i);
-    restoreLog.push({ label: await cell.getAttribute("aria-label"), value: await cell.inputValue() });
+    const label = await cell.getAttribute("aria-label");
+    const productName = (label ?? "").replace(/^Unit cost for /, "");
+    const products = costSnapshot.filter((p) => p.name === productName).map(({ id, cost }) => ({ id, cost }));
+    // Refuse to edit what cannot be put back by id.
+    if (products.length === 0) {
+      throw new Error(`no product named "${productName}" in organization ${runOrgId}; refusing to edit a cost I cannot restore`);
+    }
+    restoreLog.push({ label, value: await cell.inputValue(), products });
     await cell.fill(String(11 + i));
     await cell.blur();
     await page.waitForTimeout(700);
@@ -572,13 +739,22 @@ try {
   // `product_par` has zero rows today (AGENTS.md open question 2 / the
   // no-par-no-bar rule) — every on-hand cell on this page must render its
   // unit count alone, with no Meter bar (`role="presentation"`) under it.
+  //
+  // The on-hand cell has two non-bar states: a unit count (when the product is
+  // on a closed count) and "no closed count" (when it is on none — every row,
+  // in a database that has never closed a count). Either one proves the table
+  // rendered on-hand cells at all; zero bars is the assertion.
   const rowsWithUnitCount = await page.locator("table tbody tr").filter({ hasText: /\bunit\b/ }).count();
+  const rowsWithNoCount = await page.locator("table tbody tr").filter({ hasText: /no closed count/i }).count();
   const meterBarsInTable = await page.locator('table [role="presentation"]').count();
   record(
     "a product with no par level renders NO stock bar",
-    rowsWithUnitCount > 0 && meterBarsInTable === 0,
-    `${rowsWithUnitCount} rows show a unit count, ${meterBarsInTable} meter bars rendered`,
+    rowsWithUnitCount + rowsWithNoCount > 0 && meterBarsInTable === 0,
+    `${rowsWithUnitCount} rows show a unit count, ${rowsWithNoCount} show "no closed count", ${meterBarsInTable} meter bars rendered`,
   );
+  if (rowsWithUnitCount === 0) {
+    skipped.push("catalog stock bar for a COUNTED product without par — needs a closed count (every on-hand cell here reads \"no closed count\")");
+  }
 
   // ---- sorting: aria-sort updates on the th, and the rows actually reorder
   //
@@ -589,20 +765,34 @@ try {
   // this class is not.
   const onHandHeader = page.locator('th[aria-sort]', { hasText: /on hand/i });
   const ariaSortBefore = await onHandHeader.getAttribute("aria-sort");
-  const firstProductBefore = await page.locator("table tbody tr").first().locator("span.truncate").first().innerText();
   await onHandHeader.getByRole("button").click();
   await page.waitForTimeout(300);
   const ariaSortAfter = await onHandHeader.getAttribute("aria-sort");
-  const firstProductAfter = await page.locator("table tbody tr").first().locator("span.truncate").first().innerText();
   record(
     "clicking a sortable column header updates aria-sort on that th",
     ariaSortBefore === "none" && ariaSortAfter !== "none" && ariaSortAfter !== ariaSortBefore,
     `before=${ariaSortBefore} after=${ariaSortAfter}`,
   );
+
+  // Row reordering is asserted on the Product column, not On hand: with no
+  // closed count every On hand cell is the same "no closed count", so sorting
+  // by it is all ties and legitimately leaves the first row where it was. A
+  // string column sorts ascending on its first click, descending on its
+  // second, so two clicks give two distinct orders to compare.
+  const productHeader = page.locator('th[aria-sort]', { hasText: /^\s*product/i });
+  const firstRowName = () => page.locator("table tbody tr").first().locator("span.truncate").first().innerText();
+  await productHeader.getByRole("button").click();
+  await page.waitForTimeout(300);
+  const firstProductBefore = await firstRowName();
+  const sortBefore = await productHeader.getAttribute("aria-sort");
+  await productHeader.getByRole("button").click();
+  await page.waitForTimeout(300);
+  const firstProductAfter = await firstRowName();
+  const sortAfter = await productHeader.getAttribute("aria-sort");
   record(
     "sorting actually reorders the rows, not just the header state",
-    firstProductBefore !== firstProductAfter,
-    `first row before="${firstProductBefore}" after="${firstProductAfter}"`,
+    sortBefore !== sortAfter && firstProductBefore !== firstProductAfter,
+    `Product ${sortBefore} -> ${sortAfter}: first row before="${firstProductBefore}" after="${firstProductAfter}"`,
   );
 
   // ---- pagination: renders, and Next actually advances ---------------------
@@ -838,6 +1028,310 @@ try {
   }
 
   // ======================================================================
+  // Phase 2.5 Slice 1 (docs/plans/phase-2.5-invoice-automation) — the
+  // invoice upload + archive tracer bullet. Runs the REAL three-step
+  // handshake through the actual form (create -> PUT -> confirm), then reads
+  // the bytes back through the owner-only file route and compares them
+  // byte-for-byte against what was uploaded. A row appearing in the table
+  // proves the client believes it worked; only the round-trip byte compare
+  // proves the archive actually holds what was sent — the whole point of
+  // AR-1's "verify what actually landed" contract, not the declared size and
+  // hash the browser claimed in step 1.
+  // ======================================================================
+  let invoiceFileHref = null;
+  await page.goto(`${BASE}/office/invoices`, { waitUntil: "networkidle" });
+  await waitForHydration(page, "form");
+  record("invoices page hydrates for the owner", true);
+
+  // Scoped to the table header, not a whole-page substring search — the
+  // upload form above the table has its OWN "File" field label
+  // (components/ui/field.tsx's <label>) that both owner and manager see, so
+  // a bare `page.content().includes(">File<")` is a false positive/negative
+  // trap: it would "pass" for the owner and "fail to fail" for the manager
+  // for the wrong reason (the form's label, not the table's column).
+  const ownerFileColumnCount = await page.locator("table thead th", { hasText: /^File$/ }).count();
+  record(
+    "owner's DOM contains the File column header — positive control for the manager check below",
+    ownerFileColumnCount > 0,
+    ownerFileColumnCount > 0 ? "present, as required" : "MISSING — the table may not be rendering the owner-only column",
+  );
+
+  const fixtureBytes = Buffer.from(`%PDF-1.4 truestock verify-browser fixture ${Date.now()}\n%%EOF`);
+  const fixtureSha256 = createHash("sha256").update(fixtureBytes).digest("hex");
+  // NOT `table tbody tr` count: the empty state (`EmptyState` inside a
+  // colSpan `<td>`) renders as exactly ONE `<tr>`, same as one real invoice
+  // row does — so on a fresh archive "0 invoices -> 1 invoice" is a `tr`
+  // count of 1 -> 1, not 0 -> 1 or N -> N+1. A File link only ever renders on
+  // a real row for the owner, never on the empty state, so it's the signal
+  // that's actually true regardless of how many invoices existed before.
+  const fileLinksBefore = await page.locator('a[href^="/api/invoices/"]').count();
+
+  await page.setInputFiles("#invoice-file", {
+    name: "verify-browser-fixture.pdf",
+    mimeType: "application/pdf",
+    buffer: fixtureBytes,
+  });
+  await page.getByRole("button", { name: /upload invoice/i }).click();
+
+  const verified = await page
+    .getByText(/uploaded and verified/i)
+    .waitFor({ timeout: 20000 })
+    .then(() => true)
+    .catch(() => false);
+  // On failure, read whatever the form is actually showing — the generic
+  // "never reached" message alone doesn't distinguish a slow server action
+  // from a real client-side rejection, and the whole point of a Slice 1
+  // browser check is not to hide that difference behind a timeout.
+  const failureDetail = verified
+    ? "form reports uploaded and verified"
+    : await page
+        .locator('[role="alert"], [role="status"]')
+        .first()
+        .innerText()
+        .then((t) => `no success text after 20s — visible banner: "${t}"`)
+        .catch(() => "no success text after 20s — no alert/status banner visible either");
+  record("the 3-step upload handshake completes end-to-end (create → PUT → confirm)", verified, failureDetail);
+
+  // `router.refresh()` runs after confirm and re-fetches the server
+  // component tree — poll instead of a fixed sleep, since a Next dev server
+  // compiling the invoices server action for the first time in this run can
+  // legitimately take longer than a single short timeout.
+  let fileLinksAfter = fileLinksBefore;
+  for (let i = 0; i < 20; i++) {
+    fileLinksAfter = await page.locator('a[href^="/api/invoices/"]').count();
+    if (fileLinksAfter > fileLinksBefore) break;
+    await page.waitForTimeout(500);
+  }
+  record(
+    "a new row lands in the archive after upload",
+    fileLinksAfter > fileLinksBefore,
+    `${fileLinksBefore} -> ${fileLinksAfter} File links`,
+  );
+
+  // Newest first (listInvoicesForOwner orders by createdAt desc), so the row
+  // just created is the table's first body row.
+  const newRow = page.locator("table tbody tr").first();
+  const newRowText = (await newRow.innerText()).replace(/\s+/g, " ");
+  record(
+    "the new row shows placeholders for fields extraction hasn't filled in yet (Slice 2)",
+    /Not yet extracted/.test(newRowText),
+    newRowText.slice(0, 160),
+  );
+  record(
+    "the new row's status pill shows the invoice's real DB status (uploaded), not a fabricated one",
+    /\buploaded\b/i.test(newRowText),
+    newRowText.slice(0, 160),
+  );
+
+  const fileHref = await newRow.locator('a[href^="/api/invoices/"]').getAttribute("href");
+  record("the new row has a File link (owner)", Boolean(fileHref), fileHref ?? "none found");
+
+  if (fileHref) {
+    invoiceFileHref = fileHref; // reused by the manager role-gating check below
+    invoiceIdToCleanup = Number(fileHref.match(/\/api\/invoices\/(\d+)\/file/)?.[1]) || null;
+    const fileResponse = await page.request.get(`${BASE}${fileHref}`);
+    const servedBytes = Buffer.from(await fileResponse.body());
+    const servedSha256 = createHash("sha256").update(servedBytes).digest("hex");
+    record(
+      "GET on the File link serves back the EXACT bytes that were uploaded",
+      fileResponse.status() === 200 && servedSha256 === fixtureSha256 && servedBytes.equals(fixtureBytes),
+      `status=${fileResponse.status()} sha256 served=${servedSha256.slice(0, 12)}… expected=${fixtureSha256.slice(0, 12)}…`,
+    );
+  } else {
+    skip("File link byte round-trip", "no href found on the new row — see the File-link check above");
+  }
+
+  // ======================================================================
+  // Phase 2.5 Slice 3 (docs/plans/phase-2.5-invoice-automation) — matching.
+  //
+  // tests/matching.test.ts already proves matchLinesToProducts and the
+  // vendor_alias upsert in isolation, against a real MariaDB but by calling
+  // the domain function directly. What only a browser can prove:
+  //
+  //   A. a human's manual match on the REAL review UI — a real product
+  //      <select>, a real Approve button, not page.evaluate or a direct call
+  //      to applyLineReviewTx — persists as a NEW vendor_alias row through
+  //      the real reviewInvoiceAction server action.
+  //   B. a line that arrives PRE-matched (what the pipeline's own
+  //      matchLinesToProducts, already unit-tested, would have produced)
+  //      renders correctly on the review screen: no "unmatched item" badge,
+  //      the product-select shows the right product already selected.
+  // ======================================================================
+  const [[ownerUserRow]] = await sql.query(
+    "SELECT id, organization_id AS organizationId FROM user WHERE email = ?",
+    [EMAIL],
+  );
+  const slice3OrgId = ownerUserRow?.organizationId ?? null;
+
+  if (!slice3OrgId) {
+    skip(
+      "slice 3 matching (manual alias creation + pre-matched rendering)",
+      `could not resolve organization_id for ${EMAIL}`,
+    );
+    skipped.push("slice 3 matching — owner user row not found by email");
+  } else {
+    // Reuse an existing vendor for this org if one exists; the catalog seed
+    // creates none (db/README.md), so in practice this always creates one —
+    // but reusing is still correct if an earlier manual run left one behind.
+    const [existingVendors] = await sql.query(
+      "SELECT id FROM vendor WHERE organization_id = ? ORDER BY id LIMIT 1",
+      [slice3OrgId],
+    );
+    if (existingVendors.length > 0) {
+      slice3VendorId = existingVendors[0].id;
+    } else {
+      const [vendorInsert] = await sql.execute(
+        "INSERT INTO vendor (organization_id, name) VALUES (?, ?)",
+        [slice3OrgId, "Verify Slice 3 Vendor"],
+      );
+      slice3VendorId = vendorInsert.insertId;
+      slice3CreatedVendor = true;
+    }
+
+    const [[matchProductRow]] = await sql.query(
+      "SELECT id FROM product WHERE organization_id = ? AND active = 1 ORDER BY id LIMIT 1",
+      [slice3OrgId],
+    );
+    const slice3ProductId = matchProductRow?.id ?? null;
+
+    if (!slice3ProductId) {
+      skip(
+        "slice 3 matching (manual alias creation + pre-matched rendering)",
+        "no active product in the catalog to match against",
+      );
+      skipped.push("slice 3 matching — no active product found");
+    } else {
+      const vendorItemCode = `VERIFY-${Date.now()}`;
+      slice3VendorItemCode = vendorItemCode;
+      const today = new Date().toISOString().slice(0, 10);
+      const retentionUntil = `${Number(today.slice(0, 4)) + 3}${today.slice(4)}`;
+
+      // ---- Part A: seed one unmatched invoice + line -----------------------
+      const [invoiceAInsert] = await sql.execute(
+        `INSERT INTO invoice
+           (organization_id, vendor_id, status, source, file_sha256, file_size_bytes,
+            invoice_date, invoice_number, total_gross, total_discount, total_net,
+            currency, retention_until)
+         VALUES (?, ?, 'needs_review', 'pdf', ?, 100, ?, ?, '100.00', '0.00', '100.00',
+                 'USD', ?)`,
+        [slice3OrgId, slice3VendorId, "a".repeat(64), today, `VERIFY-SLICE3-A-${Date.now()}`, retentionUntil],
+      );
+      slice3UnmatchedInvoiceId = invoiceAInsert.insertId;
+      await attachFixtureFile(sql, slice3OrgId, slice3UnmatchedInvoiceId);
+
+      await sql.execute(
+        `INSERT INTO invoice_line
+           (organization_id, invoice_id, line_number, line_type, vendor_item_code, description,
+            quantity, uom, unit_cost, extended_cost, raw_gross, raw_discount, raw_net,
+            exception_flags, matched_product_id, match_method)
+         VALUES (?, ?, 1, 'product', ?, 'Verify Slice 3 — unmatched line', '12.000', 'each',
+                 '8.3300', '100.00', '100.00', '0.00', '100.00', ?, NULL, 'unmatched')`,
+        [slice3OrgId, slice3UnmatchedInvoiceId, vendorItemCode, JSON.stringify(["unmatched item"])],
+      );
+
+      // ---- confirm the seeded state on the real review page -----------------
+      await page.goto(`${BASE}/office/invoices/${slice3UnmatchedInvoiceId}`, { waitUntil: "networkidle" });
+      await waitForHydration(page, "form");
+
+      const unmatchedBadgeVisible = await page
+        .getByText("Unmatched item", { exact: true })
+        .first()
+        .isVisible()
+        .catch(() => false);
+      record("slice 3: unmatched item badge is visible on the seeded line", unmatchedBadgeVisible);
+
+      const unmatchedSelect = page.locator('select[aria-label="Matched product for line 1"]');
+      const selectValueBefore = await unmatchedSelect.inputValue().catch(() => null);
+      record(
+        "slice 3: product-select starts empty for an unmatched line",
+        selectValueBefore === "",
+        `value="${selectValueBefore}"`,
+      );
+
+      // ---- Part A continued: match it through the REAL UI, real Approve ----
+      await unmatchedSelect.selectOption(String(slice3ProductId));
+      await page.getByRole("button", { name: "Approve", exact: true }).click();
+
+      const approved = await page
+        .getByText(/Reviewed — awaiting approval/i)
+        .first()
+        .waitFor({ timeout: 20000 })
+        .then(() => true)
+        .catch(() => false);
+      const approveFailureDetail = approved
+        ? 'form shows the post-approve "Reviewed — awaiting approval" banner'
+        : await page
+            .locator('[role="alert"], [role="status"]')
+            .first()
+            .innerText()
+            .then((t) => `no success banner after 20s — visible banner: "${t}"`)
+            .catch(() => "no success banner after 20s — no alert/status banner visible either");
+      record(
+        "slice 3: manual match approves through the real Approve button (real server action, not a direct domain call)",
+        approved,
+        approveFailureDetail,
+      );
+
+      // ---- ground truth: a NEW vendor_alias row exists -----------------------
+      const [aliasRows] = await sql.query(
+        `SELECT id, product_id AS productId FROM vendor_alias
+         WHERE organization_id = ? AND vendor_id = ? AND vendor_item_code = ?`,
+        [slice3OrgId, slice3VendorId, vendorItemCode],
+      );
+      record(
+        "slice 3: the manual match persisted a NEW vendor_alias(organization_id, vendor_id, vendor_item_code, product_id) row",
+        aliasRows.length === 1 && aliasRows[0].productId === slice3ProductId,
+        aliasRows.length === 1
+          ? `vendor_alias id=${aliasRows[0].id} product_id=${aliasRows[0].productId} (expected ${slice3ProductId})`
+          : `expected exactly 1 matching row, found ${aliasRows.length}`,
+      );
+
+      // ---- Part B: seed a pre-matched line for the SAME vendor + item code,
+      // simulating what matchLinesToProducts (already unit-tested in
+      // tests/matching.test.ts) would have produced at extraction time. -------
+      const [invoiceBInsert] = await sql.execute(
+        `INSERT INTO invoice
+           (organization_id, vendor_id, status, source, file_sha256, file_size_bytes,
+            invoice_date, invoice_number, total_gross, total_discount, total_net,
+            currency, retention_until)
+         VALUES (?, ?, 'needs_review', 'pdf', ?, 100, ?, ?, '50.00', '0.00', '50.00',
+                 'USD', ?)`,
+        [slice3OrgId, slice3VendorId, "b".repeat(64), today, `VERIFY-SLICE3-B-${Date.now()}`, retentionUntil],
+      );
+      slice3PrematchedInvoiceId = invoiceBInsert.insertId;
+      await attachFixtureFile(sql, slice3OrgId, slice3PrematchedInvoiceId);
+
+      await sql.execute(
+        `INSERT INTO invoice_line
+           (organization_id, invoice_id, line_number, line_type, vendor_item_code, description,
+            quantity, uom, unit_cost, extended_cost, raw_gross, raw_discount, raw_net,
+            exception_flags, matched_product_id, match_method)
+         VALUES (?, ?, 1, 'product', ?, 'Verify Slice 3 — pre-matched line', '6.000', 'each',
+                 '8.3300', '50.00', '50.00', '0.00', '50.00', NULL, ?, 'vendor_alias_code')`,
+        [slice3OrgId, slice3PrematchedInvoiceId, vendorItemCode, slice3ProductId],
+      );
+
+      await page.goto(`${BASE}/office/invoices/${slice3PrematchedInvoiceId}`, { waitUntil: "networkidle" });
+      await waitForHydration(page, "form");
+
+      const prematchedBadgeCount = await page.getByText("Unmatched item", { exact: true }).count();
+      record(
+        "slice 3: a pre-matched line renders with NO unmatched-item badge",
+        prematchedBadgeCount === 0,
+        `${prematchedBadgeCount} "Unmatched item" badges found (expected 0)`,
+      );
+
+      const prematchedSelect = page.locator('select[aria-label="Matched product for line 1"]');
+      const prematchedValue = await prematchedSelect.inputValue().catch(() => null);
+      record(
+        "slice 3: a pre-matched line's product-select shows the correct product already selected",
+        prematchedValue === String(slice3ProductId),
+        `value="${prematchedValue}" expected="${slice3ProductId}"`,
+      );
+    }
+  }
+
+  // ======================================================================
   // Role gating in a browser (invariant 8 / invariant 7)
   //
   // The test suite already proves the ACTION layer strips cost for a manager
@@ -917,6 +1411,52 @@ try {
           caseInputs > 0,
           `${caseInputs} case-size inputs (0 would mean the page simply did not render)`,
         );
+
+        // ---- AR-7 on the invoices archive: same rule, different screen ----
+        // Scoped to the table header, not a whole-page substring — see the
+        // owner-side comment above on why ">File<" alone is a trap (the
+        // upload form's own "File" field label is legitimately present for
+        // a manager too, since manager can also upload invoices).
+        await rolePage.goto(`${BASE}/office/invoices`, { waitUntil: "networkidle" });
+        const invoiceHtml = await rolePage.content();
+        const invoiceFileColumnCount = await rolePage.locator("table thead th", { hasText: /^File$/ }).count();
+        const invoiceFileLinks = await rolePage.locator('a[href^="/api/invoices/"]').count();
+        const invoiceRows = await rolePage.locator("table tbody tr").count();
+        record(
+          'a manager\'s invoices archive has no "File" column header and no File link anywhere in the DOM',
+          invoiceFileColumnCount === 0 && invoiceFileLinks === 0,
+          `File column headers=${invoiceFileColumnCount} File links=${invoiceFileLinks}`,
+        );
+        record(
+          "a manager CAN still see the invoices table itself — positive control",
+          invoiceRows > 0,
+          `${invoiceRows} rows (0 would mean the page simply did not render)`,
+        );
+
+        // The redaction is enforced at the query layer (listInvoicesRedacted
+        // never SELECTs these columns — lib/domain/invoices.ts), so this is a
+        // second, independent proof that the omission actually reaches the
+        // page: these strings should never be typed into a manager's DOM at
+        // all, not even in a data attribute.
+        record(
+          "a manager's invoices DOM contains no file-hash/size internals",
+          !/\bfileSha256\b|\bfileSizeBytes\b/.test(invoiceHtml),
+          "checked for the raw field names leaking into the payload",
+        );
+
+        // The file route itself is owner-only regardless of what the page
+        // renders — a manager who somehow obtains the URL (it's not secret,
+        // just gated) must still be refused the bytes.
+        if (invoiceFileHref) {
+          const managerFileResponse = await rolePage.request.get(`${BASE}${invoiceFileHref}`);
+          record(
+            "a manager GETting the owner-only file route is refused, not served bytes",
+            managerFileResponse.status() !== 200,
+            `status=${managerFileResponse.status()}`,
+          );
+        } else {
+          skip("manager GET on the file route", "no invoice was created in the owner pass above to test against");
+        }
       } else {
         await rolePage.goto(`${BASE}/office/locations`, { waitUntil: "networkidle" });
         record(
@@ -926,6 +1466,16 @@ try {
         );
         const navLinks = await rolePage.locator('a[href="/office/locations"]').count();
         record("staff see no Locations link", navLinks === 0, `${navLinks} links to /office/locations`);
+
+        // Staff has no back-office surface at all (requireOfficeUser) —
+        // invoices is no exception, same bounce to /count as every other
+        // office screen.
+        await rolePage.goto(`${BASE}/office/invoices`, { waitUntil: "networkidle" });
+        record(
+          "staff are redirected away from /office/invoices",
+          !rolePage.url().includes("/office"),
+          `landed on ${rolePage.url()}`,
+        );
       }
     } finally {
       await roleContext.close();
@@ -1262,17 +1812,119 @@ try {
 // exactly the plausible-but-wrong data AGENTS.md warns about, and it would
 // silently make the valuation non-zero and wrong.
 try {
-  for (const { label, value } of restoreLog) {
-    const name = label.replace(/^Unit cost for /, "");
-    await sql.execute("UPDATE product SET current_unit_cost = ? WHERE name = ?", [value === "" ? null : value, name]);
+  // By id AND organization, from the snapshot taken before the first edit —
+  // never by name, which is neither unique (750 ml and 1.75 L of one spirit)
+  // nor tenant-scoped.
+  let restoredCostRows = 0;
+  for (const { products } of restoreLog) {
+    for (const { id, cost } of products) {
+      const [restored] = await sql.execute(
+        "UPDATE product SET current_unit_cost = ? WHERE id = ? AND organization_id = ?",
+        [cost, id, runOrgId],
+      );
+      restoredCostRows += restored.affectedRows;
+    }
   }
-  record("edited product costs restored to their original values", true, `${restoreLog.length} products`);
+  record(
+    "edited product costs restored to their original values",
+    true,
+    `${restoreLog.length} edited cells, ${restoredCostRows} product rows restored by id`,
+  );
 
   // The throwaway locations this run created are removed by the harness — this
   // is a fixture teardown, not the application deleting a location. Invariant 6
   // still holds: the app only ever retired it, which is what was verified above.
-  const [res] = await sql.execute("DELETE FROM location WHERE name LIKE 'Verify Bar %' OR name LIKE 'Verify Patio %'");
-  record("throwaway verification locations removed", true, `${res.affectedRows} rows`);
+  // Only ids this run recorded, only in the organization it ran in. The exact
+  // stamped names are re-resolved first so a run that died between the Create
+  // click and the id lookup does not leak its row; the stamp is unique to this
+  // run, so that lookup cannot match anything that was not made by it.
+  if (locationStamp) {
+    await trackLocationByName(`Verify Bar ${locationStamp}`);
+    await trackLocationByName(`Verify Patio ${locationStamp}`);
+  }
+  let removedLocations = 0;
+  for (const id of createdLocationIds) {
+    const [removed] = await sql.execute("DELETE FROM location WHERE id = ? AND organization_id = ?", [id, runOrgId]);
+    removedLocations += removed.affectedRows;
+  }
+  record(
+    "throwaway verification locations removed",
+    removedLocations === createdLocationIds.size,
+    `${removedLocations} of ${createdLocationIds.size} recorded rows`,
+  );
+
+  // The Slice 1 fixture invoice — deleted here by the harness (not by any
+  // app code; invoices have no delete affordance and shouldn't) so repeated
+  // runs don't accumulate rows and files in the dev archive.
+  if (invoiceIdToCleanup) {
+    const [[invoiceRow]] = await sql.query(
+      "SELECT file_path AS filePath FROM invoice WHERE id = ? AND organization_id = ?",
+      [invoiceIdToCleanup, runOrgId],
+    );
+    await sql.execute("DELETE FROM extraction_job WHERE invoice_id = ? AND organization_id = ?", [
+      invoiceIdToCleanup,
+      runOrgId,
+    ]);
+    await sql.execute("DELETE FROM invoice WHERE id = ? AND organization_id = ?", [invoiceIdToCleanup, runOrgId]);
+    if (invoiceRow?.filePath) {
+      await unlink(path.resolve(invoiceStorageRoot(), invoiceRow.filePath)).catch(() => {});
+    }
+    record(
+      "throwaway verification invoice removed",
+      true,
+      `invoice #${invoiceIdToCleanup}, its extraction_job row, and its stored file deleted`,
+    );
+  }
+
+  // The Slice 3 matching fixtures — two invoices + lines, the vendor_alias
+  // row the manual-match check created, and (only if this run created one)
+  // the throwaway vendor. Deleted here by the harness, same reasoning as the
+  // Slice 1 cleanup above: no app code deletes any of these, so nothing here
+  // exercises a real deletion path — it is fixture teardown, not a feature.
+  if (slice3UnmatchedInvoiceId || slice3PrematchedInvoiceId) {
+    // Never a row this run did not create. A vendor the run made holds only
+    // aliases the run made, so all of them go with it. A pre-existing vendor
+    // keeps its real aliases: only the one carrying the item code this run
+    // minted is removed.
+    let removedAliasRows = 0;
+    if (slice3VendorId && slice3CreatedVendor) {
+      const [aliasDelete] = await sql.execute("DELETE FROM vendor_alias WHERE organization_id = ? AND vendor_id = ?", [
+        runOrgId,
+        slice3VendorId,
+      ]);
+      removedAliasRows = aliasDelete.affectedRows;
+    } else if (slice3VendorId && slice3VendorItemCode) {
+      const [aliasDelete] = await sql.execute(
+        "DELETE FROM vendor_alias WHERE organization_id = ? AND vendor_id = ? AND vendor_item_code = ?",
+        [runOrgId, slice3VendorId, slice3VendorItemCode],
+      );
+      removedAliasRows = aliasDelete.affectedRows;
+    }
+    for (const id of [slice3UnmatchedInvoiceId, slice3PrematchedInvoiceId]) {
+      if (!id) continue;
+      const [[stored]] = await sql.query(
+        "SELECT file_path AS filePath FROM invoice WHERE id = ? AND organization_id = ?",
+        [id, runOrgId],
+      );
+      await sql.execute("DELETE FROM invoice_line WHERE invoice_id = ? AND organization_id = ?", [id, runOrgId]);
+      await sql.execute("DELETE FROM extraction_job WHERE invoice_id = ? AND organization_id = ?", [id, runOrgId]);
+      await sql.execute("DELETE FROM invoice WHERE id = ? AND organization_id = ?", [id, runOrgId]);
+      if (stored?.filePath) await unlink(path.resolve(invoiceStorageRoot(), stored.filePath)).catch(() => {});
+    }
+    let removedVendor = false;
+    if (slice3CreatedVendor && slice3VendorId) {
+      await sql.execute("DELETE FROM vendor WHERE id = ? AND organization_id = ?", [slice3VendorId, runOrgId]);
+      removedVendor = true;
+    }
+    record(
+      "throwaway slice 3 matching fixtures removed",
+      true,
+      `invoices #${[slice3UnmatchedInvoiceId, slice3PrematchedInvoiceId].filter(Boolean).join(", #")}, ` +
+        `their lines and extraction_job rows, ${removedAliasRows} vendor_alias row(s)` +
+        (removedVendor ? `, and the throwaway vendor #${slice3VendorId}` : " (vendor was pre-existing, left alone)") +
+        " deleted",
+    );
+  }
 } catch (err) {
   record("dev data restored", false, `MANUAL CLEANUP NEEDED — ${String(err).split("\n")[0]}; intended: ${JSON.stringify(restoreLog)}`);
 }
@@ -1284,6 +1936,9 @@ record(
   consoleErrors.length === 0,
   consoleErrors.slice(0, 3).join(" | ") || "none",
 );
+if (consoleErrors.length) {
+  console.log(`  failed responses seen (${failedResponses.length}): ${[...new Set(failedResponses)].join(", ") || "none"}`);
+}
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);

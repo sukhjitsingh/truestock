@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronLeft, CalendarDays, Check } from "lucide-react";
+import { ChevronLeft, CalendarDays, CheckCircle2 } from "lucide-react";
 import { requireUser } from "@/lib/current-user";
 import { getCountAction, getCountTotalsAction } from "@/app/actions/counts";
 import { DetailHeader, HeaderPill } from "@/components/ui/detail-header";
@@ -10,7 +10,10 @@ import { ProgressCard } from "@/components/count/progress-card";
 import { StatusTimeline } from "@/components/count/status-timeline";
 import { CountLineCard } from "@/components/count/count-line-card";
 import { SessionActions } from "@/components/count/session-actions";
+import { RefreshOnOpen } from "@/components/count/refresh-on-open";
 import { formatDate } from "@/lib/utils";
+import { isCountWritable } from "@/lib/count-status";
+import { describeValuationCoverage } from "@/lib/valuation-coverage";
 
 export default async function CountSessionPage({
   params,
@@ -32,16 +35,18 @@ export default async function CountSessionPage({
 
   const { count, lines } = detail.data;
   const locations = [...new Set(lines.map((l) => l.locationName))];
+  const writable = isCountWritable(count.status);
 
   return (
     <div className="pb-action-bar">
+      {writable ? <RefreshOnOpen /> : null}
       <DetailHeader
         title={`Count #${count.id}`}
         leading={
           <Link
             href="/count"
             aria-label="Back to counts"
-            className="flex size-11 items-center justify-center rounded-full border border-header-foreground/20"
+            className="flex size-11 items-center justify-center rounded-full border border-header-foreground/20 text-header-foreground transition-colors hover:bg-header-foreground/10"
           >
             <ChevronLeft className="size-5" aria-hidden="true" />
           </Link>
@@ -66,17 +71,22 @@ export default async function CountSessionPage({
       />
 
       {/*
-        Invariant 1 made visible. A closed count shows why there is no edit
-        path rather than leaving the missing action bar unexplained.
+        Invariant 1 Immutable Closed Count Audit Mode:
+        Closed counts render a persistent immutable audit notification banner explaining
+        that the record is permanent and cannot be modified.
       */}
       {count.status === "closed" ? (
-        <div className="mx-bar-pad mt-3 flex items-start gap-2 rounded-md border border-border bg-muted p-3">
-          <Check className="mt-0.5 size-4 shrink-0 text-success" aria-hidden="true" />
-          <p className="text-caption text-muted-foreground">
-            {count.closedAt ? `Closed ${formatDate(count.closedAt)}. ` : ""}
-            This record is permanent — corrections happen as a new adjustment, never by
-            editing this count.
-          </p>
+        <div className="mx-bar-pad mt-4 flex items-start gap-3 rounded-lg border border-border bg-success-bg/20 p-3.5 text-foreground">
+          <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-success" aria-hidden="true" />
+          <div>
+            <p className="text-row-subtitle font-semibold text-foreground">
+              Immutable closed count record
+            </p>
+            <p className="mt-0.5 text-caption text-muted-foreground">
+              {count.closedAt ? `Closed on ${formatDate(count.closedAt)}. ` : ""}
+              This count record is permanently sealed. Discrepancies and corrections must be recorded as a new adjustment.
+            </p>
+          </div>
         </div>
       ) : null}
 
@@ -107,7 +117,16 @@ export default async function CountSessionPage({
         ) : (
           <CardStack>
             {lines.map((line) => (
-              <CountLineCard key={line.id} data={line} />
+              <CountLineCard
+                key={line.id}
+                data={line}
+                // Deep-links into the line's own leg. The scan page re-validates
+                // the id against the active locations; a read-only count gets no
+                // link at all.
+                href={
+                  writable ? `/count/${count.id}/scan?locationId=${line.locationId}` : undefined
+                }
+              />
             ))}
           </CardStack>
         )}
@@ -118,7 +137,9 @@ export default async function CountSessionPage({
         status={count.status}
         role={user.role}
         totalValue={totals.data.totalValue}
+        coverage={describeValuationCoverage(totals.data)}
       />
     </div>
   );
 }
+

@@ -102,6 +102,13 @@ const VendorsIcon: RailIcon = ({ className }) => (
   </svg>
 );
 
+const InvoicesIcon: RailIcon = ({ className }) => (
+  <svg {...iconProps} className={className}>
+    <path d="M6 2.5h9l3 3V21a.5.5 0 0 1-.5.5H6.5A.5.5 0 0 1 6 21V3a.5.5 0 0 1 .5-.5Z" strokeLinejoin="round" />
+    <path d="M9 9h6M9 13h6M9 17h4" strokeLinecap="round" />
+  </svg>
+);
+
 const ReorderIcon: RailIcon = ({ className }) => (
   <svg {...iconProps} className={className}>
     <path
@@ -162,6 +169,7 @@ export function OfficeRail({
     { href: "/office/catalog", label: "Catalog", icon: CatalogIcon },
     { href: "/office/locations", label: "Locations", icon: LocationsIcon },
     { href: "/office/vendors", label: "Vendors", icon: VendorsIcon },
+    { href: "/office/invoices", label: "Invoices", icon: InvoicesIcon },
     { href: "/office/reorder", label: "Reorder", icon: ReorderIcon },
     ...(role === "owner" ? [{ href: "/office/users", label: "Users", icon: UsersIcon }] : []),
   ];
@@ -183,7 +191,7 @@ export function OfficeRail({
     <nav
       aria-label="Back office"
       className={cn(
-        "flex shrink-0 flex-col items-stretch gap-1 border-r border-border bg-card px-2.5 py-3",
+        "flex shrink-0 flex-col items-stretch gap-1 border-r border-border/70 bg-card/75 px-2.5 py-3 backdrop-blur-xl transition-all",
         expanded ? "w-52" : "w-16 items-center",
       )}
     >
@@ -222,7 +230,11 @@ export function OfficeRail({
             // text when expanded — never both, or a screen reader reads it twice.
             aria-label={expanded ? undefined : link.label}
             title={expanded ? undefined : link.label}
-            className={cn(itemClass, active && "border-border bg-background text-accent")}
+            className={cn(
+              itemClass,
+              "transition-all duration-150",
+              active && "border-accent/40 bg-accent/10 font-semibold text-accent shadow-xs",
+            )}
           >
             <Icon className="size-5 shrink-0" />
             {expanded ? (

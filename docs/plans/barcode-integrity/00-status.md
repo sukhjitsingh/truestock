@@ -287,9 +287,9 @@ production build OK (engine copy runs first); browser harness **53/55** — all
 stock checks.
 
 Recorded for the project: `STATE.md` (three "verified" rows, a 2026-11-05
-history entry, test count 260/23 files); `docs/open-items.md` #31 (Fix 3,
-deferred), #32 (`bun run docker:reset` after merging), #33 (glued JSX words,
-live on `/office/reorder`), #34 (built-in reader branch unverified on a
+history entry, test count 260/23 files); `docs/open-items.md` #42 (Fix 3,
+deferred), #43 (`bun run docker:reset` after merging), #44 (glued JSX words,
+live on `/office/reorder`), #45 (built-in reader branch unverified on a
 phone); `AGENTS.md` working agreements for `normalizeBarcode`,
 `formatProductSize`, and the same-origin reader engine.
 

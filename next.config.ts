@@ -62,6 +62,18 @@ const nextConfig: NextConfig = {
   // Hostinger managed Node hosting: emit a minimal self-contained server.
   // Do not remove — the deployed footprint depends on it (CLAUDE.md, spec §11).
   output: "standalone",
+  // `@firecrawl/pdf-inspector` ships a native Rust addon (napi-rs, a `.node`
+  // binary) loaded via `require()`. Left to the default bundler, Next tries
+  // to trace and inline it into the RSC/server bundle like ordinary JS and
+  // either fails the build or produces a bundle whose native binary isn't
+  // where Node expects it at runtime. Declaring it "external" here tells
+  // Next to leave the package as a plain `node_modules` `require()` instead —
+  // the correct handling for any native-addon dependency — and, combined
+  // with `output: "standalone"`, is what makes the trace step copy the
+  // package (native binary included) into `.next/standalone/node_modules`
+  // rather than silently dropping it. Verified by inspecting the standalone
+  // output after a build — see this repo's Slice 2 backend report.
+  serverExternalPackages: ["@firecrawl/pdf-inspector"],
   // Photos are served from storage with signed URLs; disabling the built-in
   // optimizer also removes that self-hosted attack surface. As of 2026-07,
   // this also keeps `sharp`'s libvips CVEs dormant (open-items.md #5) — do
@@ -75,6 +87,17 @@ const nextConfig: NextConfig = {
       {
         source: "/(.*)",
         headers: SECURITY_HEADERS,
+      },
+      // The invoice file is shown in the review page's "Source Document
+      // Preview" <iframe>, which `X-Frame-Options: DENY` blocks outright.
+      // Next documents that when two entries match a path and set the same
+      // key, the LATER one wins — so this entry must stay after the global
+      // one above, and only relaxes the legacy header to same-origin for this
+      // one path. The matching CSP half (`frame-ancestors`, `object-src`) is
+      // in lib/csp.ts; the two have to move together.
+      {
+        source: "/api/invoices/:id(\\d+)/file",
+        headers: [{ key: "X-Frame-Options", value: "SAMEORIGIN" }],
       },
     ];
   },

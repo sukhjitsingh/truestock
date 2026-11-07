@@ -1,0 +1,388 @@
+"use server";
+
+/**
+ * Invoice server actions — Phase 2.5, Slice 1 (upload + archive tracer
+ * bullet), Slice 2 (extraction review), and Slice 4 (approve / cost flow).
+ * Every export checks session + role itself (CLAUDE.md invariant 7) via
+ * lib/authz.ts, never relying on middleware. All writes run through
+ * lib/domain/invoices.ts, lib/domain/invoice-lines.ts, and (for approval)
+ * lib/domain/invoice-approval.ts, which own the upload/confirm handshake
+ * [AR-6], the tenant-ownership checks [AR-2], and the two-query
+ * owner/manager split [AR-7].
+ *
+ * Upload and confirm are owner + manager, never staff — invoices are not a
+ * staff concern (spec §4: staff is count-only). Everything else here —
+ * reading a single invoice's full (unredacted) detail, its lines, reviewing,
+ * approving, rejecting, and resending to extraction — is owner-only, matching
+ * `lib/authz.ts:canSeeCost`; the manager archive list goes through
+ * `listInvoicesRedactedAction`, backed by a query that never selects a
+ * monetary column.
+ *
+ * `uploadInvoiceAction` and `confirmUploadAction` deliberately return a
+ * shaped DTO rather than the raw `InvoiceRow` domain type — the shape itself
+ * is the cost-data gate (invariant 8), not a filter applied after the fact.
+ */
+import { requireRole } from "@/lib/authz";
+import { runAction, type ActionResult } from "@/lib/action-result";
+import * as invoices from "@/lib/domain/invoices";
+import * as invoiceLines from "@/lib/domain/invoice-lines";
+import {
+  approveInvoice,
+  getInvoicePostingReport,
+  type ApproveInvoiceResult,
+  type PostingReport,
+} from "@/lib/domain/invoice-approval";
+import {
+  createAuditPacket,
+  buildAuditPacketJob,
+  getAuditPacketStatus,
+  previewAuditPacket,
+  type AuditPacketPreview,
+  type AuditPacketStatusResult,
+} from "@/lib/domain/audit-packets";
+import {
+  uploadInvoiceSchema,
+  confirmUploadSchema,
+  getInvoiceSchema,
+  getInvoiceLinesSchema,
+  listInvoicesSchema,
+  reviewInvoiceSchema,
+  rejectInvoiceSchema,
+  resendToExtractionSchema,
+  approveInvoiceSchema,
+  getInvoicePostingReportSchema,
+  createAuditPacketSchema,
+  getAuditPacketSchema,
+} from "@/lib/validation/invoices";
+
+export type UploadInvoiceResult =
+  | { outcome: "created"; invoiceId: number; uploadUrl: string; status: invoices.InvoiceStatus }
+  // canOpen: the review page is owner-only, so only an owner gets a link to it.
+  // A manager still learns which invoice it is, just not a way to open it.
+  | { outcome: "duplicate"; duplicate: invoices.DuplicateInvoice; canOpen: boolean };
+
+/**
+ * Creates the `invoice` + `extraction_job` rows and hands back where to PUT
+ * the file. Rejects any `contentType` outside the accepted allowlist and
+ * caps the declared byte length at 25 MB — both enforced again on the real
+ * request body in `app/api/invoices/[id]/file/route.ts`'s `PUT`, since a
+ * declared value here is client-supplied input.
+ */
+export async function uploadInvoiceAction(
+  input: unknown,
+): Promise<ActionResult<UploadInvoiceResult>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = uploadInvoiceSchema.parse(input);
+    const created = await invoices.createInvoiceForUpload(actor, parsed);
+    if (created.outcome === "duplicate") {
+      return {
+        outcome: "duplicate" as const,
+        duplicate: created.duplicate,
+        canOpen: actor.role === "owner",
+      };
+    }
+    return {
+      outcome: "created" as const,
+      invoiceId: created.invoice.id,
+      uploadUrl: `/api/invoices/${created.invoice.id}/file`,
+      status: created.invoice.status,
+    };
+  });
+}
+
+export interface ConfirmUploadResult {
+  matched: boolean;
+  status: invoices.InvoiceStatus;
+  /** Set when another live invoice already holds this file; `matched` is then false. */
+  duplicate?: invoices.DuplicateInvoice;
+  /** Present with `duplicate`: true only for an owner (the review page is owner-only). */
+  canOpen?: boolean;
+}
+
+/**
+ * The `awaiting_upload -> queued` edge. `matched: false` means the bytes on
+ * disk didn't verify against what was declared at upload time (or haven't
+ * landed yet) — the client's remedy is to retry the `PUT`, not to retry this
+ * call blindly.
+ */
+export async function confirmUploadAction(
+  input: unknown,
+): Promise<ActionResult<ConfirmUploadResult>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = confirmUploadSchema.parse(input);
+    const result = await invoices.markUploadConfirmed(actor, parsed.invoiceId);
+    if (result.duplicate) {
+      return {
+        matched: false,
+        status: result.invoice.status,
+        duplicate: result.duplicate,
+        canOpen: actor.role === "owner",
+      };
+    }
+    return { matched: result.matched, status: result.invoice.status };
+  });
+}
+
+/**
+ * Full invoice detail, including every monetary column. Owner-only —
+ * matches `lib/authz.ts:canSeeCost` and 04-slices.md's Slice 2 acceptance
+ * criterion that this screen refuses a manager.
+ */
+export async function getInvoiceAction(
+  input: unknown,
+): Promise<ActionResult<invoices.InvoiceRow>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = getInvoiceSchema.parse(input);
+    return invoices.getInvoice(actor, parsed.invoiceId);
+  });
+}
+
+/**
+ * The review screen's extraction status (F8): whether the newest extraction
+ * job failed, an owner-safe plain-language `failureMessage` derived from the
+ * job's error CODE (never its raw error text), whether Retry may be offered,
+ * and the invoice's line count. Owner-only and org-scoped, same gate as
+ * `getInvoiceAction`.
+ */
+export async function getInvoiceExtractionOutcomeAction(
+  input: unknown,
+): Promise<ActionResult<invoices.InvoiceExtractionOutcome>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = getInvoiceSchema.parse(input);
+    return invoices.getInvoiceExtractionOutcome(actor, parsed.invoiceId);
+  });
+}
+
+/** The owner's archive list — every column, including monetary ones. */
+export async function listInvoicesForOwnerAction(
+  input: unknown = {},
+): Promise<ActionResult<invoices.InvoiceRow[]>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = listInvoicesSchema.parse(input);
+    return invoices.listInvoicesForOwner(actor, parsed);
+  });
+}
+
+/**
+ * The manager/staff-safe archive list [AR-7] — backed by a query that never
+ * selects a monetary column, so there is nothing for this action to leak
+ * even if it forgot to gate. Staff is excluded: invoices are not a staff
+ * concern (spec §4).
+ */
+export async function listInvoicesRedactedAction(
+  input: unknown = {},
+): Promise<ActionResult<invoices.InvoiceRowRedacted[]>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = listInvoicesSchema.parse(input);
+    return invoices.listInvoicesRedacted(actor, parsed);
+  });
+}
+
+/**
+ * The review screen's line table — every column, including cost. Owner-only,
+ * same gate as `getInvoiceAction`: a manager has no legitimate use for this
+ * screen (04-slices.md's `manager_cannot_open_review_screen`).
+ */
+export async function getInvoiceLinesAction(
+  input: unknown,
+): Promise<ActionResult<invoiceLines.InvoiceLineRow[]>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = getInvoiceLinesSchema.parse(input);
+    return invoiceLines.getLinesForInvoice(actor, parsed.invoiceId);
+  });
+}
+
+/**
+ * The review screen's submit — applies every line correction and CAS's the
+ * invoice `needs_review -> reviewed` atomically (see
+ * `lib/domain/invoice-lines.ts:submitInvoiceReview`). [AR-2]: every
+ * `matchedProductId` in `corrections` is batch ownership-checked against
+ * this organization, in one query, before any row is written. If the
+ * invoice moved on since the reviewer loaded the screen — rejected, or
+ * already reviewed by someone else — this surfaces as a `ConflictError`
+ * (mapped to a plain "conflict" message by `runAction`), and nothing is
+ * written; it never silently overwrites (04-slices.md's
+ * `review_conflicts_when_status_moved`).
+ *
+ * `headerCorrections` (open item #32) is optional and, when omitted,
+ * `submitInvoiceReview`'s own default (`{}`) leaves every
+ * `REQUIRED_FOR_REVIEW` column untouched — the common case where extraction
+ * read every header field correctly and nothing needs correcting.
+ */
+export async function reviewInvoiceAction(
+  input: unknown,
+): Promise<ActionResult<invoices.InvoiceRow>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = reviewInvoiceSchema.parse(input);
+    return invoiceLines.submitInvoiceReview(
+      actor,
+      parsed.invoiceId,
+      parsed.corrections,
+      parsed.headerCorrections,
+    );
+  });
+}
+
+/**
+ * Rejects an invoice with a required, auditable reason. CAS's
+ * `needs_review | reviewed -> rejected`; `approved` is terminal [AR-4] and
+ * is not in the `from` list, so an attempt to reject an approved invoice
+ * raises the same `ConflictError` any other illegal edge would.
+ */
+export async function rejectInvoiceAction(
+  input: unknown,
+): Promise<ActionResult<invoices.InvoiceRow>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = rejectInvoiceSchema.parse(input);
+    return invoices.updateInvoiceStatus(
+      actor,
+      parsed.invoiceId,
+      ["needs_review", "reviewed"],
+      "rejected",
+      { rejectionReason: parsed.reason },
+    );
+  });
+}
+
+/**
+ * The owner's `reviewed -> approved` submit (Phase 2.5, Slice 4). Derives a
+ * unit cost for every matched product line, snapshots it onto
+ * `product_cost_history`, and writes it forward onto
+ * `product.current_unit_cost` — see `lib/domain/invoice-approval.ts` for the
+ * full CAS/transaction contract. A replay (the same invoice approved twice,
+ * sequentially or concurrently) returns the same success with
+ * `costLinesApplied: 0`, never an error — see that file's header for why.
+ */
+export async function approveInvoiceAction(
+  input: unknown,
+): Promise<ActionResult<ApproveInvoiceResult>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = approveInvoiceSchema.parse(input);
+    return approveInvoice(actor, parsed.invoiceId);
+  });
+}
+
+/**
+ * Which lines of an invoice will post (or did post) a cost. Owner-only: the
+ * report carries unit costs (invariant 8). Org-scoped in the domain layer.
+ */
+export async function getInvoicePostingReportAction(
+  input: unknown,
+): Promise<ActionResult<PostingReport>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = getInvoicePostingReportSchema.parse(input);
+    return getInvoicePostingReport(actor, parsed.invoiceId);
+  });
+}
+
+export type ResendToExtractionResult =
+  | { outcome: "resent"; invoiceId: number; extractionJobId: number; status: invoices.InvoiceStatus }
+  | { outcome: "duplicate"; duplicate: invoices.DuplicateInvoice; canOpen: boolean }; // canOpen: role is owner
+
+/**
+ * Re-extract: opens a NEW `extraction_job` row (`queued`, skipping
+ * `awaiting_upload` — the file is already confirmed and on disk from the
+ * original upload) and CAS's the invoice `rejected -> processing`
+ * [AR-4/AR-6]. The previous job's `error_message`/`retry_count` are left
+ * untouched — they are that attempt's own history, not this one's.
+ */
+export async function resendToExtractionAction(
+  input: unknown,
+): Promise<ActionResult<ResendToExtractionResult>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = resendToExtractionSchema.parse(input);
+    const result = await invoices.resendInvoiceToExtraction(actor, parsed.invoiceId);
+    if (result.outcome === "duplicate") {
+      // The action is owner-only today; canOpen still follows the role so
+      // loosening the gate later cannot silently hand out a link to a page
+      // that role cannot open.
+      return { outcome: "duplicate", duplicate: result.duplicate, canOpen: actor.role === "owner" };
+    }
+    return {
+      outcome: "resent",
+      invoiceId: result.invoice.id,
+      extractionJobId: result.extractionJobId,
+      status: result.invoice.status,
+    };
+  });
+}
+
+export interface CreateAuditPacketResult {
+  packetId: number;
+}
+
+/**
+ * Phase 2.5, Slice 5 — the owner's date-range export request. Creates the
+ * `audit_packet` row (status `building`), then fires `buildAuditPacketJob`
+ * WITHOUT awaiting it: "background job" here means decoupled from this
+ * request/response, not a separate process — there is no message queue in
+ * this codebase, and none is needed, since each build job owns exactly one
+ * `packetId` with no cross-job contention to arbitrate (unlike the shared
+ * claimable `extraction_job` queue). The action returns `{packetId}`
+ * immediately; the office UI polls `getAuditPacketAction` for progress.
+ *
+ * The `.catch` below is load-bearing, not decorative: `buildAuditPacketJob`
+ * already never throws past its own boundary (its own top-level try/catch
+ * marks the packet `failed`), but a fire-and-forget promise with NO handler
+ * at all is one dropped `.catch` away from an unhandled rejection taking the
+ * process down if that invariant is ever violated by a future edit — this is
+ * the belt to that suspender's braces.
+ */
+export async function createAuditPacketAction(
+  input: unknown,
+): Promise<ActionResult<CreateAuditPacketResult>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = createAuditPacketSchema.parse(input);
+    const { packetId } = await createAuditPacket(actor, parsed);
+    buildAuditPacketJob(packetId).catch((err) => {
+      console.error(`[actions/invoices] buildAuditPacketJob(${packetId}) rejected unexpectedly`, err);
+    });
+    return { packetId };
+  });
+}
+
+/**
+ * The office UI's status poll for one audit packet. Ownership-checked inside
+ * `getAuditPacketStatus` (invariant 9: a cross-tenant `packetId` raises
+ * `NotFoundError`, never a download URL) and re-checks the 10-minute
+ * download-link expiry server-side at request time, lazily transitioning a
+ * lapsed `ready` packet to `expired` — see `lib/domain/audit-packets.ts` for
+ * both.
+ */
+export async function getAuditPacketAction(
+  input: unknown,
+): Promise<ActionResult<AuditPacketStatusResult>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = getAuditPacketSchema.parse(input);
+    return getAuditPacketStatus(actor, parsed.packetId);
+  });
+}
+
+/**
+ * Owner-only, read-only preview for the audit packet form: how many approved
+ * invoices a packet for this range would contain, and every invoice that
+ * would be omitted with its reason (`unapproved` | `undated`). Same
+ * selection the build job runs, so the screen matches manifest.json.
+ * Takes the same `{dateFrom, dateTo}` as `createAuditPacketAction`.
+ */
+export async function previewAuditPacketAction(input: unknown): Promise<ActionResult<AuditPacketPreview>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner");
+    const parsed = createAuditPacketSchema.parse(input);
+    return previewAuditPacket(actor, parsed);
+  });
+}

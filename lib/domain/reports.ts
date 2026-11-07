@@ -18,6 +18,7 @@ import { db } from "@/db";
 import { count, countLine, location, product, productPar, user, vendor } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
 import { canSeeCost } from "@/lib/authz";
+import { getCountCoverages, type CountCoverage } from "@/lib/domain/counts";
 import { NotFoundError } from "@/lib/domain/errors";
 import { getOnHandSnapshot } from "@/lib/domain/on-hand";
 import { computeLineValuation, summarizeValuation, type ValuationLine } from "@/lib/domain/valuation";
@@ -308,6 +309,12 @@ export interface LastClosedCount {
   closedByName: string | null;
   /** Owner only — invariant 8, same pattern as `CountSummary.totalValue`. */
   totalValue?: string;
+  /**
+   * Owner only, present with `totalValue`. How many of the lines behind the
+   * total carry a cost — without it a stored `0.00` cannot say whether the bar
+   * is worth nothing or simply has no costs on file (phone test DB-1).
+   */
+  valuationCoverage?: CountCoverage;
 }
 
 /** Owner/manager only (enforced in the action). Null if nothing has ever closed. */
@@ -346,6 +353,10 @@ export async function getLastClosedCount(actor: Actor): Promise<LastClosedCount 
   };
   if (canSeeCost(actor.role) && row.totalValue != null) {
     result.totalValue = row.totalValue;
+    const coverage = (await getCountCoverages(actor, [row.id])).get(row.id);
+    if (coverage) {
+      result.valuationCoverage = coverage;
+    }
   }
   return result;
 }

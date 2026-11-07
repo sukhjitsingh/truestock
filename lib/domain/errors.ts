@@ -60,3 +60,70 @@ export class ConflictError extends DomainError {
     super("CONFLICT", message);
   }
 }
+
+/**
+ * Phase 2.5 invariant 1's mirror for invoices: an edge not present in
+ * `INVOICE_TRANSITIONS` (lib/domain/invoices.ts) — including anything OUT of
+ * `approved`, which is terminal — is refused with this rather than attempted.
+ */
+export class InvalidInvoiceTransitionError extends DomainError {
+  constructor(message: string) {
+    super("INVALID_INVOICE_TRANSITION", message);
+  }
+}
+
+/**
+ * Thrown when a transition into `reviewed` is attempted while a required
+ * document field (invoice_date, invoice_number, total_gross, total_net,
+ * currency, retention_until) is still NULL. The database cannot express this
+ * constraint — those columns are nullable because extraction hasn't run yet
+ * at upload time (db/schema.ts's `invoice` table comment) — so it is enforced
+ * here, on the CAS transition itself, with a test asserting it fires.
+ */
+export class InvoiceNotWritableError extends DomainError {
+  constructor(message: string) {
+    super("INVOICE_NOT_WRITABLE", message);
+  }
+}
+
+/**
+ * [AR-6] `extraction_job`'s mirror of `InvalidInvoiceTransitionError`. An
+ * edge not present in the lifecycle `lib/domain/extraction.ts` declares
+ * (`awaiting_upload -> queued -> running -> done | failed`, plus the reap
+ * sweep's `running -> queued` retry) — including anything out of `done` or
+ * `failed`, both terminal — is refused with this BEFORE the CAS `UPDATE` is
+ * attempted, never written even when the row happens to currently be at
+ * `from`. Without this, `updateJobStatus(id, 'done', 'queued')` against a
+ * job that genuinely is `done` would succeed: the CAS only checks "is the row
+ * at the state I expect," not "is this edge legal," and a job silently
+ * un-terminated back onto the queue is exactly the kind of state the
+ * lifecycle was declared to rule out.
+ */
+export class InvalidExtractionTransitionError extends DomainError {
+  constructor(message: string) {
+    super("INVALID_EXTRACTION_TRANSITION", message);
+  }
+}
+
+/**
+ * An invoice with no line items was moved to `reviewed` or `approved`
+ * (QA finding F8). A failed extraction leaves an invoice in `needs_review`
+ * with zero lines; reviewing or approving that would post nothing and hide the
+ * failure behind a hand-typed total. The message names the way out.
+ */
+export class NoInvoiceLinesError extends DomainError {
+  constructor(message: string) {
+    super("NO_INVOICE_LINES", message);
+  }
+}
+
+/**
+ * Invoice extraction cannot run on this deployment right now (the Vision
+ * provider is not configured). A distinct code so the owner sees a plain
+ * message instead of the raw internal text, which names an env var.
+ */
+export class ExtractionUnavailableError extends DomainError {
+  constructor(message: string) {
+    super("EXTRACTION_UNAVAILABLE", message);
+  }
+}

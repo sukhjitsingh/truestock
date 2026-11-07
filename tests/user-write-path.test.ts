@@ -13,18 +13,25 @@ const makeActor = (userId: number, organizationId: number, role: "owner" | "mana
   role,
 });
 
-// Apply the migration chain ourselves rather than relying on another test
-// file having run first. Bun does not fix file order, and on CI's empty
-// database this file ran first and every test hit "table doesn't exist".
-beforeAll(async () => {
-  await migrateTestDatabase();
-});
-
 describe("User Write Path", () => {
   let org1Id: number;
   let org2Id: number;
   let owner1Id: number;
   let staff1Id: number;
+
+  // This file's own beforeEach truncates every table via resetDatabase(),
+  // which requires the migration chain to already exist. Every other
+  // *-write-path.test.ts file runs migrateTestDatabase() itself for exactly
+  // this reason; this file was the one exception, silently depending on
+  // some other test file's beforeAll having run first in the same `bun
+  // test` process. That's not guaranteed by anything — bun's file discovery
+  // order isn't a documented contract — and it broke: this file has been
+  // failing on every branch (including main) since 2026-08-14 with "Table
+  // 'truestock_test.count_line_write' doesn't exist", the same error every
+  // other write-path test guards against with this call.
+  beforeAll(async () => {
+    await migrateTestDatabase();
+  });
 
   beforeEach(async () => {
     await resetDatabase();

@@ -49,10 +49,10 @@ export default async function OfficeLayout({
   const railExpanded = (await cookies()).get(RAIL_COOKIE)?.value === "1";
 
   return (
-    <div className="flex min-h-dvh bg-background text-foreground">
+    <div className="flex min-h-dvh bg-gradient-to-br from-background via-background to-secondary/25 text-foreground">
       <OfficeRail role={user.role} defaultExpanded={railExpanded} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-15 shrink-0 items-center gap-4 border-b border-border bg-card px-4 sm:px-6">
+        <header className="sticky top-0 z-30 flex h-15 shrink-0 items-center gap-4 border-b border-border/70 bg-card/80 px-4 backdrop-blur-xl shadow-xs sm:px-6">
           <OfficeBreadcrumb />
           <div className="ml-auto">
             <AccountMenu name={user.name} email={user.email} role={user.role} />

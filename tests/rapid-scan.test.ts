@@ -6,13 +6,6 @@ import type { Actor } from "@/lib/authz";
 import { scanCountLine } from "@/lib/domain/counts";
 import { migrateTestDatabase, resetDatabase, createFixtures } from "./helpers/test-db";
 
-// Apply the migration chain ourselves rather than relying on another test
-// file having run first. Bun does not fix file order, and on CI's empty
-// database this file ran first and every test hit "table doesn't exist".
-beforeAll(async () => {
-  await migrateTestDatabase();
-});
-
 describe("Rapid Scan Logic", () => {
   let actor: Actor;
   let countId: number;
@@ -22,6 +15,13 @@ describe("Rapid Scan Logic", () => {
   let otherOrganizationId: number;
   const eachBarcode = "EACH-RST-123";
   const caseBarcode = "CASE-RST-123";
+
+  // See tests/user-write-path.test.ts for why this file needs its own
+  // migrateTestDatabase() rather than relying on another file's beforeAll
+  // having already run in the same `bun test` process.
+  beforeAll(async () => {
+    await migrateTestDatabase();
+  });
 
   beforeEach(async () => {
     await resetDatabase();

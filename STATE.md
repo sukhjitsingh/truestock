@@ -1,6 +1,6 @@
 # Truestock — current state
 
-Where the project actually is. Updated 2026-11-05.
+Where the project actually is. Updated 2026-11-07.
 
 This file answers one question: **what is proven, what is merely built, and what
 is next.** The distinction matters more here than the feature list, because this
@@ -16,6 +16,23 @@ project has twice shipped something that looked finished and was not.
 
 ## One-line status
 
+**The eight invoice failures from the 2026-11-06 QA run are fixed on
+`feat/phase-2.5-invoice-automation`, pushed, and up for merge to `main` as PR #37
+(2026-11-07).** Each was proven with a real text invoice through the UI and
+confirmed in the database. Vision and scanned invoices remain unverified because
+there is no API key (open-item #47).
+
+**Phase 2.5 is implementation-complete on `feat/phase-2.5-invoice-automation`.**
+All five planned A–E slices are merged into that integration branch: secure
+invoice archive, extraction and review, vendor matching, atomic cost posting,
+and the limited audit-packet export. PR #26 merged Slice 5 into its prerequisite
+branch, then PR #25 merged the complete stack into the Phase 2.5 branch on
+2026-08-21. Linux CI at that merge: **449 tests across 31 files, 449 pass, 0 fail,
+1,278 assertions**, followed by a successful production build (1384 tests pass
+locally as of 2026-11-07). The final merge to `main` is the remaining
+repository-integration step, open as PR #37; auto-approval is deferred
+by design until about 100 real invoices provide correction data.
+
 **MVP is built and not deployed, and as of 2026-08-12 every part of the
 counting loop has now run on a real phone** — scan, enrol, tenths, sealed
 quantities, valuation, and the offline queue, the last three under the
@@ -25,9 +42,18 @@ not just false now, it is comprehensively so.
 
 **What has NOT happened is a count.** Four sessions, 8 lines between them. Every
 mechanism is proven and nothing has been measured: no timed pass, no full
-five-location walk, 90 of 101 products unpriced. The project moved from "does it
+six-location walk, 90 of 101 products unpriced. The project moved from "does it
 work at all" to "does it work at scale" in one day, and this file should not be
 read as saying more than that.
+
+**Phase 2.9 (field validation and the owner's data) status as of 2026-11-07:
+nothing is done.** Of its eleven items, five have partial evidence and six have
+none. The shared dev DB still has 9 of 99 products costed, 0 case sizes, 0 pars,
+0 vendors and no wine producers. Invoice approval posts costs, but so far only
+into test databases. There has been no timed count. The 2026-11-06 queue fix
+(#46) is proven only by e2e tests, not on the phone. Vision has never run
+(#47). The per-item breakdown is in ROADMAP.md, Phase 2.9, and is tracked in
+`docs/open-items.md` #48.
 
 **Phase 2 — the UI redesign — shipped 2026-08-14** (PR #13, merge `9cbf64b`).
 Nine implementation commits behind the Gate 1 approval: design tokens and
@@ -40,6 +66,9 @@ filters, type-ahead search, and `prototypes/*.html` regenerated from
 touched in the back office was opened in a real browser; not one of the
 redesigned mobile counting screens has been on a phone.** That asymmetry is the
 main thing this file now has to say — see "What is built but unproven".
+*(Update 2026-11-07: the redesign has since been on a phone twice, on 2026-10-25
+and 2026-11-06. It has been used, but not evaluated: none of the four §6 UI bets
+has a verdict.)*
 
 **Also as of 2026-08-12, the app sets itself up.** Phases 1 and 1.5 shipped:
 locations are manageable from the app rather than by SQL, cost and case size are
@@ -105,9 +134,14 @@ vendors, and a full timed count.
 
 Verified means *observed running*, not reviewed or typechecked.
 
+**Invoice path on a real text invoice (2026-11-07).** Upload, extraction, review,
+partial cost posting, alias learning, duplicate refusal and the audit packet were
+driven through the UI against a production build and read back from the database.
+Per-finding results are in open-item #47.
+
 | Area | Evidence |
 |---|---|
-| **Schema + migrations** | Chain `0000 → 0001 → 0002` applied to MariaDB 11.8 in Docker. Composite tenant FKs reject cross-tenant ids (1452), `product_par` blocks a second overall par (1062), `DECIMAL(10,4)` exact, accented names round-trip |
+| **Schema + migrations** | Full chain `0000 → … → 0009` applies clean from empty to MariaDB 11.8 in Docker. Phase 2.5 verified all ten migrations together in an isolated database; composite tenant FKs reject cross-tenant ids (1452), generated uniqueness constraints hold, MariaDB JSON aliases round-trip through mysql2, and decimal costs remain exact |
 | **Auth path** | Better Auth under `generateId: "serial"` returns integer ids; sign-in returns a session; the inactive-user re-read gate refuses a *still-valid* session — **with a negative control** |
 | **Count write path** | `tests/count-write-path.test.ts` against real MariaDB, wired into CI as a service container |
 | **Invariants 1, 2, 3, 8, 9** | Covered by that suite: closed counts refuse writes, cost snapshots survive a price change, three scans make one row, a manager never receives cost fields, cross-tenant ids are refused |
@@ -134,7 +168,7 @@ Verified means *observed running*, not reviewed or typechecked.
 | **The accessibility floor, on `/office/catalog`** | Same harness: 30 tab stops walked, none bare; every icon-only control has an accessible name; no heading-level skips; opening the account menu moves focus into it and Escape returns focus to the trigger. Both focus guards are mutation-checked — reverting either fails loudly |
 | **One barcode, one product, in any written form** | 2026-11-05, docs/plans/barcode-integrity. Every barcode is stored and looked up as the 14-digit standard form (`lib/barcode.ts`), so the UPC-A, EAN-13 and UPC-E readings of one bottle are one code and the unique index refuses linking it to a second size. **Red first**: 7 DB tests failed against the old code exactly as the owner's bug predicts (linking the EAN-13 form to a second product *succeeded*; rapid scan of the EAN-13 reading said "Product for this barcode not found"), then passed. Mutation: the normalizer returning its input fails exactly the 18 barcode-form tests. Browser: a code stored from a UPC-A link is recognised when the fake camera reads its EAN-13 form |
 | **Size before link, and naming the owner** | Same plan, browser harness with a fake camera: picking a product opens a confirmation with the size as the largest text and links nothing until "Link and count"; "It's a different size" opens a prefilled form with no size chosen and the rejected size disabled; a taken barcode is refused as "already belongs to Smirnoff 750 ml" with a working "Count Smirnoff 750 ml" button |
-| **The app's own barcode reader loads under the production CSP** | 2026-11-05. Before this, the fallback reader fetched its engine from `fastly.jsdelivr.net`, which `connect-src 'self'` refuses — reproduced in headless Chromium against a production build: the camera opened and decoded nothing. The engine is now served from the app's origin and copied out of `node_modules` on every build (fingerprint-checked against the package's `ZXING_WASM_SHA256`). The harness hides any built-in reader, scans a generated UPC-A, and reaches "Which bottle is this?"; with the engine file removed, that check fails. **The built-in-reader branch is unverified** (open-item #34) |
+| **The app's own barcode reader loads under the production CSP** | 2026-11-05. Before this, the fallback reader fetched its engine from `fastly.jsdelivr.net`, which `connect-src 'self'` refuses — reproduced in headless Chromium against a production build: the camera opened and decoded nothing. The engine is now served from the app's origin and copied out of `node_modules` on every build (fingerprint-checked against the package's `ZXING_WASM_SHA256`). The harness hides any built-in reader, scans a generated UPC-A, and reaches "Which bottle is this?"; with the engine file removed, that check fails. **The built-in-reader branch is unverified** (open-item #45) |
 
 **260 tests across 23 files**, all green as of 2026-11-05 — run against an empty
 MariaDB **10.11** in a cloud session (not the owner's 11.8 Docker), so this also
@@ -201,6 +235,10 @@ orphaning a real product.
 
 Written, reviewed, typechecked — never observed working.
 
+**Scanned invoices (2026-11-07).** Vision has never run: there is no API key. Scans
+are routed straight to it and stop at `EXTRACTION_UNAVAILABLE`, so invoice B's lines
+and the F9 path on Hostinger are unverified (open-item #47).
+
 - **The entire redesigned mobile counting surface (Phase 2, 2026-08-14).**
   This is the biggest unproven thing in the project right now, and it is
   unproven in a specific way: the back office half of Phase 2 was verified
@@ -220,12 +258,21 @@ Written, reviewed, typechecked — never observed working.
   That is exactly the shape of failure this file exists to name, so treat the
   counting app as re-entering "never been on a phone" until Phase 2.9 puts it
   there.
+  **Update 2026-11-07:** the phone sessions on 2026-10-25 and 2026-11-06 ran on a
+  build that contains the redesign, so "never been on a phone" no longer holds.
+  What is still unproven is the evaluation. None of the four bets in
+  `docs/phone-count-test.md` §6 has a verdict. The 2026-10-25 recording also found
+  new issues to fix or accept before a real count: V1 (Save drops a fill that was
+  chosen but not added), A18 (the tab bar stays live during entry), A19 (Android
+  Back), A20 (Submit and Close have no pre-flight check), DB-1 (`$0.00` shown as
+  if it were a value) and DB-4 (a count can close with locations never visited).
 - **The counting app on a phone, AT SCALE.** Scan, tenths, sealed quantities,
   scan-to-enroll and the locked-location leg have each now run on a handset
   (2026-08-12) — so this entry is no longer "does it work" but "does it hold
   up". Nothing here has been done more than a few times in a row: the longest
-  session recorded **4 lines**, no pass has covered all five locations, and
-  nothing has been timed. Fatigue, a wrong tap at bottle 80, a leg switch made
+  session recorded **4 lines**, no pass has covered all six locations (count #3
+  on 2026-10-25 touched 2 and closed with 4 never visited), the stray-bottle
+  sheet has never been opened, and nothing has been timed. Fatigue, a wrong tap at bottle 80, a leg switch made
   in a hurry — none of that has been anywhere near this app. The 2026-08-01 UI pass
   (larger tap targets, safe-area insets, touch-manipulation, bigger fill and
   quantity buttons) is built and typechecked; **the fill pad has now been driven
@@ -296,10 +343,22 @@ Written, reviewed, typechecked — never observed working.
   browser and a database.**
 - ~~**The offline write queue**~~ and ~~**the production CSP**~~ — both
   **verified 2026-08-12** and moved to the table above.
-  Two narrower gaps survive from the queue and are worth keeping visible: the
-  **mount-time flush** has never run (only the `online` listener was observed),
-  and the queue has never held **more than one write at a time**, so ordered
-  replay of several writes to the same line is still only reasoned about.
+  ~~Two narrower gaps survive from the queue: the mount-time flush has never run,
+  and the queue has never held more than one write.~~ **Superseded 2026-11-06.**
+  The first phone test with more than one queued write **failed** twice. An older
+  queued write overwrote a correction (F2), and nothing retried after the phone
+  fell over to mobile data (F3). The fix in `components/count/count-leg.tsx` (a
+  single lock, oldest write first, a 15 s retry timer and a flush on mount) is
+  proven only by 3 e2e specs on a production build, not on the phone. What is
+  left is in open-item #46.
+- **Phase 2.5 at operating scale.** Every A–E capability has database-backed
+  coverage, the review/cost/audit-packet surfaces have run in isolated browsers,
+  and a real Southern Glazer's text-PDF shape is covered. What has not happened
+  is the Gate 1 product measurement: 20–25 real invoices, including actual
+  photographed/scanned documents through the live Claude Vision API, reviewed
+  by the owner in under 30 minutes. The real SendGrid path and Hostinger storage
+  also remain unproven. Open item #39 records the two accepted audit-packet
+  reliability debts: whole-file memory buffering and no stale-build reaper.
 - **The standalone server entrypoint.** The production-mode run used
   `next start`, which printed `"next start" does not work with "output:
   standalone" configuration`. It gave us what was needed — no HMR, the real CSP
@@ -327,7 +386,33 @@ Written, reviewed, typechecked — never observed working.
 
 ## Recent history
 
-- **2026-11-06** — **Glued words fixed (open-item #33).** Next's SWC drops
+- **2026-11-07** — **Phase 2.9 evaluated against the evidence.** None of the
+  eleven items is done, five are partial, and six have not started. ROADMAP.md
+  Phase 2.9 was rewritten to match (`81d47ea`). There are six locations, not five.
+  The queue gaps are replaced by the #46 phone checks. The Phase 2.5 field metric
+  and the Vision key are added as go-live blockers. So are the pre-count findings
+  from the 2026-10-25 recording.
+- **2026-11-07** — **Pushed and opened for merge.** The QA fixes and the merged
+  count-queue fix are on `origin/feat/phase-2.5-invoice-automation`. PR #37 into
+  `main` is open and has no conflicts. The repo is public, so real supplier
+  invoice values in two docs, the open-items list and two agent-memory notes
+  were replaced with `[redacted]` (`93d5c28`). Earlier commits still hold them,
+  because history was deliberately not rewritten. `.claude/agent-memory/` stays
+  tracked: it was briefly untracked, then restored unchanged (`a954d17`).
+- **2026-11-07** — **Invoice QA failures fixed (docs/plans/invoice-qa-fixes, all four
+  gates approved by the owner).** F1, F4, F5, F6, F7, F8, F9, F10 and three minor
+  items, plus reading the item code, case pack and size from the Item Name column.
+  1384 tests pass, Playwright 65 of 65 with none skipped, reviews found nothing
+  blocking. Vision is still unverified; the rest is in open-item #47.
+- **2026-11-06** — **Merge QA, count queue fixed, invoice failures handed off.**
+  A real-phone and real-invoice QA of the Phase 2.5 + `main` merge found ten
+  failures that every automated suite passed. Two were in the count queue (a
+  correction overtaken by a queued write; no retry on mobile data) and are fixed
+  on `fix/count-queue-order-and-retry`, proven by mutation-checked e2e tests but
+  not yet on the phone (open-item #46). Eight are invoice failures, including
+  approval posting no costs, handed to the invoice branch (open-item #47,
+  `docs/qa/2026-11-06-invoice-failures-handoff.md`).
+- **2026-11-06** — **Glued words fixed (open-item #44).** Next's SWC drops
   the leading space of a multi-line JSX text run that contains an HTML entity;
   `/office/reorder` read "closedcount, and there isn't one". Fixed, browser
   verified, and guarded by `tests/jsx-entity-spacing.test.ts` (270 tests).
@@ -359,10 +444,243 @@ Written, reviewed, typechecked — never observed working.
   - **Browser-testable scanning:** the harness gives Chromium a fake camera
     playing a generated barcode, so the enroll screens run end to end through
     the real decoder.
-  - **Deferred / opened:** Fix 3 (size edits rewrite history, #31); reset local
-    Docker data after merging (#32); words glued by dropped JSX spaces, live on
-    the reorder page (#33); the built-in-reader branch unverified on a phone
-    (#34).
+  - **Deferred / opened:** Fix 3 (size edits rewrite history, #42); reset local
+    Docker data after merging (#43); words glued by dropped JSX spaces, live on
+    the reorder page (#44); the built-in-reader branch unverified on a phone
+    (#45). (Numbered #31–#34 on `main`; renumbered when merged into the
+    Phase 2.5 branch, whose own items already use #31–#41.)
+- **2026-10-25** — **PRs #28 (Phase 2.5 backend follow-ons) and #29 (UI/UX
+  redesign v2) merged into `feat/phase-2.5-invoice-automation`; a post-merge QA
+  pass on the merged tree found and fixed seven defects, none of which a status
+  code or a green test run had caught.** The fixes ride in
+  `fix/phase-2.5-post-merge-qa` and are listed in `docs/open-items.md` #40: the
+  barcode-scanner polyfill never decoded because zxing-wasm's default CDN URL is
+  blocked by the CSP's `connect-src 'self'` (the camera opened and nothing was
+  ever detected — the wasm is now self-hosted at `/vendor/zxing_reader.wasm`);
+  `Button` labels lost their font size to `tailwind-merge` filing `text-label`
+  under text colour (`cnSized`); the dark-theme destructive button was white on
+  `#f87171`, 2.77:1, now 7.2:1; three controls sat under the 44 px floor; the
+  oversize-photo message contradicted itself at 7,500,001 bytes; the SET-mode
+  save button broke its label from its figure at 360 px; and a *photographed*
+  invoice could be uploaded but not extracted — it went through pdf-inspector
+  and to Claude as a PDF `document` block, and HEIC was still advertised though
+  Claude cannot read it. Photos now go to Vision as `image` blocks; HEIC and
+  photos over 7.5 MB are refused at upload with a message that says why.
+  **Proven:** typecheck
+  clean, lint 0 errors / 31 warnings, 808/808 unit tests, both guarded browser
+  harnesses (66/66 and 72/72) and a targeted re-check of the fixes on the rebuilt
+  production bundle at 390×844 and 360×740, with no CSP violations or console
+  errors — all in a desktop Chrome with phone viewport, touch emulation and a
+  *fake camera feed*. **Not proven:** anything on a real phone — the real camera
+  and whether it uses the native `BarcodeDetector` or the polyfill, iOS Safari,
+  safe-area insets, landscape, the on-screen keyboard over the fixed action bar —
+  and photo extraction against a *live* Vision response (only a stub has run).
+  `docs/phone-count-test.md` is the checklist for the part only a phone can
+  answer. One concurrency test (`invoice_file_write_once_survives_a_concurrent_put`)
+  failed once in a single full-suite run and passed on every rerun; recorded as
+  open item #40.17, not understood.
+
+- **2026-08-20** — **Open items #2, #32, #33 closed as Slice 5 prerequisites, then
+  Slice 5 (Audit Packet, Phase E) built and verified end to end — Phase 2.5's
+  A–E feature set is now fully implemented.** Two PRs, stacked: #25
+  (`feat/phase-2.5-open-items-2-32-33` → `feat/phase-2.5-invoice-automation`,
+  commit `ed9bf86`) closes the fill-correction audit ledger (#2), adds a
+  correction path for a NULL invoice header field blocking Approve (#32, the
+  gap Slice 2 deferred), and adds the extraction-to-matching integration test
+  through the real `runClaimedJob`/`processExtractionQueue` cron path (#33).
+  #26 (`feat/phase-2.5-slice-5-v2` → `feat/phase-2.5-open-items-2-32-33`,
+  commit `d2b9d72`, schema pre-landed as `7ccb58b`) is Slice 5 itself: an
+  owner-only, on-demand audit packet export — a date range in,
+  `invoices/*.pdf` + `counts/*.json` + `manifest.json` (per-file and
+  whole-archive SHA-256) out as a ZIP, built by a background job with an
+  email notification and a 10-minute download link. A medium security-review
+  finding (`buildAuditPacketJob` buffers every matched invoice's bytes in
+  memory with no per-organization concurrency guard, against this app's
+  shared 5-10 connection pool) was fixed same-day: `createAuditPacket` now
+  refuses a second `building`-status packet per org with a new
+  `ConflictError`. Two low findings from the same review recorded as
+  `docs/open-items.md` #39 rather than fixed. Full detail on both PRs in
+  `docs/plans/phase-2.5-invoice-automation/00-status.md`. Verified in a real,
+  isolated-Docker browser run (`docker-compose.worktree-test.yml -p
+  truestock-slice5-test`): login → audit packet page → date-range submit →
+  live PROCESSING → READY poll → download link, with the produced ZIP
+  independently confirmed against the DB row — correct file list, correct
+  manifest, and the DB-recorded `file_sha256` matching `sha256sum` of the
+  actual file on disk byte-for-byte. PR #26 merged into the prerequisite
+  branch, then PR #25 merged the complete stack into
+  `feat/phase-2.5-invoice-automation` on 2026-08-21; both CI checks are green.
+  Phase 2.5's remaining scope is F (auto-approve), deferred by design until
+  about 100 invoices of correction data exist (`04-slices.md`).
+
+- **2026-08-19** — **Open-items #34–#38 closed: Southern Glazer's Wine & Spirits
+  invoices now parse correctly, and a vendor template documents the mapping for future
+  vendors.** Built on `origin/feat/phase-2.5-invoice-automation` (Slice 4 merged) via a
+  6-agent Workflow run (implement → review → fix findings → verify), on branch
+  `feat/phase-2.5-invoice-template-open-items`. Southern Glazer's real invoice structure
+  — a portal "Order History" export — differs from every previously-supported vendor:
+  its line-item table is headed `Item Name`/`Quantity`/`Gross Amount`/`Discount Amount`/
+  `Net Amount` (no Unit Price, SKU, Brand, or UOM columns at all), its `Quantity` cell is
+  a compound string (`"1 Cases"`, `"2 Units"`), and its totals row has a footnote
+  concatenated onto the first cell while the Gross/Discount/Net cells stay clean.
+  `lib/domain/extraction-pipeline.ts` changed to handle all of it: shared header-pattern
+  constants (fixing a drift risk between `parseLinesFromMarkdown` and
+  `countMarkdownTableDataRows`) now recognize `Item Name`/`Item` and `Document Date`; a
+  new `parseCompoundQuantityCell` splits quantity+UOM only when the plain numeric parse
+  fails and never overwrites a real UOM column; totals lookup tries a table-aware path
+  before falling back to the existing free-text search; and `parseDateValue` now bounds
+  month 1–12/day 1–31 on both date formats, returning `null` instead of silently rolling
+  over via `Date.UTC` (#35). The load-bearing change, matching this session's explicit
+  "if the data isn't ready properly, we don't have data at all" directive: a new
+  `looksLikeUnrecognizedLineItemTable` guard makes a **partially**-recognized line-item
+  table throw and refuse to write anything, rather than silently dropping just that
+  table's lines the way #37 originally did.
+
+  **Two real review findings surfaced and were fixed before merge, not just noted.** The
+  new guard, as first written, false-positived on an ordinary 2-column Subtotal/Tax/Total
+  summary table — a layout element common on real invoices — throwing away a document's
+  correctly-parsed line items along with it; narrowed to require 3+ columns, with a
+  regression test proving a bare Subtotal/Tax/Total table no longer trips it.
+  `writeInvoiceFile`'s new EEXIST handling (#38) only covered the case where the stray
+  file *is* the target directory; Node throws `ENOTDIR`, not `EEXIST`, when the stray
+  file is an ancestor path segment instead (e.g. the storage root itself) — arguably the
+  more likely deployment mistake — so that case fell through to a raw error unchanged.
+  Both codes now share one clear message. A security-review pass also caught real
+  Southern Glazer's invoice numbers (invoice #, account ID, dollar totals, a product SKU)
+  reproduced in prose in the new vendor template doc, about to be committed despite the
+  same change's own `.gitignore` rule existing specifically to keep that data out of git
+  history (#36) — redacted to the same synthetic values already used in the test fixture.
+
+  **Verified against a real MariaDB, not just hand-traced.** The project's Docker
+  technique (throwaway `node:22-bookworm-slim` container pointed at the shared
+  `truestock-mariadb` container, sidestepping `scripts/docker-up-guard.sh`, which
+  correctly refused `docker:up` mid-session because a live LAN dev session was already
+  using the stack) ran the full suite: **407 pass, 0 fail, 1131 `expect()` calls across
+  30 files** — `tests/extraction-pipeline.test.ts` 29/29 including the new item #34
+  DB-backed `mixed`-classification test, `tests/invoice-storage.test.ts` 18/18. Lint and
+  `tsc --noEmit` both clean.
+
+  New deliverable: `docs/vendor-templates/southern-glazers.md` — verbatim headers for all
+  three tables, the field-mapping table, an explicit "never provides" list, and the
+  totals-row data-quality quirk, so the next Southern Glazer's invoice maps automatically
+  and the next differently-shaped vendor has a template to follow. Memory:
+  `.claude/agent-memory/backend/southern_glazers_template_and_open_items_34_38.md`.
+
+- **2026-08-16** — **A Phase 2.5 extraction-pipeline regression fixed: text PDFs had
+  stopped using the free `pdf-inspector` path and were unconditionally requiring
+  `ANTHROPIC_API_KEY`/Claude Vision instead.** Repro: upload a text-based PDF invoice,
+  job moves `uploaded → processing`, then fails with `ANTHROPIC_API_KEY is not set` —
+  wrong on its face, since AGENTS.md §3.2 specifies pdf-inspector's markdown path for
+  `text`-classified PDFs specifically so most invoices cost nothing in AI calls.
+  `runClaimedJob` (`lib/domain/extraction-pipeline.ts`) had lost its classification
+  branch: every `pdfType` fell through to `extractFn`/Claude Vision. Fix (Codex,
+  verified and merged this session): restores the split — `text` calls
+  `parseLinesFromMarkdown(markdown)` with **no Claude call at all**; `mixed`/`scanned`/
+  `image` still route through Vision, with `mixed` additionally fetching markdown as
+  cross-check ground truth alongside the Vision call.
+
+  **This session's verification is stronger than what produced the fix.** Codex's own
+  debug journal states its DB-backed test and real pdf-inspector run were "unverified
+  because this Intel Mac has no pdf-inspector native binding and Docker startup is
+  sandbox-blocked." This session has full Docker access, so both gaps closed for real:
+  `@firecrawl/pdf-inspector` ships no `darwin-x64` binary (confirmed against its
+  `optionalDependencies`), so tests importing `extraction-pipeline.ts` were run inside a
+  throwaway `node:22-bookworm-slim` container (source bind-mounted, `node_modules` as an
+  anonymous volume, `DATABASE_URL` pointed at the shared `truestock-mariadb` container's
+  published port) rather than on the host — the documented workaround in
+  `.claude/agent-memory/backend/pdf_inspector_no_darwin_x64_binary.md`. Result: **22/22
+  pass in `tests/extraction-pipeline.test.ts`** (51 `expect()` calls), including three
+  new DB-backed regression tests proving the fix end to end against a real MariaDB — a
+  text job reaches `needs_review`/`done` without ever invoking the Claude dependency, a
+  text-parser failure fails the job cleanly into the review queue, and a scanned job
+  with no Anthropic key fails specifically in the Vision branch. **Full suite: 358/358
+  pass, 985 `expect()` calls, 28 files.** Typecheck and lint both clean (lint: 0 errors,
+  1 pre-existing unrelated warning). Code review, security review and a live-browser E2E
+  upload also ran clean in an earlier pass this session (no critical/high findings).
+
+  **Five findings deferred rather than fixed now**, added to `docs/open-items.md` as
+  items #34–#38: `mixed` classification has no DB-backed regression test of its own
+  (#34); `parseDateValue`'s US-date regex has no month/day bounds check, so a garbled
+  date can silently roll over into a wrong statutory retention date (#35); the real
+  Southern Glazer's invoice PDF used to reproduce this bug is untracked and not
+  `.gitignore`d (#36); that same invoice exposed a real parser gap — `parseLinesFromMarkdown`'s
+  description-column allowlist doesn't recognize "Item Name," so a real vendor's line-item
+  table is silently skipped when another table on the invoice does match (#37), the
+  quieter and worse sibling of the "zero recognizable lines" case the pipeline already
+  fails safe on; and an environment-only `EEXIST` from `writeInvoiceFile`'s `mkdir` when a
+  stray non-directory file occupies `var/invoices/{orgId}`, not reachable from any
+  application code path (#38). Item #33 (matching never proven through the real pipeline)
+  got a progress note rather than a close: the container technique above now makes it
+  writable, but the three new tests prove routing, not `matchedProductId` end to end — the
+  gap the item actually names is still open.
+
+- **2026-08-15** — **Phase 2.5 Slice 2's review screen shipped, closing the
+  gap the prior entry flagged.** `app/(office)/office/invoices/[invoiceId]/page.tsx`
+  and `components/office/invoice-review-form.tsx`: the owner-only [AR-7]
+  extracted-line table with exception badges (unmatched item, price jump,
+  duplicate, doesn't-add-up), editable gross/discount/net, Approve
+  (`needs_review → reviewed`) and Return-for-re-extraction with a required
+  reason. code-reviewer and security-reviewer both ran clean (zero
+  critical/high). Two Low findings fixed same-day: an empty-lines-row
+  `colSpan` count that didn't match the table's real 7 columns, and a
+  matched-but-deactivated (or outside-the-100-row-cap) product rendering
+  "not entered" instead of its name — the exact "plausible but wrong"
+  failure class this project treats as a real defect, not a nitpick. Fixed
+  with a new `getProductsByIds(actor, ids)` domain function (`lib/domain/
+  catalog.ts`, reusing `selectProducts` with no `active` filter — invariant
+  6, matched history still references a deactivated product) and a page-level
+  merge of any matched id the capped/active search didn't already return. A
+  third finding — no correction path when a NULL header field blocks Approve
+  — is genuinely out of Slice 2's spec scope; deferred as `docs/open-items.md`
+  item #32. All 32 backend tests re-verified passing in an isolated run (the
+  full-suite run showed unrelated timeouts from DB-connection-pool
+  contention across two simultaneous Docker stacks, not a regression).
+  Verified in a real browser against a throwaway isolated Docker stack
+  (`docker-compose.verify.yml`, deleted after use) with a seeded invoice
+  carrying one unmatched line, one active-matched line, and one
+  matched-then-deactivated line: sign-in, review-screen render, editing a
+  match, Approve transitioning the invoice to `reviewed` with lines locked
+  read-only and the matched-product names all correct (including the
+  deactivated one), and the Return form rendering. `00-status.md`'s Slice 2
+  checkbox is now checked.
+
+- **2026-08-15** — **Phase 2.5 Slice 1 shipped in full, Slice 2's backend half
+  shipped, both on `feat/phase-2.5-invoice-automation` (not `main` yet).**
+  Slice 1 (PR #16): invoice upload handshake (size + SHA-256 verify before
+  queueing), the archive list screen, `extraction_job` lifecycle machinery.
+  Slice 2 backend (PR #17): the extraction pipeline (Claude Vision +
+  pdf-inspector cross-check, arithmetic check, bounded Zod schemas at the
+  AI/domain boundary), the stuck-job reap sweep, and `writeExtractedLines`
+  (cross-tenant ownership-checked per invariant 9). **Slice 2's review queue
+  UI — the slice's own success criterion — is not built.**
+  Two defects caught after the fact, both by an autonomous-loop CI check
+  rather than by the gates: (1) code-reviewer's pass on `08f685e` found five
+  real gaps (unbounded AI-output fields, `max_tokens` vs. no-output
+  conflated, a zero-lines-with-failed-check case that would have silently
+  stranded a mismatch as a falsely-clean `needs_review` invoice, a
+  NULL-`claimed_at` gap in the reaper, and untested pure pipeline functions)
+  — all fixed and tested before merge. (2) **PR #16 merged with its own
+  `verify` CI check RED**, undetected until a later autonomous-loop tick
+  checked PR status after the fact: `tests/user-write-path.test.ts` and
+  `tests/rapid-scan.test.ts` never called `migrateTestDatabase()` themselves,
+  silently depending on another test file's `beforeAll` having already
+  applied migrations earlier in the same `bun test` process — undocumented,
+  and it broke; `main` itself had been red on this since 2026-08-14T18:26,
+  a full day, before anyone noticed. Fixed in PR #17 alongside the Slice 2
+  findings. **Takeaway: a merged PR's CI status is not automatically
+  re-checked — worth a `gh pr view --json statusCheckRollup` after any
+  merge.**
+  Also surfaced, not yet resolved: `docs/plans/phase-2.5-invoice-automation/`
+  still reads "Gate 2–4 approval... withdrawn... awaiting re-approval" from
+  the 2026-08-14 adversarial review, with no re-approval note added since —
+  yet Slices 1 and 2's backend were built and merged after that review. See
+  `00-status.md`'s new note; needs the project owner's explicit call.
+  `@firecrawl/pdf-inspector` has no `darwin-x64` (Intel Mac) native binary,
+  discovered this session — the host-side test workaround can't run
+  anything importing `extraction-pipeline.ts`; verified instead in a
+  throwaway isolated `node:22-bookworm-slim` container matching
+  `docker/app/Dockerfile`. Detail in
+  `.claude/agent-memory/backend/pdf_inspector_no_darwin_x64_binary.md`.
+
 - **2026-08-14** — **Phase 2 shipped: the UI redesign, merged as PR #13
   (`9cbf64b`).** Nine implementation commits over two days behind one Gate 1
   approval (`43f2927`), planned as a Gate-1-only variant of
@@ -1027,133 +1345,65 @@ references them).
 
 ## Next three things
 
-**Re-sequenced 2026-08-12 by owner decision — see `ROADMAP.md`.** The three
-items that stood here (a timed count, rapid mode against a camera, and the
-standalone entrypoint) are all **measurement**, and all three were deliberately
-deferred to the field-validation phase — **which moved again on 2026-08-13, from
-1.9 to 2.9**, so it now sits after the UI redesign and OCR invoice automation
-rather than before them. They are not abandoned and nothing about their risk has
-changed; they are simply not next. The new order also moves
-go-live to **Phase 3**, behind a UI redesign (Phase 2) and OCR invoice
-automation (Phase 2.5).
+Phase 2.5's A–E implementation is complete on its integration branch. The order
+below separates repository closeout from field evidence and deployment; a green
+suite proves the software contract, not the operating claims.
 
-**Both of Phase 1's remaining construction items shipped on 2026-08-12** — the
-locations screen and inline cost entry — so what is next is no longer code.
-Their original entries are kept at the bottom of this section for the record.
+1. **Close Phase 2.5 into `main`.** PR #37 is open
+   (`feat/phase-2.5-invoice-automation` → `main`, no conflicts). Before merging
+   it, run the final branch-level review and ship gate. After merging, apply
+   migrations `0004`–`0011` to every database, including the local dev volume.
+   Phase F auto-approval stays deferred until about 100 real invoices provide
+   correction data.
+2. **Phase 2.9 — owner data and field validation.** Use real supplier invoices
+   to populate the remaining costs, case sizes, pars, vendors and wine producer
+   names; measure Phase 2.5's Gate 1 target with 20–25 real invoices in one
+   under-30-minute sitting; and drive an actual photographed/scanned document
+   through the live Claude Vision path. Then run the redesigned counting UI on
+   the phone: enrollment pass, timed full count, all locations, rapid scan
+   checked against a hand count, multi-write offline replay, and the four Phase
+   2 UI bets in `docs/phone-count-test.md`. A 2026-08-21 query of the shared
+   dev volume still had 9 of 99 active products costed, 0 case sizes,
+   0 pars and 0 vendors; isolated Phase 2.5 verification stacks do not change
+   that business data. **Start with the two things that would quietly corrupt the
+   first real count.** First, prove the #46 queue fix on the phone: two or more
+   queued writes, a correction arriving in the right order, falling over to
+   mobile data, and the flush after the app is killed. Second, fix or accept the
+   pre-count findings V1, A18, A20, DB-1 and DB-4. Then enter data through real
+   invoices (add the 1 L product rows first, #47) and run Vision with a real key.
+   The status of each item is in ROADMAP.md, Phase 2.9.
+3. **Phase 3 — go-live.** Only after Phase 2.9. Start the real standalone
+   artifact with `node .next/standalone/server.js`, exercise `pdf-inspector`
+   from that artifact, run migrations `0000 → … → 0011` against production,
+   verify the real SendGrid path, choose whether local pilot invoices migrate or
+   are discarded, establish offsite backup, schedule the session sweep, rehearse
+   rollback, and run `docs/go-live.md` against the real origin. Open item #39's
+   audit-packet memory and stale-build limitations must be consciously accepted
+   or fixed before production use.
 
-`owner@truestock.local` is the **only** account in the database — have its
-password or run `bun run create-user` before walking anywhere. Two browser
-checks are blocked on that: a manager's DOM must not contain the cost column,
-and staff must be redirected off `/office/locations`. Both are covered at the
-action layer by the test suite; only the browser half is missing, and
-`bun run verify:browser` prints them as NOT VERIFIED on every run so they
-cannot pass silently.
-
-The stack is currently in **dev mode** (`next dev` in the app container, HMR
-connected). `bun run docker:up:prod` is the production-mode path, which has no
-hot reload and accepts sign-in **only on the https origin** — and it is the only
-way to test the CSP behaviour that broke this project once, because that failure
-was a production config problem. A clean CSP result under `next dev` is not a
-production result.
-
-**Phase 2 closed 2026-08-14 (PR #13), so Phase 2.5 is next.** Phase 1 closed
-2026-08-12; the owner's data entry moved out of it into **Phase 2.9**, together
-with the measurements it was always coupled to. See `ROADMAP.md`.
-
-1. **Phase 2.5 — OCR invoice automation.** Costs come from supplier invoices,
-   and this is the automated version of typing 90 of them, so it is also what
-   shrinks Phase 2.9's data-entry burden. Build it in the order set out in
-   `docs/invoice-automation-research.md`; a Gate 1 PRD is drafted on the
-   `feat/phase-2.5-invoice-automation` branch and is **not on `main` yet** —
-   check that branch before re-deriving one. **This is the first phase that is
-   allowed AI and file storage** — `AGENTS.md` says invoice automation "reverses
-   two exclusions above", and it is the only thing that does. Settle the
-   xtraCHEF question before building (one hour of testing decides how much needs
-   building at all); the 2.5 branch's PRD records it as already settled in favour
-   of building the OCR pipeline, so reconcile the two rather than assume either.
-2. **Phase 2.9 — the data and the measurements, together.** 90 unit costs, 16 case
-   sizes, par levels, vendors, 5 wine producers; then the timed count, the
-   five-location walk, and rapid mode against a real camera. They were merged
-   because a timed count against an uncosted catalog measures the wrong thing:
-   the reorder list cannot produce a row and valuation stays near-empty, so "are
-   the numbers worth acting on" is unanswerable until the data exists. Re-checked
-   2026-08-14: 9 of 99 active products costed, 0 with a `case_size`, 0 par rows,
-   0 vendors — unmoved since 2026-08-12.
-   **Phase 2 added to this phase's job rather than subtracting from it.** The
-   whole redesigned counting surface is new since anyone last held a phone, and
-   Phase 2 wrote down four explicit bets about where count time goes — they are
-   now §6 of `docs/phone-count-test.md`, and settling them is part of Run A and
-   Run B, not a separate exercise.
-3. **Phase 3 — go-live.** Behind both of the above. The two items on it that are
-   pure code and still open are the **standalone entrypoint**
-   (`node .next/standalone/server.js` has never been started, whatever
-   `585d2b6`'s commit message says) and the deploy pipeline, which is built and
-   has never run against a real host. `docs/go-live.md` is the gate.
-
-**No open items remain from Phases 1 and 1.5.** Items 25 and 26, both found while
-verifying, were fixed 2026-08-12 and are closed in `docs/open-items.md`. Phase 2
-opened three new ones, none of them urgent and none of them a correctness risk:
-**#28**, the owed `--chart-2..5` palette, not due until the first chart is drawn
-in Phase 4; **#29**, the accessibility floor asserted on `/office/catalog` only
-when Gate 1 asked for every screen; and **#30**, three table surfaces that never
-moved onto the shared primitives (`users-list.tsx` is the one that matters — no
-`scope="col"` on any header). #29 and #30 are the two Gate 1 criteria that came
-out **partial** when the phase was audited against its own contract; see
-`docs/plans/phase-2-ui-redesign/00-status.md` for that audit.
-
-The entry that used to stand first here, now done:
-
-1. ~~**Phase 2 — the UI redesign.**~~ Shipped 2026-08-14. It was designed from
-   judgement rather than from measurements, exactly as this section warned, and
-   the mitigation held: no schema, no write path, no leg-model change, and the
-   judgement calls written down as bets for 2.9 to settle.
-
-The two entries that used to stand here, both now done:
-
-1. ~~**A locations management screen** (`/office/locations`).~~ Shipped
-   2026-08-12. `lib/domain/catalog.ts`
-   has `listLocations` and nothing else — no create, no update, no route. This
-   already cost real time on 2026-08-12: adding `Tap 1` so kegs could be counted
-   at all took a CSV edit plus SQL against the live database. `location.count_mode`
-   is what decides whether a product gets the fill pad or a quantity stepper, and
-   it is unreachable from the app.
-2. ~~**Bulk cost and case-size entry.**~~ Shipped 2026-08-12 as per-cell inline
-   editing. The fields already exist on
-   `product-edit-form.tsx` and are correctly role-gated; what is missing is
-   throughput. 90 unit costs today means 90 separate page loads. Inline-editable
-   columns in `catalog-table.tsx`, reusing the bulk-bar machinery the vendor work
-   already built.
-
-   One decision from building it is worth carrying forward: the cells
-   deliberately do **not** refresh the page after each save. A
-   `router.refresh()` per commit is ~180 round trips against a 45-minute,
-   90-cost budget, so only the edited row is patched — from the value the action
-   *returned*, not the value typed, so a manager's role-stripped cost visibly
-   snaps back. The accepted cost is that the "needs attention" pills and the
-   catalog-health counts lag until the next navigation. That is a tradeoff, not
-   a bug; do not "fix" it with cross-row recomputation.
-
-**#19 (vendors have no write path) is done** as of 2026-07-31, so the reorder
-list can group by vendor rather than dumping everything under "No vendor set" —
-what it still lacks is par levels and costs to make the rows worth ordering from,
-and any way to *send* the list, which is now a Phase 1.5 item.
+**Local test-state caution.** The last recorded shared volume had three active
+accounts (owner, manager and staff), count #5 open, four barcodes, and two test
+products already deactivated rather than deleted. Check the database
+rather than relying on that dated snapshot before the next phone run; isolated
+worktree stacks used by Phase 2.5 do not establish the state of the shared dev
+volume.
 
 ## Scope reminders
 
 **In the MVP:** catalog, locations, barcode scan, tenths, quantities, count
-sessions, valuation, reorder, three roles, multi-tenancy.
+sessions, valuation, reorder, three roles and tenant isolation.
 
-**Deliberately out:** AI fill estimation, bottle photos, Toast PMIX import,
-variance reporting, compliance packet. (Invoice OCR was deferred but is now
-built in Phase 2.5 — see the Phase 2.5 PRD and history log.)
-import, variance reporting, compliance packet. **The MVP contains no AI and no
-file storage** — if a task seems to need either, it is probably scope creep.
+**Built after the MVP in Phase 2.5:** secure invoice upload and retained local
+files, text/vision extraction, human review, vendor matching, atomic cost
+history, and a limited date-range ZIP of invoice files plus count snapshots.
+This is the deliberate AI/file-storage exception in `AGENTS.md`.
 
-**One exception, and only one: Phase 2.5.** Invoice OCR is out of the *MVP* and
-is the *next phase*, which reads as a contradiction and is not one — 2.5 is the
-phase that deliberately reverses the no-AI and no-file-storage exclusions, per
-`AGENTS.md`. Nothing else may reach for either on the strength of that.
+**Still deliberately deferred:** AI fill estimation, bottle photos, Toast PMIX,
+variance reporting, auto-approval until about 100 invoices provide correction
+data, and the full Phase 6 compliance module. Phase 2.5's limited export does
+not include the full month-end food/liquor reporting described for Phase 6.
 
-**Multi-tenant, but not multi-tenant yet:** `organization` is the tenant boundary
-and every query is scoped to it. Not built: users in more than one org, an org
-switcher, billing, signup, per-tenant subdomains. All additive.
+**Multi-tenant, but not a complete commercial tenancy product:** `organization`
+is the enforced data boundary and every query is scoped to it. Not built: users
+in more than one organization, an organization switcher, billing, public signup
+or per-tenant subdomains. Those remain additive work for the selling track.

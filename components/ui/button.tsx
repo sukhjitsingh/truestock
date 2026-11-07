@@ -1,6 +1,6 @@
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
-import { cn } from "@/lib/utils";
+import { cnSized } from "@/lib/utils";
 
 /**
  * Class strings come from docs/design-system.md §9 verbatim. That document is
@@ -43,7 +43,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     <button
       ref={ref}
       type={type}
-      className={cn(buttonVariants({ variant, size, full }), className)}
+      className={cnSized(buttonVariants({ variant, size, full }), className)}
       {...props}
     />
   ),

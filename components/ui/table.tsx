@@ -28,7 +28,16 @@ export function TableContainer({
   children: React.ReactNode;
   className?: string;
 }) {
-  return <div className={cn("w-full overflow-x-auto", className)}>{children}</div>;
+  return (
+    <div
+      className={cn(
+        "w-full overflow-x-auto rounded-xl border border-border/80 bg-card/85 backdrop-blur-md shadow-xs transition-all",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
 }
 
 export function Table({
@@ -59,7 +68,11 @@ export function TableHeader({
   children: React.ReactNode;
   className?: string;
 }) {
-  return <thead className={cn("border-b border-border", className)}>{children}</thead>;
+  return (
+    <thead className={cn("border-b border-border/80 bg-secondary/50 backdrop-blur-sm", className)}>
+      {children}
+    </thead>
+  );
 }
 
 /** A real empty state belongs inside this when there are no rows — never an

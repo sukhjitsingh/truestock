@@ -1,5 +1,5 @@
 /**
- * Guard against words glued together by the build (docs/open-items.md #33).
+ * Guard against words glued together by the build (docs/open-items.md #44).
  *
  * Next.js's SWC compiler (16.2.x) drops the LEADING space of a JSX text run
  * when that run (a) follows a tag or `{expression}`, (b) spans more than one

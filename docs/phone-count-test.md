@@ -97,6 +97,62 @@ hands out a new lease — it regenerates the cert and reprints both URLs.
 
 ---
 
+## Observed session — no screen recording
+
+Optional. Instead of a screen recording, let the laptop watch the phone's
+browser and write a short text log. A recording is 100 MB nobody can search; the
+log is a few KB plus some screenshots, and it holds the things this protocol
+keeps hunting for — a request that failed, a button that was dead, a console
+error, a screen that stopped changing.
+
+**One-time on the phone:** Developer options → **USB debugging** (or **Wireless
+debugging**), then accept the "Allow debugging?" prompt. Needs `adb` on the
+laptop (Android platform-tools). Open the app in Chrome — the https URL from
+section 0 — and leave that tab open.
+
+```bash
+adb devices                                               # the phone says "device"
+bun run phone:observe -- --origin https://192.168.x.x:3443
+```
+
+Test as normal. **Ctrl+C when you are done**, then read
+`.phone-sessions/session-<date>/summary.md` — a counts table, anything notable,
+and a timeline. Full detail is in `events.jsonl` beside it; screenshots are in
+`shots/`.
+
+| Recorded | Never recorded |
+|---|---|
+| Page navigations, taps (by button label), console errors, failed requests, server-action and RSC calls with status and timing, a screenshot after each screen settles | Typed values — only *that* a field changed and its length. Password fields are not even that. Request or response bodies, cookies, auth headers, query strings, other tabs |
+
+It is **read-only**: it never taps, types, navigates or reloads, and only a tab
+whose origin is *exactly* `--origin` is watched — everything else is counted and
+ignored. It is a listener, not a controller.
+
+- **Screenshots can show what was typed** into a visible non-password field (a
+  search box, a quantity). None is taken while a password field has focus or
+  once the tab has left `--origin` (the log notes a `screenshot-skipped`). The
+  folder is gitignored, and `--out` is refused anywhere inside the repo except
+  `.phone-sessions/`; still, look through `shots/` before attaching a session
+  to an issue.
+- The app's own `console.*` text is recorded with URLs scrubbed, so an app that
+  logs a typed value would put it in the log.
+- **Attach and capture proven on a real phone** (Pixel 10 Pro XL, Brave 155 over
+  USB, 2026-10-26): it found the tab, read the title and viewport, and took a
+  screenshot of the signed-in Dashboard. A full counting walk is still the part
+  not yet observed live. Brave uses Chrome's `chrome_devtools_remote` socket.
+  The browser must be **open** — its socket disappears when it is swiped away.
+  It prints the DevTools sockets it finds on the device. Sockets named
+  `stetho_<package>_…` belong to apps (Google Messages exposes one), not
+  browsers, and are never picked automatically. If it picks the wrong browser,
+  or finds none, choose one with `--socket <name>`. `--cdp http://127.0.0.1:<port>`
+  skips adb entirely, for a forward you set up yourself.
+- Piping its output (`… | head`) ends the session cleanly ("output closed")
+  and releases the adb forward. Do not rely on that to stop it — Ctrl+C is the
+  normal way, and writes `summary.md`.
+- Several devices attached → `--serial <id>`. `--help` lists every option.
+
+---
+
 ## 1. Preflight — on the phone, before walking anywhere
 
 Open **`/count/preflight`** and read it. This is the step that turns "walk to
@@ -164,7 +220,8 @@ and whether the form ever felt like it needed the other hand.
 Only meaningful once barcodes resolve. Either follow Run A with a second pass
 over the same bottles, or enrol first and count second.
 
-1. Full count, all five locations, start to *Finish section* on the last one.
+1. Full count, all six locations (including Tap 1), start to *Finish section* on
+   the last one.
 2. One stopwatch, running the whole time, including walking.
 3. Count normally. Do not be careful for the benefit of the test.
 
@@ -355,7 +412,7 @@ entirely, that is a finding, not a null result.
 **Bet 4 — one card per scanned product is worth its vertical space.**
 "Just counted" is a list of cards separated by `card-gap`, not a dense table
 row. The bet is that browsing what you just counted as cards is worth the
-scrolling it costs across a five-location walk. **Run B settles it**, and the
+scrolling it costs across a six-location walk. **Run B settles it**, and the
 signal is specific: how often you scroll back to check something you already
 counted, and how far. This one interacts with the floating bottom bar — the bar
 exists precisely *because* this list grows past a viewport — so judge them
@@ -374,6 +431,11 @@ item **#20** carries the full list of what to exercise.
 ---
 
 ## 7. When Phase 2.9 is done
+
+**Status, 2026-11-07: not started as a protocol run.** Two phone sessions
+(2026-10-25 and 2026-11-06) used the redesigned screens. Neither was Run A or
+Run B, and none of the §6 bets has a verdict. The status of each item is in
+`docs/open-items.md` #48.
 
 **This file is Phase 2.9's protocol.** Re-sequenced 2026-08-12 and again
 2026-08-13 (1.9 → 2.9, now after the UI redesign and OCR): these runs used

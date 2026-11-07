@@ -12,7 +12,7 @@
  * read UPC/EAN counts as "not present": choosing it would open a camera that
  * never recognises a bottle, with nothing on screen saying why. Otherwise use
  * the app-provided reader, which is always available because the app serves
- * its engine itself (see ZXING_WASM_PATH).
+ * its engine itself (lib/scanner-assets.ts).
  */
 
 /** Every code a liquor bottle or its case carries. The built-in reader must
@@ -23,18 +23,10 @@ export const RETAIL_BARCODE_FORMATS = ["upc_a", "upc_e", "ean_13", "ean_8"] as c
  *  detection time on every frame of a requestAnimationFrame loop on a phone. */
 export const SCAN_BARCODE_FORMATS = [...RETAIL_BARCODE_FORMATS, "code_128", "code_39"] as const;
 
-/**
- * Where the app-provided reader's engine is served from — this app's own
- * origin, copied out of node_modules by scripts/copy-zxing-wasm.mjs on every
- * `dev` and `build`.
- *
- * It must be same-origin. By default the `zxing-wasm` package downloads its
- * engine from cdn.jsdelivr.net, and the app's Content-Security-Policy
- * (`connect-src 'self'`, middleware.ts) refuses that — so on any phone without
- * a usable built-in reader the scanner opened, decoded nothing, and failed
- * silently. Found 2026-11-05 (docs/plans/barcode-integrity, slice 1).
- */
-export const ZXING_WASM_PATH = "/zxing/zxing_reader.wasm";
+// Where the app-provided reader's engine is served from is defined once, in
+// lib/scanner-assets.ts (ZXING_WASM_URL / locateScannerFile) — same origin,
+// copied out of node_modules by scripts/copy-zxing-wasm.mjs before every dev
+// and build. It must never be a CDN: the CSP's connect-src 'self' refuses it.
 
 export type ReaderChoice =
   | { kind: "built-in"; formats: string[] }

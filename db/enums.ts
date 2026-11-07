@@ -61,3 +61,185 @@ export const countStatusEnum = [
   "reviewed",
   "closed",
 ] as const;
+
+/**
+ * [AR-4] docs/plans/phase-2.5-invoice-automation/02-architecture.md §2. The
+ * invoice status machine, declared once — the legal transitions themselves
+ * live in `lib/domain/invoices.ts` (`INVOICE_TRANSITIONS`), not here; this
+ * tuple only fixes the closed set of values MariaDB will accept. `approved`
+ * is terminal: nothing transitions out of it, and a correction to an
+ * approved invoice is a new record, never a status edit.
+ */
+export const invoiceStatusEnum = [
+  "uploaded",
+  "processing",
+  "needs_review",
+  "reviewed",
+  "approved",
+  "rejected",
+] as const;
+
+/** How the invoice document arrived. */
+export const invoiceSourceEnum = ["photo", "pdf", "email_forward"] as const;
+
+/**
+ * [AR-6] ONE state machine for `extraction_job`, declared here and nowhere
+ * else. The earlier draft had three incompatible vocabularies: the enum
+ * said "pending", a slice wrote "ready_for_classify" (not in the enum —
+ * MariaDB would reject it), and the cron claimed "pending". The lifecycle is
+ * exactly `awaiting_upload → queued → running → done | failed`.
+ *
+ * A job is created `awaiting_upload`, NOT `queued` — the invoice and job
+ * rows exist before the client has finished uploading the file, and a job
+ * claimable at creation gets picked up by the cron before the object exists.
+ * It only becomes `queued` once the upload is confirmed and its byte length
+ * and SHA-256 match what was declared at upload time. See
+ * `db/schema.ts`'s `extractionJob` table comment for the reaper that
+ * returns a stuck `running` job to `queued` (or `failed` after 3 retries).
+ */
+export const extractionJobStatusEnum = [
+  "awaiting_upload",
+  "queued",
+  "running",
+  "done",
+  "failed",
+] as const;
+
+/**
+ * Progress *within* extraction. Observability only — never a claim
+ * predicate, so adding a pipeline step never changes which jobs the cron
+ * claims.
+ */
+export const extractionPhaseEnum = ["classify", "text_extract", "ocr", "parse"] as const;
+
+/** Set by the classify phase; drives whether OCR (Claude Vision) runs. */
+export const pdfTypeEnum = ["text", "scanned", "mixed", "image"] as const;
+
+/**
+ * Phase 2.5, Slice 2. §1.4(c) of docs/invoice-automation-research.md — the
+ * line type that keeps deposits and freight out of unit cost. An invoice
+ * line for a keg deposit or a freight surcharge is real money on the
+ * invoice but must never be averaged into `product.current_unit_cost`: a
+ * $10 keg-deposit line billed alongside 24 cases of beer would silently
+ * inflate the beer's derived cost if it were priced as a `product` line
+ * instead of excluded as a `deposit` one. `discount` is its own line type
+ * (not folded into `product`) for the same reason: a supplier discount
+ * printed as its own line item is a price adjustment, not a unit sold.
+ * `unknown` is the extraction default — a badly OCR'd or unrecognized line
+ * stays unclassified rather than defaulting to `product` and polluting a
+ * valuation.
+ */
+export const invoiceLineTypeEnum = [
+  "product",
+  "deposit",
+  "deposit_return",
+  "freight",
+  "tax",
+  "fee",
+  "discount",
+  "unknown",
+] as const;
+
+/**
+ * Unit of measure as printed on the invoice line. Deliberately its own enum,
+ * distinct from `productUnitTypeEnum` (bottle/can/keg) — this describes what
+ * the SUPPLIER billed by, before that line is ever reconciled against a
+ * catalog product. `other` covers anything extraction can't map onto the
+ * three known pack levels (e.g. "LB", "GAL") rather than forcing a guess.
+ */
+export const invoiceLineUomEnum = ["each", "case", "keg", "other"] as const;
+
+/**
+ * How `invoiceLine.matchedProductId` got set, ordered cheapest/most-trusted
+ * first in the pipeline that will eventually try them. Only two of these are
+ * live in Slice 2: every line this slice's extraction pipeline writes starts
+ * `unmatched`, and the only way a line leaves that state is a human picking
+ * the product on the review screen, which sets `manual`.
+ * `vendor_alias_code` / `vendor_alias_desc` are Slice 3's automatic matching
+ * against the (not-yet-built) `vendor_item_alias` table; `barcode` and
+ * `fuzzy` are later automatic strategies; `created_draft` is reserved for a
+ * not-yet-built "create this product from the invoice line" action. The
+ * enum is declared now, in full, because `matchMethod` is a closed set
+ * MariaDB must accept a value from the day the column exists — adding a
+ * value later is itself a migration, whereas building the strategies that
+ * produce these values is ordinary application work.
+ */
+export const invoiceMatchMethodEnum = [
+  "vendor_alias_code",
+  "vendor_alias_desc",
+  "barcode",
+  "fuzzy",
+  "manual",
+  "created_draft",
+  "unmatched",
+] as const;
+
+/**
+ * open-items.md #2 — `count_line_write.write_type`. Discriminates the two
+ * shapes a ledger row can take, because they are not interchangeable and a
+ * reader must be able to tell which one it's looking at without inferring it
+ * from which columns happen to be non-default.
+ *
+ *  - `scan` — every write path that existed before this column: `applyIncrement`
+ *    (the barcode-scan path), `setCountLineQuantities` (the sealed-qty
+ *    correction path, which stores `target - current` as a delta — see its
+ *    own comment in lib/domain/counts.ts), and any future caller that inserts
+ *    into `count_line_write` representing a quantity/fill CHANGE. All of
+ *    these compose by summation: `count_line_write.partial_fills_delta` is
+ *    modelled so that summing every row's delta for a line reconstructs its
+ *    current `partial_fills` from scratch (see the comment above
+ *    `countLineWrite` in db/schema.ts). This is the default because every
+ *    row that existed before this migration genuinely was one of these —
+ *    `editCountLineFills` never wrote a ledger row until now, so there is
+ *    nothing to backfill beyond the column default itself.
+ *  - `fill_correction` — `editCountLineFills`, which REPLACES the whole
+ *    `partial_fills` array (a manager correcting a mis-tapped tenths
+ *    reading). A full-array replace has no delta representation in the
+ *    additive shape above: unlike a scalar SET (where `target - current` is
+ *    well-defined), an array replace can change, add, or remove individual
+ *    tenths readings in a way "current minus target" cannot express as an
+ *    appendable delta. So this write type does NOT compose by summation —
+ *    `partial_fills_delta` stays its default `[]` on these rows (it has no
+ *    meaning here and must never be repurposed to carry the after-array,
+ *    which would make delta-summation silently wrong for any code that still
+ *    treats every row as a `scan` append). Instead `partial_fills_before` /
+ *    `partial_fills_after` on the same row carry the full state transition —
+ *    see those columns' comments in db/schema.ts.
+ */
+export const countLineWriteTypeEnum = ["scan", "fill_correction"] as const;
+
+/**
+ * Phase 2.5, Slice 5 (`docs/plans/phase-2.5-invoice-automation/04-slices.md`,
+ * "Slice 5 — Audit Packet"). Lifecycle of one on-demand export ZIP:
+ *
+ *   - `building` — the row exists, `buildAuditPacketJob` has been enqueued
+ *     but hasn't finished. This is the CREATE-time default: the packet row
+ *     is written before the job runs, same "row exists before the work is
+ *     done" shape as `extraction_job`'s `awaiting_upload`.
+ *   - `ready` — the ZIP is uploaded, `file_path`/`file_sha256`/`manifest_json`
+ *     are set, and `expires_at` is `now() + 10min`. `getAuditPacketAction`
+ *     only ever returns a download URL from this state.
+ *   - `expired` — `expires_at` has passed. The row and manifest stay
+ *     (append-only, matches the two-year retention obligation this feature
+ *     exists for), but the download link is refused server-side at request
+ *     time, never trusted from the URL alone.
+ *   - `failed` — the background job errored before producing a ZIP.
+ *
+ * Declared as a closed set here (not just checked in application code) for
+ * the same reason as every other status enum in this file: MariaDB rejects
+ * an invalid value at the column, not three call sites downstream.
+ */
+export const auditPacketStatusEnum = ["building", "ready", "expired", "failed"] as const;
+
+/**
+ * Which table an `audit_packet_file` row's polymorphic `source_id` points
+ * into. Slice 5's scope is invoices and counts only — 04-slices.md's flow E
+ * queries `invoice` and `count`, nothing else, so `"product"` is
+ * deliberately NOT included even though
+ * `docs/plans/phase-2.5-invoice-automation/02-architecture.md`'s §7 schema
+ * sketch lists it as a generic possibility. Adding a source table later is
+ * itself a migration (same reasoning as `invoiceMatchMethodEnum` above) —
+ * do so only when a slice actually queries that table for the packet, not
+ * preemptively.
+ */
+export const auditPacketSourceTableEnum = ["invoice", "count"] as const;

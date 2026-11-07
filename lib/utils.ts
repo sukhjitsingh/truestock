@@ -1,9 +1,48 @@
 import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { extendTailwindMerge, twMerge } from "tailwind-merge";
 
 /** shadcn's standard class combiner: conditional classes, last-wins conflicts. */
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+/**
+ * The custom `--text-*` font-size tokens in app/globals.css (`text-label`,
+ * `text-caption`, …). tests/cn-font-size.test.ts pins this list to the CSS so
+ * a new token cannot be added there and forgotten here.
+ *
+ * Why it exists: tailwind-merge's default config does not know these names, so
+ * it files `text-label` under TEXT COLOUR. Merged with `text-primary-foreground`
+ * the two "conflict" and the later one wins — the button's label colour is
+ * silently dropped and the text inherits `currentColor` (dark on a near-white
+ * primary button in dark mode: invisible).
+ */
+export const FONT_SIZE_TOKENS = [
+  "header-title",
+  "screen-title",
+  "label",
+  "row-title",
+  "row-subtitle",
+  "body",
+  "caption",
+  "numeral-lg",
+  "numeral-md",
+  "numeral-sm",
+] as const;
+
+const twMergeSizeAware = extendTailwindMerge({
+  extend: { classGroups: { "font-size": [{ text: [...FONT_SIZE_TOKENS] }] } },
+});
+
+/**
+ * `cn` that knows the custom font-size tokens are sizes, not colours. Used by
+ * `Button`, whose call sites pass `text-label uppercase` on top of a variant's
+ * `text-<colour>`. The global `cn` is deliberately left alone: other call sites
+ * currently lose a class the same way, and changing them re-renders those
+ * components, which needs its own visual pass (docs/open-items.md #40).
+ */
+export function cnSized(...inputs: ClassValue[]) {
+  return twMergeSizeAware(clsx(inputs));
 }
 
 /**
@@ -84,5 +123,34 @@ export function formatDate(value: Date | string): string {
     month: "short",
     day: "numeric",
     year: "numeric",
+  });
+}
+
+/**
+ * Formats a calendar-only date string (`YYYY-MM-DD` — a MariaDB `DATE`
+ * column with no time-of-day, e.g. `invoice.invoice_date`,
+ * `invoice.retention_until`) for display.
+ *
+ * Deliberately does NOT reuse `formatDate` above. `formatDate` is correct
+ * for a genuine timestamp (`count.startedAt`) where the underlying instant
+ * is real and a local-timezone conversion is the right thing to show. A
+ * calendar-only string has no instant to convert: `new Date("2026-08-14")`
+ * parses as UTC midnight, and `toLocaleDateString` with no `timeZone` then
+ * renders in the browser's local zone — every US timezone is a negative UTC
+ * offset, so that path prints Aug 13 for a document dated Aug 14.
+ * `lib/domain/invoices.ts`'s `computeRetentionUntil` documents the exact
+ * same failure mode on the write side (why it parses with `Date.UTC` instead
+ * of a bare `new Date(string)`); this is its read-path counterpart.
+ */
+export function formatCalendarDate(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return value;
+  const [, yearStr, monthStr, dayStr] = match;
+  const date = new Date(Date.UTC(Number(yearStr), Number(monthStr) - 1, Number(dayStr)));
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
   });
 }

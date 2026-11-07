@@ -1,5 +1,6 @@
 import { requireRole } from "@/lib/authz";
 import { actionListUsers } from "@/app/actions/users";
+import { PageHeader } from "@/components/office/page-header";
 import { UsersList } from "@/components/office/users-list";
 
 export const metadata = { title: "Users · Truestock" };
@@ -28,24 +29,26 @@ export default async function UsersPage() {
   const users = result.ok ? result.data : [];
 
   return (
-    <div className="flex flex-col gap-6 p-6">
-      <div>
-        <h1 className="text-2xl font-bold">Users</h1>
-        <p className="text-muted-foreground text-sm">
-          Manage organization access and roles. Accounts are created from the
-          command line with{" "}
-          <code className="bg-muted rounded px-1">bun run create-user</code>.
-          Removing someone is a deactivation, which also ends their open
-          sessions.
-        </p>
-      </div>
+    <div>
+      <PageHeader
+        title="Users"
+        subtitle={
+          <p className="text-row-subtitle text-muted-foreground">
+            Manage organization access and roles. Accounts are created from the command line with{" "}
+            <code className="rounded bg-muted px-1">bun run create-user</code>. Removing someone is a
+            deactivation, which also ends their open sessions.
+          </p>
+        }
+      />
 
       {!result.ok ? (
-        <div className="rounded-md bg-destructive/20 px-4 py-3 text-sm text-destructive-foreground">
+        <p className="mt-6 rounded-md bg-negative-bg px-3 py-2 text-caption text-negative" role="alert">
           {result.error.message}
-        </div>
+        </p>
       ) : (
-        <UsersList users={users} />
+        <div className="mt-6">
+          <UsersList users={users} />
+        </div>
       )}
     </div>
   );

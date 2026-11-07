@@ -56,13 +56,43 @@ reconstructs current state" stays true for corrections too, not just
 increments — a correction is indistinguishable in the ledger from a
 well-timed real increment, which is exactly what preserves that property.
 
-**Known asymmetry, left as-is deliberately:** `editCountLineFills` (the
-partial_fills correction, pre-existing) still does NOT write a ledger entry.
-Extending it would require deciding how "replace the whole array" represents
-itself in `partial_fills_delta`, which is designed for additive-append
-semantics from the scan path, not replacement — a schema-level modeling
-decision not asked for in the review that added the ledger. Flagged to the
-coordinator rather than decided unilaterally. If asked to fix, this is where
-to start.
+**CLOSED 2026-08-20 (docs/open-items.md #2):** `editCountLineFills` now writes
+a ledger entry too, matching the pattern above rather than inventing a new
+one. The schema half added a discriminator column,
+`count_line_write.write_type` (`countLineWriteTypeEnum = ["scan",
+"fill_correction"]`, db/enums.ts — NOT NULL DEFAULT `'scan'`, so every
+pre-existing row backfills correctly with no data migration), plus two new
+nullable columns, `partial_fills_before` / `partial_fills_after`. The
+domain-logic half (`lib/domain/counts.ts`) then did three things:
+1. Added the SAME `findReplayedLine` pre-check + try/catch-duplicate-
+   key-fallback-to-replay shape `setCountLineQuantities` uses — it never had
+   this before because it never wrote a ledger row, so there was nothing to
+   replay-detect. Now that it does, a legitimate retry needed the same
+   protection or it would throw a raw duplicate-key error instead of
+   returning the earlier result. `applyIncrement` and `setCountLineQuantities`
+   are the templates to copy for any THIRD write path this table ever grows.
+2. Captured `partialFillsBefore = line.partialFills` under the same
+   `SELECT ... FOR UPDATE` row lock as the update, `partialFillsAfter =
+   input.partialFills` (what's being written) — not from the client's belief
+   of the prior state.
+3. Inserted the ledger row with `writeType: "fill_correction"`,
+   `sealedCaseDelta: 0`, `sealedEachDelta: 0`, `partialFillsDelta: []` (that
+   column stays meaningless/default on this write type — do not repurpose it
+   to carry the new array), plus the before/after pair. Ledger insert still
+   goes SECOND, uncaught inside the transaction, same reasoning as every
+   other write path here.
+
+Chose before/after-array storage over a delta representation because a
+full-array REPLACE has no meaningful decomposition into
+`partial_fills_delta`'s additive-append shape — this was the schema decision
+this memory used to flag as undecided; it's now made and lives in
+db/schema.ts's comment above `countLineWrite`.
+
+Mutation-checked: temporarily deleting the ledger insert from
+`editCountLineFills` and re-running `tests/count-write-path.test.ts -t "fill
+corrections"` fails exactly the two ledger-shape assertions (row count and
+replay-doesn't-duplicate) and leaves the writeType-default test passing —
+confirms the new tests actually exercise the write, not just the count_line
+side-effect.
 
 See [[valuation-nulls]] for the (unrelated, still current) valuation-math memory.
