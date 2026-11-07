@@ -75,3 +75,8 @@ tests/*.pdf
 /test-results/
 /playwright-report/
 /.env.e2e
+
+# Agent working notes kept local: security audit notes describe past weaknesses and
+# this repo is public; database notes are kept alongside them by the same decision.
+/.claude/agent-memory/security-reviewer/
+/.claude/agent-memory/database/
