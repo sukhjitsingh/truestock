@@ -72,6 +72,7 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
 import { StatusPill, type PillTone } from "@/components/ui/status-pill";
 import { formatDateTime } from "@/lib/utils";
+import { bannerText, rangeFailureView, validateRange } from "@/lib/audit-packet-range";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -79,16 +80,6 @@ type Status = "processing" | "ready" | "unavailable";
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
-}
-
-/** `dateFrom`/`dateTo` are plain YYYY-MM-DD strings — lexicographic order
- *  matches calendar order for that format, so a bare string compare is
- *  correct and matches `lib/validation/invoices.ts`'s own refinement. */
-function validateRange(dateFrom: string, dateTo: string): string | null {
-  if (!dateFrom || !dateTo) return "Choose both a start and end date.";
-  if (dateFrom > dateTo) return "End date must be on or after the start date.";
-  if (dateTo > todayIso()) return "End date cannot be in the future.";
-  return null;
 }
 
 /** The "left out" rows, shared by the pre-creation preview and the ready packet. */
@@ -153,7 +144,7 @@ export function AuditPacket() {
   const [packetOmitted, setPacketOmitted] = useState<AuditPacketOmittedInvoice[] | undefined>(undefined);
 
   const [preview, setPreview] = useState<PreviewState | null>(null);
-  const rangeValid = validateRange(dateFrom, dateTo) === null;
+  const rangeValid = validateRange(dateFrom, dateTo, todayIso()) === null;
 
   // Preview for the chosen range. A result is tagged with the range it was
   // asked for and `cancelled` drops any response that lands after the range
@@ -249,10 +240,10 @@ export function AuditPacket() {
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
 
-    const validationError = validateRange(dateFrom, dateTo);
-    if (validationError) {
-      setError(validationError);
-      setFieldErrors({ dateTo: validationError });
+    const failure = rangeFailureView(dateFrom, dateTo, todayIso());
+    if (failure) {
+      setError(failure.banner);
+      setFieldErrors(failure.fieldErrors);
       return;
     }
 
@@ -396,10 +387,10 @@ export function AuditPacket() {
 
       <PreviewPanel view={previewView(preview, dateFrom, dateTo, rangeValid)} />
 
-      {error ? (
+      {bannerText(error, fieldErrors) ? (
         <div className="flex items-center gap-2 rounded-lg bg-negative-bg p-3 text-caption text-negative" role="alert">
           <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
-          <span>{error}</span>
+          <span>{bannerText(error, fieldErrors)}</span>
         </div>
       ) : null}
 
