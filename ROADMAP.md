@@ -227,7 +227,7 @@ the constraint it describes is what the phase was actually built under:
 
 > **This phase used to be fed by measurements, and as of 2026-08-13 it is not.**
 > The field-validation phase moved from 1.9 to **2.9**, so the redesign now happens
-> *before* any timed count, five-location walk, or enroll-budget number exists. That
+> *before* any timed count, six-location walk, or enroll-budget number exists. That
 > is the real cost of the new order and it is worth naming: this phase will be
 > designed from judgement and from the two Dribbble references, not from evidence
 > about where time actually goes. Count 2 showed 29s and 102s between two kegs *on
@@ -263,7 +263,7 @@ Known material for this phase:
   have not.**
 - **Design flow, not just layout.** The leg model (pick a location, count it,
   *Finish section*, move on) is a flow decision that has never been walked
-  end to end across five locations, and under the new order **Phase 2.9 will not
+  end to end across six locations, and under the new order **Phase 2.9 will not
   produce evidence about it until after this phase ships**. Treat the leg model as
   the thing most worth leaving alone here — changing an untested flow on judgement
   alone risks replacing a design that works with one that merely reads better.
@@ -375,6 +375,13 @@ unmeasured claims fail silently.
 > never been felt. If a measurement here contradicts a Phase 2 decision, the fix
 > belongs here — do not re-open the redesign wholesale.
 
+> **Status as of 2026-11-07: nothing here is done.** Of the eleven items below, five
+> have partial evidence (the enroll budget, the offline queue, barcode resolution,
+> the redesign on a phone, and the data, but only in throwaway test databases) and
+> the rest have none. Phase 2.5 closed the *code* gaps. It did not produce the field
+> evidence this phase exists for. The sources are `docs/phone-test-2026-10-25-findings.md`,
+> `docs/qa/2026-11-06-*.md`, and open items #45, #46 and #47.
+
 ### The data (was Phase 1.3)
 
 **Do this first — the measurements below are close to meaningless without it.**
@@ -385,16 +392,26 @@ header-only on purpose — inventing distributor names in a catalog that drives 
 orders is not acceptable) · 5 wine producers (currently varietals like `Merlot`,
 which cannot be costed or scanned until they name a producer).
 
-**Phase 2.5 should have reduced this.** OCR invoice capture is the automated
-version of exactly this typing, so on arriving here, check what it already
-populated before entering anything by hand. If it populated nothing, that is a
-finding about Phase 2.5, not a reason to skip this.
+**Phase 2.5 reduced this in code, not in data (checked 2026-11-07).** Invoice
+approval now posts costs: it was proven on one real text invoice through the UI
+on 2026-11-07 (open item #47). But every cost it has posted went into a test
+database that was then reset. The shared dev DB still has 9 of 99 products
+costed (the seeded kegs), 0 case sizes (`case_size` is NULL on all 16 bottled
+beers, findings DB-5), 0 pars, 0 vendors and no wine producers. So the data
+still has to be entered. The cheapest route is now real invoices through the
+pipeline, not hand entry. Before that will work, add 1 L product rows for the
+sizes the invoices carry (#47, "found during proof"). Decide whether open item
+#42 (editing a size rewrites history) matters once the owner starts correcting
+sizes.
 
 **The 45-minute budget still stands** (Gate 1 of `docs/plans/phase-1-to-1.5/`):
 all 90 costs in one sitting, unaided, with the dashboard valuation reconciling to
 the cent against a hand-checked SQL total — the way count 2 was reconciled at
 $170.90. Inline cost editing was built specifically to make that possible; if it
-is not, that is a Phase 1.2 regression worth reporting.
+is not, that is a Phase 1.2 regression worth reporting. **Never measured.** Now
+that costs are expected to come from invoices, time the invoice route (the
+Phase 2.5 field metric, below) and keep the 45 minutes as the hand-entry
+fallback's budget.
 
 ### The measurements
 
@@ -406,40 +423,76 @@ session log, because a run that is not written down is an anecdote.
   first walk is essentially all enrolment. Measures the **20-second** enroll
   budget from `AGENTS.md`, not the 20-minute one. Also finally answers open
   question #3, the open-vs-sealed split, which every counting-speed estimate
-  depends on.
+  depends on. *So far:* two enrolments were timed in passing on 2026-10-25
+  (10 s and 5 s from scan to written line). No full pass has run, the split is
+  still unanswered, and the redesigned enroll form's field set (§6 bet 1) has no
+  verdict. Run A also includes naming a producer for each of the 5 wines.
 - **The timed count (Run B).** The **sub-20-minute** target the whole design is
   justified by, and still the one claim with no measurement behind it. Only
   meaningful once barcodes resolve, so it follows Run A over the same bottles.
   Watch the per-line gaps: count 2 saw 29s and 102s between two kegs *on the same
-  screen with no leg switch*.
-- **The five-location walk.** No pass has covered all five. The locked-location
-  design and its "count something elsewhere" escape hatch are both untested, and a
-  wrong active location fails *silently* — the total stays right and only the
-  distribution is wrong.
+  screen with no leg switch*. *So far:* the longest real count is count #3
+  (2026-10-25): 3 lines in 2 m 43 s, with no costs.
+- **The six-location walk** (Storeroom, Speed Rail, Back Bar and the rest,
+  including Tap 1). No pass has covered all six: count #3 touched 2 and closed with
+  4 never visited (findings DB-4). The locked-location design and its "count
+  something elsewhere" escape hatch are both untested (the stray-bottle sheet has
+  never been opened on a phone), and a wrong active location fails *silently*. The
+  total stays right and only the distribution is wrong.
 - **Rapid-scan against a real camera.** The last untested part of scanning and the
   one whose failures are silent by construction. Its frame guard is tested only
   against *modelled* frame sequences. **Count a real shelf in rapid mode, then
   count it by hand, and compare.** Offered only on quantity locations, and
   *hidden* rather than greyed out elsewhere.
-- **The two remaining queue gaps (#9).** The **mount-time flush** has never run —
-  only the `online` listener was observed — and the queue has never held **more
-  than one write at a time**, so ordered replay is still only reasoned about.
+- **The offline queue on the phone (#9 → #46).** Superseded since this was first
+  written. The 2026-11-06 phone offline test **failed**, which was the first time
+  the queue held more than one write. An older queued write overwrote a correction:
+  the phone showed `4 ea` and Synced while the DB held 6 (F2). Nothing retried after
+  the phone fell over to mobile data, and one write sat for more than 7 minutes
+  (F3). The fix in `components/count/count-leg.tsx` (a single lock, oldest write
+  first, a 15 s retry timer, and a flush on mount) is proven only by 3 e2e specs on
+  a production build. **Prove it on the phone:** two or more queued writes, a
+  correction arriving in the right order, falling over to mobile data, and the
+  mount flush after the app is killed. #46 still lists open gaps: the retry timer
+  only runs while the scan screen is mounted; *Finish section* gives no warning
+  with writes pending; `/count/<id>` shows no pending indicator and Submit stays
+  live.
 - **The standalone server entrypoint.** The 2026-08-12 CSP verification ran under
   `next start`, which printed `"next start" does not work with "output:
   standalone" configuration`. Hostinger runs `node .next/standalone/server.js`,
   which has never been started. Cheap to close locally and it is a Phase 3
   blocker, so closing it here removes a deploy-day unknown.
-- **The barcode-resolution branch.** Both real scans so far were *enrolments of
-  unknown codes*. Resolving a barcode to a product the catalog already has is a
-  different branch of `onBarcode` and has never run on a device.
+- **The barcode-resolution branch.** The phone sessions since 2026-10-25 scanned
+  more codes, but no log records a *known* code resolving to an existing product,
+  which is a different branch of `onBarcode`. The 2026-11-06 QA marks "barcode
+  flows" passed without naming that branch, so treat it as unproven. Also
+  unverified: a second scan of the same bottle (increment), SET vs ADD, and which
+  reader actually runs: the built-in `BarcodeDetector` or the app's fallback
+  (the `/count/preflight` readout, #45). Record one known-code scan.
+- **The redesigned UI on a phone (§6 bets).** It has now been on a phone twice
+  (2026-10-25 and 2026-11-06), but none of the four bets in
+  `docs/phone-count-test.md` §6 has a recorded verdict. Before the first real
+  count, fix or explicitly accept these findings from the 2026-10-25 recording:
+  V1 (Save drops a fill that was chosen but not added), A18 (the tab bar stays
+  live during entry), A19 (Android Back), A20 (Submit and Close have no
+  pre-flight check), DB-1 (`$0.00` shown as if it were a value), and DB-4 (a
+  count can close with locations never visited). Also run `bun run docker:reset`
+  once, or accept the stale raw barcodes (#43).
+- **The Phase 2.5 field metric.** 20–25 real invoices reviewed in under 30
+  minutes. So far one real text invoice has been approved through the UI. The one
+  real scan hit `EXTRACTION_UNAVAILABLE` because there is no `ANTHROPIC_API_KEY`.
+  Still open (#47): Vision on a real scan, alias re-matching from a second upload
+  of the same supplier, and F9 past the key check and on Hostinger.
 
 **Done when:** the catalog is costed, a full count runs on a phone in under 20
 minutes, the resulting valuation and reorder list are trusted enough to act on,
-and rapid mode's count matches a hand count.
+and rapid mode's count matches a hand count. The #46 queue fix has to hold on the
+phone, and real invoices have to post real costs within the 30-minute field
+metric, with Vision proven on at least one scan.
 
 **This is the last phase before go-live**, and its output is what makes Phase 3 a
-decision rather than a hope: `docs/go-live.md`'s remaining browser checks and the
-standalone-entrypoint item both close here.
+decision rather than a hope: `docs/go-live.md`'s remaining browser checks, the
+standalone-entrypoint item, and the Vision API key (#47) all close here.
 
 ---
 
