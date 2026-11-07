@@ -1120,6 +1120,80 @@ describe("arithmeticCheck", () => {
   });
 });
 
+describe("arithmeticCheck — per-line net (QA finding F4)", () => {
+  const goodLine = (lineNumber: number, gross: string, discount: string, net: string) =>
+    draftLine({ lineNumber, rawGross: gross, rawDiscount: discount, rawNet: net });
+
+  test("CONTROL: every line has gross, discount and net, and the sum matches, so it passes", () => {
+    const lines = [goodLine(1, "100.00", "10.00", "90.00"), goodLine(2, "50.00", "5.00", "45.00")];
+    expect(arithmeticCheck(lines, 150)).toEqual({ pass: true });
+  });
+
+  test("a line with gross but no net fails when other lines print a net, even though the gross sum matches the total", () => {
+    const lines = [
+      goodLine(1, "100.00", "10.00", "90.00"),
+      draftLine({ lineNumber: 2, rawGross: "50.00", rawDiscount: "50.00", rawNet: null }),
+    ];
+    const result = arithmeticCheck(lines, 150);
+    expect(result.pass).toBe(false);
+    if (!result.pass) {
+      expect(result.details.some((detail) => detail.includes("Line 2") && detail.includes("no net"))).toBe(true);
+      expect(result.details.some((detail) => detail.includes("Line 1"))).toBe(false);
+    }
+  });
+
+  test("the per-line check does not depend on a printed header total", () => {
+    const lines = [
+      goodLine(1, "100.00", "10.00", "90.00"),
+      draftLine({ lineNumber: 2, rawGross: "50.00", rawDiscount: "50.00", rawNet: null }),
+    ];
+    expect(arithmeticCheck(lines, null).pass).toBe(false);
+  });
+
+  test("a single-amount invoice (gross on some lines, no net anywhere) is not failed wholesale", () => {
+    const lines = [draftLine({ lineNumber: 1, rawGross: "100.00" }), draftLine({ lineNumber: 2, rawGross: "50.00" })];
+    expect(arithmeticCheck(lines, 150)).toEqual({ pass: true });
+    expect(arithmeticCheck(lines, null)).toEqual({ pass: true });
+  });
+
+  test("a line with neither gross nor net is not a per-line failure (extendedCost-only lines)", () => {
+    const lines = [goodLine(1, "100.00", "10.00", "90.00"), draftLine({ lineNumber: 2, extendedCost: "20.00" })];
+    expect(arithmeticCheck(lines, null)).toEqual({ pass: true });
+  });
+});
+
+describe("parseLinesFromMarkdown — blank cells and column shift (QA finding F4)", () => {
+  const table = (rows: string[]) =>
+    [
+      "Invoice 7001",
+      "",
+      "|Item Name|Quantity|Gross Amount|Discount Amount|Net Amount|",
+      "|---|---|---|---|---|",
+      "|WIDGET ALPHA 100001|1 Cases|$100.00|$10.00|$90.00|",
+      ...rows,
+      "",
+    ].join("\n");
+
+  test("CONTROL: an explicit blank discount cell stays blank in its own column", () => {
+    const parsed = parseLinesFromMarkdown(table(["|WIDGET BETA 100002|2 Units|$50.00||$50.00|"]));
+    const beta = parsed.lines[1];
+    expect([beta.rawGross, beta.rawDiscount, beta.rawNet]).toEqual(["50.00", null, "50.00"]);
+  });
+
+  test(
+    "a row whose blank cell was collapsed upstream and padded at the end (cell count still matches) lands gross in discount " +
+      "and leaves net NULL; this is the F4 shape, and arithmeticCheck must now fail it",
+    () => {
+      const parsed = parseLinesFromMarkdown(table(["|WIDGET BETA 100002|2 Units|$50.00|$50.00||"]));
+      const beta = parsed.lines[1];
+      // Characterisation: the markdown itself no longer says which cell was blank.
+      expect([beta.rawGross, beta.rawDiscount, beta.rawNet]).toEqual(["50.00", "50.00", null]);
+      const result = arithmeticCheck(parsed.lines, 150);
+      expect(result.pass).toBe(false);
+    },
+  );
+});
+
 describe("pdfInspectorCrossCheck", () => {
   const MARKDOWN_TWO_ROW_TABLE = ["| Item | Qty |", "|---|---|", "| Coors Light | 2 |", "| Bud Light | 1 |"].join("\n");
 

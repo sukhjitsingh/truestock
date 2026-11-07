@@ -1121,20 +1121,51 @@ export type ArithmeticCheckResult =
 const ARITHMETIC_TOLERANCE_USD = 0.02;
 
 /**
- * Sums every line's `rawGross` and compares it against the invoice's own
- * printed `totalGross`. A `null` header total means nothing was extracted to
- * check against — that is an absence of a claim, not a contradiction of one,
- * so it passes. A line with no `rawGross` is excluded from the sum (noted in
- * `details`) rather than treated as `0` — the same "don't coerce an unknown
- * into a plausible-looking number" rule `invoice-lines.ts` documents for
- * every other field here.
+ * Two checks, both of which must hold:
+ *
+ * 1. Per line (QA finding F4): on an invoice that prints a per-line net at
+ *    all, a line that has `rawGross` but no `rawNet` fails. That shape is what
+ *    a column shift leaves behind (the discount cell went blank, the values
+ *    slid left, and the net ended up NULL) and a sum of gross alone cannot see
+ *    it. "Prints a per-line net at all" means at least one OTHER line carries
+ *    `rawNet`: a single-amount invoice (the text parser fills only
+ *    `extendedCost` for an Extension/Amount column, leaving rawGross and rawNet
+ *    both NULL; Vision is told to leave them null when the invoice does not
+ *    print them) has no net anywhere, and a gross-only invoice must not fail
+ *    wholesale. This runs even when the header total is absent, because the
+ *    damage is on the line, not in the total.
+ *
+ * 2. Sum of every line's `rawGross` against the invoice's own printed
+ *    `totalGross`. A `null` header total means nothing was extracted to check
+ *    against — that is an absence of a claim, not a contradiction of one, so
+ *    this half passes. A line with no `rawGross` is excluded from the sum
+ *    (noted in `details`) rather than treated as `0` — the same "don't coerce
+ *    an unknown into a plausible-looking number" rule `invoice-lines.ts`
+ *    documents for every other field here.
+ *
+ * `mismatch` is the sum-vs-total difference; it is 0 when the failure is
+ * per-line only (or no total was printed).
  */
 export function arithmeticCheck(lines: DraftInvoiceLine[], expectedTotal: number | null): ArithmeticCheckResult {
-  if (expectedTotal == null) {
-    return { pass: true };
+  const details: string[] = [];
+
+  const invoicePrintsLineNet = lines.some((line) => line.rawNet != null);
+  let lineFailed = false;
+  if (invoicePrintsLineNet) {
+    for (const line of lines) {
+      if (line.rawGross != null && line.rawNet == null) {
+        lineFailed = true;
+        details.push(
+          `Line ${line.lineNumber}: has a gross amount (${line.rawGross}) but no net amount, though other lines print one. A cell may have been read into the wrong column.`,
+        );
+      }
+    }
   }
 
-  const details: string[] = [];
+  if (expectedTotal == null) {
+    return lineFailed ? { pass: false, mismatch: 0, details } : { pass: true };
+  }
+
   let sum = 0;
   for (const line of lines) {
     if (line.rawGross == null) {
@@ -1146,6 +1177,7 @@ export function arithmeticCheck(lines: DraftInvoiceLine[], expectedTotal: number
 
   const diff = Math.round((sum - expectedTotal) * 100) / 100;
   if (Math.abs(diff) <= ARITHMETIC_TOLERANCE_USD) {
+    if (lineFailed) return { pass: false, mismatch: diff, details };
     if (diff > 0) return { pass: true, overage: diff };
     if (diff < 0) return { pass: true, shortfall: -diff };
     return { pass: true };
