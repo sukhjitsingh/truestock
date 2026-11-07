@@ -380,7 +380,8 @@ unmeasured claims fail silently.
 > the redesign on a phone, and the data, but only in throwaway test databases) and
 > the rest have none. Phase 2.5 closed the *code* gaps. It did not produce the field
 > evidence this phase exists for. The sources are `docs/phone-test-2026-10-25-findings.md`,
-> `docs/qa/2026-11-06-*.md`, and open items #45, #46 and #47.
+> `docs/qa/2026-11-06-*.md`, and open items #45, #46 and #47. The status of each
+> item is tracked in `docs/open-items.md` #48.
 
 ### The data (was Phase 1.3)
 

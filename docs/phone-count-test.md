@@ -220,7 +220,8 @@ and whether the form ever felt like it needed the other hand.
 Only meaningful once barcodes resolve. Either follow Run A with a second pass
 over the same bottles, or enrol first and count second.
 
-1. Full count, all five locations, start to *Finish section* on the last one.
+1. Full count, all six locations (including Tap 1), start to *Finish section* on
+   the last one.
 2. One stopwatch, running the whole time, including walking.
 3. Count normally. Do not be careful for the benefit of the test.
 
@@ -411,7 +412,7 @@ entirely, that is a finding, not a null result.
 **Bet 4 — one card per scanned product is worth its vertical space.**
 "Just counted" is a list of cards separated by `card-gap`, not a dense table
 row. The bet is that browsing what you just counted as cards is worth the
-scrolling it costs across a five-location walk. **Run B settles it**, and the
+scrolling it costs across a six-location walk. **Run B settles it**, and the
 signal is specific: how often you scroll back to check something you already
 counted, and how far. This one interacts with the floating bottom bar — the bar
 exists precisely *because* this list grows past a viewport — so judge them
@@ -430,6 +431,11 @@ item **#20** carries the full list of what to exercise.
 ---
 
 ## 7. When Phase 2.9 is done
+
+**Status, 2026-11-07: not started as a protocol run.** Two phone sessions
+(2026-10-25 and 2026-11-06) used the redesigned screens. Neither was Run A or
+Run B, and none of the §6 bets has a verdict. The status of each item is in
+`docs/open-items.md` #48.
 
 **This file is Phase 2.9's protocol.** Re-sequenced 2026-08-12 and again
 2026-08-13 (1.9 → 2.9, now after the UI redesign and OCR): these runs used

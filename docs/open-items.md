@@ -782,6 +782,12 @@ The other two halves of finding H stay as they were: users are CLI-only (item
 **Trigger: the first phone test — fold into `docs/phone-count-test.md` rather
 than doing separately.**
 
+**Status, 2026-11-07: partly overtaken.** The redesigned counting screens ran on
+a phone on 2026-10-25 and 2026-11-06, so they have now been used on a phone.
+They have not been evaluated: none of the checks below and none of the §6 bets
+has a recorded verdict. The 2026-10-25 recording found V1, A18, A19 and A20
+(`docs/phone-test-2026-10-25-findings.md`). Tracked in Phase 2.9, #48.
+
 **Widened 2026-08-14 by Phase 2.** This item was written about six changes made
 on 2026-07-30. The UI redesign then rebuilt the whole counting surface —
 `app/(count)/count/page.tsx`, `count-leg.tsx`, `count-line-card.tsx`,
@@ -2125,6 +2131,9 @@ compiled output, then fix every instance and verify in a browser.
 **Trigger: the next time the counting app is opened on a phone (Phase 2.9's
 walk), or in Chrome on a Mac.**
 
+**Status, 2026-11-07: still open.** The 2026-11-06 phone session did not record
+the `/count/preflight` readout. Part of Phase 2.9, #48.
+
 Since 2026-11-05 the scanner uses the phone's built-in `BarcodeDetector` only if
 `getSupportedFormats()` includes UPC-A, UPC-E, EAN-13 and EAN-8, and otherwise
 the app's own reader, whose engine the app now serves itself
@@ -2163,7 +2172,9 @@ four pass. They abort only the count POSTs, because `context.setOffline` flips
 `navigator.onLine` and so cannot reproduce the phone case.
 
 **Not proven.** The fix has not been run on the real phone, which is where both
-defects were found. Whether either defect predates the Phase 2.5 merge was not
+defects were found. Phase 2.9 (#48) now puts this first: two or more queued
+writes, a correction arriving in the right order, falling over to mobile data,
+and the flush after the app is killed. Whether either defect predates the Phase 2.5 merge was not
 tested on `main`.
 
 **Still open:**
@@ -2261,3 +2272,34 @@ reviews read the code and ran nothing.
 **Differences from the approved mockups:** the "Approve: post 3 costs, skip 2" button
 label and the pack "Remembered" chip were not built. The panel lists no per-line
 unit costs.
+
+## 48. Phase 2.9 field validation: status of each item as of 2026-11-07
+
+**Trigger:** the start of Phase 2.9 work, and each phone or invoice session after
+that. Update this item, not a session log, as each part closes. Close it when
+ROADMAP.md's Phase 2.9 "Done when" holds.
+
+**Status, 2026-11-07: nothing is done.** Of the eleven items, five have partial
+evidence and six have none. Phase 2.5 closed the *code* gaps. It did not produce
+the field evidence this phase exists for. ROADMAP.md Phase 2.9 has the full text.
+The sources are `docs/phone-test-2026-10-25-findings.md`, `docs/qa/2026-11-06-*.md`,
+and items #45, #46 and #47.
+
+| Item | Status | What exists |
+|---|---|---|
+| The data (costs, case sizes, pars, vendors, wine producers) | Not started on real data | Shared dev DB: 9 of 99 costed (seeded kegs), 0 case sizes, 0 pars, 0 vendors. Invoice-posted costs went only into test DBs that were reset. |
+| 45-minute cost-entry budget | Not started | Never timed. Costs are now expected to come from invoices. |
+| Run A: enrolment, 20 s enroll, open-vs-sealed | Partial | Two enrolments timed in passing (10 s, 5 s) on 2026-10-25. No full pass, and the split is unanswered. |
+| Run B: full count under 20 min | Not started | Longest real count: 3 lines in 2 m 43 s. |
+| Six-location walk and stray-bottle sheet | Not started | Count #3 touched 2 of 6 and closed with 4 unvisited (DB-4). |
+| Rapid-scan vs hand count | Not started | — |
+| Offline queue on the phone | Partial | Failed on 2026-11-06 (F2, F3). The fix is proven by e2e tests only (#46). |
+| Standalone `server.js` | Not started | Never started. Also a Phase 3 blocker. |
+| Known barcode resolving on a device | Partial | Not recorded. Second scans, SET vs ADD and #45 are unverified. |
+| Phase 2.5 field metric and Vision | Not started | One real text invoice approved. Vision never run (#47). |
+| Redesigned UI on a phone (§6 bets) | Partial | On a phone twice, with no verdict on any bet. V1, A18, A19, A20, DB-1 and DB-4 to fix or accept. |
+
+**Suggested order.** First the two things that would quietly corrupt the first
+real count: prove the #46 fix on the phone, and fix or accept the pre-count
+findings. Then enter data through real invoices (add the 1 L product rows first,
+#47), and run Vision with a real key. Then Run A, then Run B.

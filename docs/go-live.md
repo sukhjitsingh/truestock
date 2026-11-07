@@ -13,6 +13,8 @@ gate whenever it is reached — but two things follow from the new position:
 
 - **Phase 2.9 should close the standalone-entrypoint item below** before this
   gate is ever opened, which removes the last deploy-day unknown.
+  *(Status 2026-11-07: not done. Nothing in Phase 2.9 is done yet. See
+  `docs/open-items.md` #48.)*
 - **Part 2.4's counting checks are no longer entirely unobserved.** Most of
   them now have a local result to compare against, which makes them stronger
   rather than redundant — a check that has passed once locally and fails here
@@ -264,8 +266,14 @@ specific about production rather than about the code.
 - [ ] **Kill the app with writes queued**, reopen, confirm the mount-time flush
       sends them. *Never observed anywhere — only the `online` path has run.
       Deferred to Phase 2.9; if that has not happened, this is the first time.*
+      *(2026-11-07: still never observed on a device. The flush on mount exists in
+      `count-leg.tsx` and is covered by e2e tests only, #46.)*
 - [ ] **Queue more than one write at a time** and confirm ordered replay. The
-      queue has only ever held a single write.
+      queue has only ever held a single write. *(Superseded 2026-11-06: the first
+      phone test with several queued writes **failed**. An older write overwrote a
+      correction (F2), and nothing retried after the phone fell over to mobile
+      data (F3). The fix is proven by e2e tests only, #46. Also test the fallover
+      to mobile data here.)*
 - [ ] **The one that matters most:** confirm a write that reached the server *just
       before* the connection dropped does not apply twice when the queue resends
       it. That is what `client_line_id` exists for, and it is the failure the
@@ -277,7 +285,9 @@ specific about production rather than about the code.
       never create a second (invariant 3). *Covered by
       `tests/count-write-path.test.ts` and mutation-checked, but never done by
       hand on a device — both real scans so far were enrolments of unknown
-      codes, which is a different branch of `onBarcode`.*
+      codes, which is a different branch of `onBarcode`.* *(2026-11-07: more
+      phone scans have happened since then, but no log records a known code
+      resolving, or a second scan of the same bottle.)*
 - [ ] **Close a count, then confirm it refuses edits** (invariant 1). *Locally:
       four counts closed; valuation reconciled to the cent in SQL on count 2.*
 - [ ] **Rapid-scan a shelf, then count it by hand, and compare.** Its frame

@@ -52,7 +52,8 @@ none. The shared dev DB still has 9 of 99 products costed, 0 case sizes, 0 pars,
 0 vendors and no wine producers. Invoice approval posts costs, but so far only
 into test databases. There has been no timed count. The 2026-11-06 queue fix
 (#46) is proven only by e2e tests, not on the phone. Vision has never run
-(#47). The per-item breakdown is in ROADMAP.md, Phase 2.9.
+(#47). The per-item breakdown is in ROADMAP.md, Phase 2.9, and is tracked in
+`docs/open-items.md` #48.
 
 **Phase 2 — the UI redesign — shipped 2026-08-14** (PR #13, merge `9cbf64b`).
 Nine implementation commits behind the Gate 1 approval: design tokens and

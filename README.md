@@ -25,13 +25,16 @@ set, the mobile counting surface rebuilt, the back office on a left icon rail wi
 the catalog on TanStack Table v8 and per-role column sets. The back office half was
 verified screen by screen in a real browser; **the redesigned counting screens have
 not been opened on a phone**, so every phone-verified fact above predates the
-surface that ships today.
+surface that ships today. *(Update 2026-11-07: they have since run on a phone,
+on 2026-10-25 and 2026-11-06. They have been used there, but not evaluated.)*
 
 **What is unproven is scale, not mechanism.** Five sessions produced 13 count lines
 between them. Nothing has been timed against the sub-20-minute target the design is
-justified by, no pass has covered all five locations, rapid-scan mode has never
+justified by, no pass has covered all six locations, rapid-scan mode has never
 faced a real camera, and 90 of 99 active products are unpriced. Those measurements
-are deferred to Phase 2.9 by a deliberate decision — see `ROADMAP.md`.
+are deferred to Phase 2.9 by a deliberate decision — see `ROADMAP.md`. As of
+2026-11-07 none of Phase 2.9 is done. The status of each item is in
+`docs/open-items.md` #48.
 
 - [`STATE.md`](STATE.md) — what is proven, what is merely built, what is next
 - [`ROADMAP.md`](ROADMAP.md) — the phases after the MVP

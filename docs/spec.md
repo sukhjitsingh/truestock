@@ -640,7 +640,7 @@ decision after the MVP was built:
 - **Phase 2.5 — implementation complete:** retained invoice archive, text/Vision
   extraction, review, matching, cost history and limited audit export
 - **Phase 2.9 — next:** owner data entry plus real invoice and phone-count field
-  measurements
+  measurements (not started as of 2026-11-07; status in `docs/open-items.md` #48)
 - **Phase 3 — go-live:** production database, standalone Hostinger artifact,
   durable retained storage, outbound email, backup and rollback verification
 - **Phase 4 — reports/back-office enhancements**
