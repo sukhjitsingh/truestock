@@ -99,6 +99,7 @@ import {
 import type { InvoiceRow, InvoiceExtractionOutcome } from "@/lib/domain/invoices";
 import { previewKind } from "@/lib/invoice-preview";
 import { reviewOutcomeView } from "@/lib/invoice-review-outcome";
+import { initialCurrencyInput } from "@/lib/invoice-review-currency";
 import type { InvoiceLineRow, InvoiceLineUom } from "@/lib/domain/invoice-lines";
 import type { ProductSummary } from "@/lib/domain/catalog";
 import {
@@ -204,7 +205,7 @@ function initialHeaderFieldState(invoice: InvoiceRow): HeaderFieldState {
     invoiceNumber: invoice.invoiceNumber ?? "",
     totalGross: formatCostForInput(invoice.totalGross),
     totalNet: formatCostForInput(invoice.totalNet),
-    currency: invoice.currency ?? "",
+    currency: initialCurrencyInput(invoice.currency),
     retentionUntil: invoice.retentionUntil ?? "",
   };
 }
@@ -605,7 +606,6 @@ export function InvoiceReviewForm({
                       id="header-currency"
                       value={headerFields.currency}
                       onChange={(e) => updateHeaderField("currency", e.target.value.toUpperCase())}
-                      placeholder="USD"
                       maxLength={3}
                       className="w-full uppercase"
                     />
