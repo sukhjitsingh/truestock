@@ -606,6 +606,60 @@ function looksLikeUnrecognizedLineItemTable(table: MarkdownTable): boolean {
 }
 
 /**
+ * Recovers a net amount that slid into the discount column (text PDFs only).
+ *
+ * When a line's discount is blank on the PDF, pdf-inspector closes the gap: the
+ * row reads `| name | 4 Units | $100.00 | $100.00 |  |`, so gross is right, the
+ * discount column holds what is really the net, and the net cell is blank. The
+ * row alone cannot tell that from a genuine full discount with a blank net, so
+ * row shape is ambiguous evidence. The invoice's own printed totals are the only
+ * evidence available, and this repairs only when they prove it.
+ *
+ * Candidates are lines with rawGross and rawDiscount set and rawNet null. All
+ * of these must hold, otherwise nothing changes (a refused repair leaves the
+ * line exactly as read, so `arithmeticCheck` still flags it):
+ *  a. at least one candidate, and at least one other line prints a net;
+ *  b. both totalDiscount and totalNet were printed;
+ *  c. each candidate's discount equals its gross (a blank discount means
+ *     net = gross);
+ *  d. as read, the discounts do NOT sum to totalDiscount;
+ *  e. with every candidate moved (net = old discount, discount = null), the
+ *     discounts sum to totalDiscount AND the nets sum to totalNet.
+ *
+ * It is all candidates or none, never a subset. A null in a sum is absent, not 0.
+ * Mutates `lines` in place and returns how many lines were repaired.
+ */
+export function repairShiftedNetCells(
+  lines: DraftInvoiceLine[],
+  totalDiscount: number | null,
+  totalNet: number | null,
+): number {
+  if (totalDiscount == null || totalNet == null) return 0;
+  const candidates = lines.filter((line) => line.rawGross != null && line.rawDiscount != null && line.rawNet == null);
+  if (candidates.length === 0) return 0;
+  if (!lines.some((line) => line.rawNet != null)) return 0;
+  for (const line of candidates) {
+    if (Math.abs(Number(line.rawDiscount) - Number(line.rawGross)) > ARITHMETIC_TOLERANCE_USD) return 0;
+  }
+  const sumOf = (values: (string | null)[]) =>
+    values.reduce<number>((total, value) => (value == null ? total : total + Number(value)), 0);
+  const matches = (sum: number, printed: number) => Math.abs(sum - printed) <= ARITHMETIC_TOLERANCE_USD;
+
+  if (matches(sumOf(lines.map((line) => line.rawDiscount)), totalDiscount)) return 0;
+  const moved = new Set(candidates);
+  const discountAfter = sumOf(lines.map((line) => (moved.has(line) ? null : line.rawDiscount)));
+  const netAfter = sumOf(lines.map((line) => (moved.has(line) ? line.rawDiscount : line.rawNet)));
+  if (!matches(discountAfter, totalDiscount) || !matches(netAfter, totalNet)) return 0;
+
+  for (const line of candidates) {
+    line.rawNet = line.rawDiscount;
+    line.rawDiscount = null;
+  }
+  console.log(`[extraction-pipeline] repaired ${candidates.length} line(s) whose net had slid into the discount column`);
+  return candidates.length;
+}
+
+/**
  * Converts pdf-inspector's layout-aware Markdown into conservative review
  * drafts. It intentionally recognizes only common invoice column labels; a
  * table it cannot identify fails loudly instead of manufacturing lines.
@@ -747,6 +801,8 @@ export function parseLinesFromMarkdown(markdown: string): ParsedExtraction {
   if (draftLines.length === 0) {
     throw new Error("pdf-inspector extracted text but no recognizable invoice line-item table was found.");
   }
+
+  repairShiftedNetCells(draftLines, totalDiscount, totalNet);
 
   return {
     header: {

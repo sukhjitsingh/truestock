@@ -21,6 +21,7 @@ import {
   parseLinesFromVision,
   arithmeticCheck,
   pdfInspectorCrossCheck,
+  repairShiftedNetCells,
   processExtractionQueue,
 } from "@/lib/domain/extraction-pipeline";
 import { writeExtractedLines, type DraftInvoiceLine } from "@/lib/domain/invoice-lines";
@@ -976,6 +977,122 @@ describe("parseLinesFromMarkdown — blank cells and column shift (QA finding F4
       expect(result.pass).toBe(false);
     },
   );
+});
+
+describe("repairShiftedNetCells — a net that slid into the discount column", () => {
+  /**
+   * Synthetic invoice in the same table shape as the Southern Glazer's fixture
+   * (labels row + values row for the totals), invented names and numbers.
+   * A totals column is omitted entirely when its value is null.
+   */
+  const invoiceWith = (rows: string[], totals: { gross: string; discount: string | null; net: string | null }) => {
+    const labels = [
+      "Total Cases",
+      "Total Units",
+      "Gross Total",
+      ...(totals.discount ? ["Discount Total"] : []),
+      ...(totals.net ? ["Net Total"] : []),
+    ];
+    const values = ["1", "9", totals.gross, ...(totals.discount ? [totals.discount] : []), ...(totals.net ? [totals.net] : [])];
+    return [
+      "**Invoice Number: 9000777**",
+      "",
+      "|Document Date|Account ID|Address|||",
+      "|---|---|---|---|---|",
+      "|04/02/2026|88888|1 TEST RD NOWHERE, Arizona 85000|||",
+      `|${labels.join("|")}|`,
+      `|${values.join("|")}|`,
+      "",
+      "# Associated Items",
+      "",
+      "|Item Name|Quantity|Gross Amount|Discount Amount|Net Amount|",
+      "|---|---|---|---|---|",
+      ...rows,
+      "",
+    ].join("\n");
+  };
+  const ALPHA = "|WIDGET ALPHA 700001|1 Cases|$120.00|$20.00|$100.00|";
+  const BETA_SHIFTED = "|GADGET BETA 700002|4 Units|$75.00|$75.00||";
+  const DELTA_SHIFTED = "|GIZMO DELTA 700003|2 Units|$40.00|$40.00||";
+  const FREE_GOODS = "|SAMPLE GAMMA 700004|1 Units|$30.00|$30.00|$0.00|";
+  const cells = (line: { rawGross: string | null; rawDiscount: string | null; rawNet: string | null }) => [
+    line.rawGross,
+    line.rawDiscount,
+    line.rawNet,
+  ];
+
+  test("repaired when the printed totals prove it, and a free-goods line with an explicit 0.00 net stays untouched", () => {
+    const parsed = parseLinesFromMarkdown(
+      invoiceWith([ALPHA, BETA_SHIFTED, FREE_GOODS], { gross: "$225.00", discount: "$50.00", net: "$175.00" }),
+    );
+    expect(cells(parsed.lines[0])).toEqual(["120.00", "20.00", "100.00"]);
+    expect(cells(parsed.lines[1])).toEqual(["75.00", null, "75.00"]);
+    expect(cells(parsed.lines[2])).toEqual(["30.00", "30.00", "0.00"]);
+    expect(arithmeticCheck(parsed.lines, 225)).toEqual({ pass: true });
+  });
+
+  test("refused when the total discount was not printed, and the line still fails arithmeticCheck", () => {
+    const parsed = parseLinesFromMarkdown(invoiceWith([ALPHA, BETA_SHIFTED], { gross: "$195.00", discount: null, net: "$175.00" }));
+    expect(cells(parsed.lines[1])).toEqual(["75.00", "75.00", null]);
+    expect(arithmeticCheck(parsed.lines, 195).pass).toBe(false);
+  });
+
+  test("refused when the total net was not printed, and the line still fails arithmeticCheck", () => {
+    const parsed = parseLinesFromMarkdown(invoiceWith([ALPHA, BETA_SHIFTED], { gross: "$195.00", discount: "$20.00", net: null }));
+    expect(cells(parsed.lines[1])).toEqual(["75.00", "75.00", null]);
+    expect(arithmeticCheck(parsed.lines, 195).pass).toBe(false);
+  });
+
+  test("refused when the discount as read already matches the total (a genuine full discount with a blank net)", () => {
+    const parsed = parseLinesFromMarkdown(
+      invoiceWith([ALPHA, BETA_SHIFTED], { gross: "$195.00", discount: "$95.00", net: "$100.00" }),
+    );
+    expect(cells(parsed.lines[1])).toEqual(["75.00", "75.00", null]);
+    expect(arithmeticCheck(parsed.lines, 195).pass).toBe(false);
+  });
+
+  test("refused when the discount cell differs from the gross, so it cannot be a slid net", () => {
+    const parsed = parseLinesFromMarkdown(
+      invoiceWith([ALPHA, "|GADGET BETA 700002|4 Units|$75.00|$70.00||"], {
+        gross: "$195.00",
+        discount: "$20.00",
+        net: "$170.00",
+      }),
+    );
+    expect(cells(parsed.lines[1])).toEqual(["75.00", "70.00", null]);
+    expect(arithmeticCheck(parsed.lines, 195).pass).toBe(false);
+  });
+
+  test("refused when only moving a subset of the candidates would balance (all or none)", () => {
+    // Moving BETA alone would balance (discount 20+40=60, net 100+75=175); moving both does not.
+    const parsed = parseLinesFromMarkdown(
+      invoiceWith([ALPHA, BETA_SHIFTED, DELTA_SHIFTED], { gross: "$235.00", discount: "$60.00", net: "$175.00" }),
+    );
+    expect(cells(parsed.lines[1])).toEqual(["75.00", "75.00", null]);
+    expect(cells(parsed.lines[2])).toEqual(["40.00", "40.00", null]);
+    expect(arithmeticCheck(parsed.lines, 235).pass).toBe(false);
+  });
+
+  test("refused when no other line prints a net, even though the totals would balance after moving", () => {
+    // Moving both gives discount 0.00 and net 115.00, matching the printed totals; only condition (a) fails.
+    const parsed = parseLinesFromMarkdown(
+      invoiceWith([BETA_SHIFTED, DELTA_SHIFTED], { gross: "$115.00", discount: "$0.00", net: "$115.00" }),
+    );
+    expect(cells(parsed.lines[0])).toEqual(["75.00", "75.00", null]);
+    expect(cells(parsed.lines[1])).toEqual(["40.00", "40.00", null]);
+  });
+
+  test("unit: returns the repaired count, touches only candidates, and returns 0 without changes on refusal", () => {
+    const lines = [
+      draftLine({ lineNumber: 1, rawGross: "120.00", rawDiscount: "20.00", rawNet: "100.00" }),
+      draftLine({ lineNumber: 2, rawGross: "75.00", rawDiscount: "75.00", rawNet: null }),
+    ];
+    expect(repairShiftedNetCells(lines, 20, 999)).toBe(0);
+    expect(cells(lines[1])).toEqual(["75.00", "75.00", null]);
+    expect(repairShiftedNetCells(lines, 20, 175)).toBe(1);
+    expect(cells(lines[1])).toEqual(["75.00", null, "75.00"]);
+    expect(cells(lines[0])).toEqual(["120.00", "20.00", "100.00"]);
+  });
 });
 
 describe("pdfInspectorCrossCheck", () => {
