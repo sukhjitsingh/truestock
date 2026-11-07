@@ -30,9 +30,9 @@ execution — say so explicitly if asked to confirm test-suite status later.
 **The one real finding: not in the code, in the docs.**
 `docs/vendor-templates/southern-glazers.md` §6 ("The real invoice this was
 verified against") embeds the owner's actual Southern Glazer's invoice data —
-real invoice number (5402426), real vendor Account ID (10880), real dollar
-totals ($483.64/$123.78/$359.86), and a real product+SKU
-("BLACK VELVET CANADIAN 80 984395") — about to be committed to git history in
+real invoice number ([redacted]), real vendor Account ID ([redacted]), real dollar
+totals ([redacted]/[redacted]/[redacted]), and a real product+SKU
+("[product] 80 [redacted]") — about to be committed to git history in
 the same change as a `.gitignore` rule (`tests/*.pdf`) whose own commit
 message says the point is to stop real supplier pricing from landing in git
 history. The doc's own §8 correctly instructs future work to extract

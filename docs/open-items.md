@@ -1661,7 +1661,7 @@ prose; those were redacted to the same synthetic values before commit.
 either replace it with a synthetic fixture or add it to `.gitignore` explicitly instead of
 relying on it simply not being staged.**
 
-`tests/Southern Glazer's Invoice-5402426.pdf` — a real vendor invoice with real pricing — was
+`tests/Southern Glazer's Invoice-[redacted].pdf` — a real vendor invoice with real pricing — was
 placed in `tests/` on 2026-08-15 to reproduce and verify the `ANTHROPIC_API_KEY` mis-routing bug
 end to end. It is untracked, and excluded from this fix's commit by hand rather than by
 `.gitignore`, so nothing stops a future `git add -A` from putting real supplier pricing into git

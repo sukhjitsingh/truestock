@@ -137,7 +137,7 @@ and keep storing NULL on the lines.
 Invoices #1 and #2 are both `approved`, with 8 lines matched (manually) to
 Black Velvet, Grey Goose and Maker's Mark. `product_cost_history` has **0 rows**
 and none of those products has a cost. Every line has `raw_net` populated
-(131.88, 59.98, 0.00, 168.00 — and the header total 359.86 reconciles) but
+([redacted], [redacted], [redacted], [redacted] — and the header total [redacted] reconciles) but
 `pack_size` is NULL on all eight, so `deriveUnitCost` (`raw_net / qty /
 pack_size`) returns null and `approveInvoice` skips the line. Skipping is the
 designed "never guess" behaviour. Three things make it a bug rather than a rule:
@@ -168,7 +168,7 @@ price is exactly the plausible-but-wrong failure.
 ### DB-3 (M) — The same invoice was accepted twice
 
 Invoices #1 and #2 have the same `file_sha256` (`48001976e862…`), invoice number
-`5402426`, date `2026-02-02` and total `359.8600`, and both are `approved`
+`[redacted]`, date `[redacted]` and total `[redacted]`, and both are `approved`
 (#1 with `vendor_id` NULL, #2 with Southern Glazer's). The `invoice` table has no
 unique index on `(organization_id, file_sha256)` or on a vendor + invoice number;
 `file_sha256` is used only to verify the stored file. `docs/open-items.md` has no

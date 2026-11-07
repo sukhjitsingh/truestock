@@ -91,7 +91,7 @@ adversarial inputs, not just re-reading the diff, is what caught both — matche
 ## New: real vendor data almost committed into a doc, not the gitignored PDF
 
 Security review caught that `docs/vendor-templates/southern-glazers.md` reproduced the
-owner's actual invoice numbers in prose (invoice #5402426, account ID 10880, real dollar
+owner's actual invoice numbers in prose (invoice #[redacted], account ID [redacted], real dollar
 totals, a real product+SKU) — in 4 sections (§2, §3, §6, §9; the review only flagged §6,
 broader on inspection during fix). This is the same open-items #36 problem
 (don't let real vendor pricing into git history) resurfacing through a different file type
