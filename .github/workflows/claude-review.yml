@@ -1,0 +1,89 @@
+name: Claude review
+
+# An independent review of every PR, in a fresh context — not the session that
+# wrote the code (docs/sdlc-playbook-map.md, Tier 2.1). It follows REVIEW.md
+# AS IT EXISTS ON THE BASE BRANCH, so a PR cannot rewrite its own review rules
+# (the action does the same for .claude/ and CLAUDE.md on PR runs).
+#
+# Findings never approve or block: this check is informational and must NOT
+# be added to branch protection's required checks. The owner merges.
+#
+# Needs the ANTHROPIC_API_KEY repository secret, and is billed per review to
+# that key. Without the secret (or on a fork PR, which gets no secrets) the
+# job prints a notice and passes without reviewing.
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+concurrency:
+  # A newer push to the same PR supersedes a review still running.
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write # the action's default GitHub App authentication
+    env:
+      HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    steps:
+      - name: No API key — skip
+        if: env.HAS_KEY != 'true'
+        run: echo "::notice::ANTHROPIC_API_KEY is not set (or this is a fork PR), so no automated review ran."
+
+      - uses: actions/checkout@v4
+        if: env.HAS_KEY == 'true'
+        with:
+          fetch-depth: 1
+
+      - name: Read REVIEW.md from the base branch
+        if: env.HAS_KEY == 'true'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin "$BASE_REF"
+          if git show FETCH_HEAD:REVIEW.md > "$RUNNER_TEMP/REVIEW.md" 2>/dev/null; then
+            echo "Using REVIEW.md from $BASE_REF."
+          else
+            # Only the PR that introduces REVIEW.md takes this branch.
+            cp REVIEW.md "$RUNNER_TEMP/REVIEW.md"
+            echo "::notice::REVIEW.md is not on $BASE_REF yet; using this PR's copy."
+          fi
+
+      - uses: anthropics/claude-code-action@v1
+        if: env.HAS_KEY == 'true'
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            BASE: ${{ github.base_ref }}
+
+            You are reviewing this pull request for Truestock. The PR branch is
+            already checked out in the current working directory.
+
+            Your review instructions are in ${{ runner.temp }}/REVIEW.md — read
+            that file first and follow it exactly: its passes, its severity rules
+            (Important findings inline, at most five nits in the summary), its
+            skip list and its output format. Use the REVIEW.md at that path, not
+            any REVIEW.md in the working directory, which this PR may have changed.
+
+            Use `gh pr diff` and `gh pr view` to see the change, and read the
+            repository files you need (AGENTS.md, docs/lessons.md, the plan folder
+            if any).
+
+            Post Important findings with `mcp__github_inline_comment__create_inline_comment`
+            (with `confirmed: true`) on the exact lines, and one summary with
+            `gh pr comment`. Only post GitHub comments — don't submit review text as
+            messages. Never approve or request changes.
+          claude_args: |
+            --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
