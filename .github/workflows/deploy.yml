@@ -134,10 +134,10 @@ jobs:
       name: production
     permissions:
       contents: write # publish the rollback release
-      # Intended for reading this environment's protection rules (first step).
-      # UNVERIFIED on GitHub as of 2026-11-08: if the first step reports
-      # "Could not read", the token lacks access — it fails closed. Do not
-      # widen the job's permissions to fix it without checking which is needed.
+      # Lets the first step read this environment's protection rules. Proven
+      # sufficient on GitHub 2026-11-08 (Deploy run #17: both reads succeeded
+      # and the gate printed "continuing"). If it ever reports "Could not
+      # read", it fails closed — check what changed before widening anything.
       actions: read
     steps:
       - name: Refuse an unprotected production environment

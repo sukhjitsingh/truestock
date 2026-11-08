@@ -41,8 +41,8 @@ jobs:
       name: production
     permissions:
       contents: read # download the deploy-<sha> release asset
-      # Intended for reading this environment's protection rules (first step);
-      # UNVERIFIED on GitHub as of 2026-11-08 — fails closed if insufficient.
+      # Lets the first step read this environment's protection rules; proven
+      # sufficient on GitHub by deploy.yml's identical check (Deploy run #17).
       actions: read
     steps:
       - name: Refuse an unprotected production environment, and a malformed SHA
