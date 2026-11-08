@@ -74,7 +74,10 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          # Pinned, never `latest`: a green PR and a green deploy must run the
+          # same toolchain, and it must match docker/app/Dockerfile's
+          # BUN_VERSION (the owner's machine). Change all three together.
+          bun-version: "1.4.0"
 
       - name: Cache Bun install + Next build cache
         uses: actions/cache@v4

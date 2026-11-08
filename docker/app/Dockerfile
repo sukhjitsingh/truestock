@@ -21,7 +21,8 @@ FROM node:22-bookworm-slim
 #
 # Pinned to match the host's bun (1.4.0) so bun.lock resolves identically
 # inside and outside the container. An unpinned installer is how a lockfile
-# quietly drifts between a developer's machine and CI.
+# quietly drifts between a developer's machine and CI. CI pins the same version
+# (.github/workflows/ci.yml and deploy.yml) — change all three together.
 ARG BUN_VERSION=1.4.0
 ENV BUN_INSTALL=/usr/local
 
