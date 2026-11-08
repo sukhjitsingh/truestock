@@ -134,9 +134,18 @@ jobs:
   # lib/csp.ts, global setup fails with `"form" never hydrated` and the job
   # exits 1; with it restored, 26/26 pass (mobile + desktop projects).
   #
+  # It also runs the roles spec (2026-11-08): invariants 7 and 8 checked from
+  # the outside — what the SERVER SENT each role (HTML plus the streamed RSC
+  # payload), not what the screen shows. Staff and managers must receive no
+  # cost data; the owner's catalog must (a positive control, so the negatives
+  # cannot pass by being blind); the invoice-file route answers the owner 200,
+  # a manager 403 and a signed-out request 401. Unit tests cover the role
+  # predicates; only this sees a cost prop passed into a page for every role.
+  #
   # Runs in parallel with `verify` (its own build, its own database), so it
-  # adds wall-clock time only if it is the slower of the two. Only the smoke
-  # spec for now; grow to the full e2e set once its CI timing is known.
+  # adds wall-clock time only if it is the slower of the two. The job keeps the
+  # name `e2e-smoke` because branch protection requires a check by that name;
+  # renaming it would leave every PR waiting on a check that never reports.
   e2e-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -219,6 +228,17 @@ jobs:
               --name "E2E $role" --org truestock --role "$role" --password "$pw"
           done
 
+      - name: Seed one invoice with a stored file
+        # So the roles spec's invoice-file checks run against a real invoice:
+        # without one, the owner's 200 check can only skip as NOT VERIFIED.
+        # The server and the suite both read INVOICE_STORAGE_DIR from here.
+        run: |
+          set -euo pipefail
+          INVOICE_STORAGE_DIR="$RUNNER_TEMP/invoices"
+          echo "INVOICE_STORAGE_DIR=$INVOICE_STORAGE_DIR" >> "$GITHUB_ENV"
+          mkdir -p "$INVOICE_STORAGE_DIR"
+          INVOICE_STORAGE_DIR="$INVOICE_STORAGE_DIR" node scripts/e2e-seed-invoice.mjs
+
       - name: Production build
         run: bun run build
 
@@ -231,10 +251,8 @@ jobs:
           set -euo pipefail
           secret="$(openssl rand -base64 32)"
           echo "::add-mask::$secret"
-          mkdir -p "$RUNNER_TEMP/invoices"
           BETTER_AUTH_SECRET="$secret" \
           BETTER_AUTH_URL=http://localhost:3101 \
-          INVOICE_STORAGE_DIR="$RUNNER_TEMP/invoices" \
           NODE_ENV=production \
             nohup npx next start -p 3101 -H 127.0.0.1 > "$RUNNER_TEMP/server.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/server.pid"
@@ -245,10 +263,10 @@ jobs:
           kill -0 "$(cat "$RUNNER_TEMP/server.pid")"
           curl -fsS -o /dev/null http://127.0.0.1:3101/login
 
-      - name: Playwright smoke spec (mobile + desktop)
+      - name: Playwright smoke and roles specs (mobile + desktop)
         # GitHub sets CI=true, which makes global setup FAIL (not skip) if any
         # role cannot sign in — a pipeline cannot go green on skipped specs.
-        run: node node_modules/playwright/cli.js test smoke
+        run: node node_modules/playwright/cli.js test smoke roles
 
       - name: Server log
         if: failure()

@@ -64,6 +64,9 @@ bun run create-user -- --email staff@example.test   --name "E2E Staff"   --org t
 ```
 
 ```sh
+# optional: one invoice with a stored file, so the roles spec's owner check
+# runs instead of skipping (same INVOICE_STORAGE_DIR the app container uses)
+INVOICE_STORAGE_DIR=/abs/path/from/your/e2e.env node scripts/e2e-seed-invoice.mjs
 bash scripts/e2e-rig.sh prod    # ~5 min build; then wait for /login to answer 200
 bun run e2e
 bash scripts/e2e-rig.sh down    # remove the throwaway containers
