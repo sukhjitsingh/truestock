@@ -163,7 +163,11 @@ jobs:
     env:
       DATABASE_URL: mysql://truestock:truestock@127.0.0.1:3306/truestock_e2e
       E2E_BASE_URL: http://localhost:3101
-      E2E_ENV_FILE: ${{ runner.temp }}/e2e.env
+      # E2E_ENV_FILE is set in the account step below, through $GITHUB_ENV. It
+      # cannot live here: job-level `env` has no `runner` context, so a
+      # runner.temp expression in this block makes GitHub reject the whole
+      # workflow file — every job, `verify` included, silently never runs
+      # (run #67, 2026-11-08: zero jobs, failed at creation).
 
     steps:
       - name: Checkout
@@ -203,6 +207,8 @@ jobs:
         # `bun run` echoes the full command line, password included.
         run: |
           set -euo pipefail
+          E2E_ENV_FILE="$RUNNER_TEMP/e2e.env"
+          echo "E2E_ENV_FILE=$E2E_ENV_FILE" >> "$GITHUB_ENV"
           : > "$E2E_ENV_FILE"
           for role in owner manager staff; do
             pw="$(openssl rand -hex 16)"
