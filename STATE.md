@@ -1,6 +1,6 @@
 # Truestock — current state
 
-Where the project actually is. Updated 2026-11-07.
+Where the project actually is. Updated 2026-11-08.
 
 This file answers one question: **what is proven, what is merely built, and what
 is next.** The distinction matters more here than the feature list, because this
@@ -238,6 +238,12 @@ Written, reviewed, typechecked — never observed working.
 **Scanned invoices (2026-11-07).** Vision has never run: there is no API key. Scans
 are routed straight to it and stop at `EXTRACTION_UNAVAILABLE`, so invoice B's lines
 and the F9 path on Hostinger are unverified (open-item #47).
+
+**The CI browser gate (2026-11-08).** The `e2e-smoke` job in `.github/workflows/ci.yml`
+has never run on GitHub. Its steps were rehearsed locally (26/26), and it was
+mutation-checked there: a nonce-less CSP fails it. Its first green PR run is the proof.
+The retired-product refusal (known defect #1, fixed 2026-11-08) is proven by DB tests
+only, not on a phone: a refused write should be dropped and named on screen.
 
 - **The entire redesigned mobile counting surface (Phase 2, 2026-08-14).**
   This is the biggest unproven thing in the project right now, and it is

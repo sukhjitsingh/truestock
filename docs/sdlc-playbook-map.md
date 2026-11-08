@@ -170,7 +170,26 @@ and a dated line in `STATE.md` — it just isn't triggered by anything automatic
 - **CodeGraph section says the index is local-only** and to fall back to grep when
   `.codegraph/` is absent (it is in every cloud session and fresh worktree).
 
-### Tier 1 — before Phase 2.9 starts (each is a small PR)
+### Tier 1 — before Phase 2.9 starts — **DONE 2026-11-08**
+
+All six landed on `claude/project-sdlc-evaluation-fr1klo`, one commit each, in a
+single PR (owner decision). Status per item:
+
+| Item | Commit | Proof |
+|---|---|---|
+| 1.1 Slim the context | `ab6ca01` (STATE split), `af00f6e` (AGENTS.md → core + `docs/lessons.md`) | `AGENTS.md` 35.7 KB → 16.0 KB; `STATE.md` 1,409 → 615 lines; every old paragraph checked as kept, moved verbatim, or condensed; 19/19 lesson links resolve |
+| 1.2 Settings + hooks | `b42f77d`, review fixes `0ab2ab5` | 20 tests incl. end-to-end; live-fired (an edit to an applied migration was refused); 0 warnings on the 72 existing `.tsx` files; each review fix mutation-checked |
+| 1.3 Verification block | `af00f6e` ("Commands and the definition of done") | — |
+| 1.4 e2e smoke in CI | `9804782` | Job's own steps rehearsed locally: 26/26; nonce removed from `lib/csp.ts` → exit 1, `"form" never hydrated`. **Not yet run on GitHub** — the first PR run is its real proof |
+| 1.5 Pin Bun | `ede08dd` | Pinned to **1.4.0** (the Dockerfile's version, not 1.4.4); suite 1,397 pass / 0 fail on 1.4.0 |
+| 1.6 Known defect #1 | `530d632`, docs `1f47a69` | A1–A3 now regression guards; mutation-checked two ways; owner decision: write-path refusal only |
+
+Found along the way: on Next 16.4 a static CSP in `next.config.ts` *beside* the
+middleware's is replaced, not intersected (recorded in `docs/lessons.md`); the
+catalog path in AGENTS.md pointed at a file that never existed.
+
+The original plan, as proposed:
+
 
 **1.1 Slim the always-loaded context.** *(Build · startup drain)*
 - Cut `AGENTS.md` to a ~1–2 page core: one-line product, stack + must-not-drift config,
@@ -282,7 +301,7 @@ rehearsed command*; it's built but has never run.
 | Metric | Today | Direction |
 |---|---|---|
 | `fix:` vs `feat:` commits (non-merge) | 75 : 63 | `fix` share falling = less rework |
-| Always-loaded context (lines) | ~422 `AGENTS.md` + ~4,450 required reading | down to ~150 + active plan folder |
+| Always-loaded context | was ~422-line `AGENTS.md` + ~4,450 lines required reading; **now 16 KB `AGENTS.md` + STATE status + active plan** (2026-11-08) | keep `AGENTS.md` under ~16 KB |
 | First-pass CI success on PRs | not tracked | up |
 | "Built but not proven" items in `STATE.md` | several (Vision, redesigned mobile screens on a phone, queue fix #46) | down before go-live |
 | Escaped defects per phone/QA round | 2026-10-25 and 2026-11-06 rounds each produced a fix PR | down |

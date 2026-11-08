@@ -11,6 +11,15 @@ When a feature ships, its one-line entry goes here (AGENTS.md, "Planning workflo
 
 ---
 
+- **2026-11-08** — **SDLC Tier 1 done, on one branch.** Evaluated the project against
+  Anthropic's AI-native SDLC playbook (`docs/sdlc-playbook-map.md`) and landed its six
+  "before Phase 2.9" items: known defect #1 fixed (a retired product can no longer be
+  counted, `530d632`); `.claude/settings.json` with an allowlist and edit guards that
+  block edits to applied migrations and a CSP in `next.config.ts` (`b42f77d`,
+  `0ab2ab5`); a CI job that serves the production build and runs the Playwright smoke
+  spec (`9804782`, mutation-checked locally, not yet run on GitHub); Bun pinned to
+  1.4.0 everywhere (`ede08dd`); this log split out of `STATE.md` (`ab6ca01`); and
+  `AGENTS.md` cut to the rules with the reasons in `docs/lessons.md` (`af00f6e`).
 - **2026-11-07** — **Phase 2.9 evaluated against the evidence.** None of the
   eleven items is done, five are partial, and six have not started. ROADMAP.md
   Phase 2.9 was rewritten to match (`81d47ea`). There are six locations, not five.
