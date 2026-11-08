@@ -1,6 +1,7 @@
 # Known defects found by the test foundation
 
-Written 2026-10-26 on `test/playwright-foundation`. **None of these are fixed.** They
+Written 2026-10-26 on `test/playwright-foundation`. **#1 and #2 are fixed** (struck
+through below, with date and commit); the rest are open. They
 were found while writing the automated suites, recorded here so they can be picked up
 later without re-deriving anything, and each is pinned by a test that is green today
 and goes red the day the defect is fixed.
@@ -12,20 +13,31 @@ decisions; where a product call is involved it says so.
 
 | # | Defect | Breaks | Where | Pinned by |
 |---|---|---|---|---|
-| 1 | A deactivated product is still countable | invariant 6 (write path) | `lib/domain/counts.ts`, `lib/domain/catalog.ts` | `tests/known-defects.test.ts` group A |
-| 2 | A zero, blank or negative invoice net becomes a unit cost, and approval posts it | invariant 2 | `lib/domain/cost-derivation.ts` | group B |
+| 1 | ~~A deactivated product is still countable~~ **FIXED 2026-11-08** (`530d632`) | invariant 6 (write path) | `lib/domain/counts.ts` | `tests/known-defects.test.ts` group A (now regression guards) |
+| 2 | ~~A zero, blank or negative invoice net becomes a unit cost, and approval posts it~~ **FIXED 2026-11-06** (`2044644`) | invariant 2 | `lib/domain/cost-derivation.ts` | group B (now regression guards) |
 | 3 | `wasteFactor` accepts 1 or more | invariant 10 | `lib/validation/catalog.ts` | group C |
 | 4 | A keg enrolled after the seed gets waste factor 0.000 (judgement call) | invariant 10 | `lib/domain/catalog.ts` | group D |
 | 5 | The last-owner guard races | beside invariant 11 | `lib/domain/users.ts` | group E |
 | 6 | The owner's inline cost cell never shows "Saved" | none (UX) | `components/office/catalog-table.tsx` | `e2e/specs/office-catalog.e2e.ts` |
 
-**Suggested order if these are worked:** 1 and 2 first. Both produce numbers that look
-plausible and are wrong, which AGENTS.md calls the worst failure mode this app has. Then
-4 (decide it), 3, 5, 6.
+**Suggested order for what is left:** 4 (decide it), 3, 5, 6. (1 and 2 went first, as
+suggested: both produced numbers that look plausible and are wrong.)
 
 ---
 
-## 1. A deactivated product is still countable
+## 1. ~~A deactivated product is still countable~~ — FIXED 2026-11-08
+
+> **Fixed in `530d632`.** `upsertCountLineRow` now reads `product.active` in one
+> unconditional lookup **above** the existing-line lookup (beside the retired-location
+> check) and throws `PRODUCT_RETIRED`; the same read supplies the insert's cost
+> snapshot. **Owner decision 2026-11-08: write-path refusal only** —
+> `resolveBarcodeForCount` and the scan-screen lookup are unchanged, so a retired
+> product's barcode still resolves and the refusal arrives on save, through the
+> client's existing refused-write path. The "distinct retired result" option below
+> remains open if that ever proves confusing on the floor. Corrections
+> (`setCountLineQuantities`, `editCountLineFills`) are not gated, matching locations.
+> Group A lost `.failing`; mutation-checked (no throw → A1–A3 red; insert-only → A1
+> red). The text below is the original write-up, kept as found.
 
 **Where:** `upsertCountLineRow` in `lib/domain/counts.ts` and `resolveBarcodeForCount`
 in `lib/domain/catalog.ts`.
