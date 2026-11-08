@@ -244,17 +244,23 @@ hPanel (§2.4). These are exclusively for the pipeline.
 - `.github/workflows/rollback.yml` — manual (`workflow_dispatch`), redeploys
   a previously-published build artifact with no rebuild. Same approval gate.
 
-### Branch protection on `main` (Settings → Branches → Add rule, or Rules → Rulesets)
+### Branch protection on `main` (Settings → Rules → Rulesets → New branch ruleset)
 
-With one human there is no second approver to require, so the protection is checks,
-not reviews:
+Owner decision 2026-11-08: **strict, no bypass** — every change to `main` arrives by a
+PR with green checks, the owner's and Claude's alike. With one human there is no second
+approver to require, so the protection is checks, not reviews.
 
-- **Require a pull request before merging** (approvals: 0).
-- **Require status checks to pass:** `verify`, `e2e-smoke`, `actionlint`. Tick
-  *Require branches to be up to date*.
-- **Do not** add `review` (Claude review) as a required check — it is informational,
-  costs money per run, and skips without a key.
-- **Block force pushes** and **restrict deletions**.
+- **Ruleset name** `main`, **Enforcement status** *Active*.
+- **Bypass list: empty.** (An emergency means switching the ruleset to *Disabled* for
+  the minute it is needed — a deliberate act, not an accident.)
+- **Target branches →** *Include default branch*.
+- **Restrict deletions** and **Block force pushes**: on.
+- **Require a pull request before merging**: on, *Required approvals* **0**.
+- **Require status checks to pass**: on, *Require branches to be up to date before
+  merging* on, checks `verify`, `e2e-smoke`, `actionlint`. A check can only be picked
+  after it has run once on the repo.
+- **Do not** require `review` (Claude review): it is informational, costs money per
+  run, and skips without a key.
 
 ---
 
