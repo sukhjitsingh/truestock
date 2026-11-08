@@ -240,7 +240,22 @@ e2e set once timing is known.
 and Phase 2.9 is the first phase where real counts happen. It's already pinned by three
 `test.failing` cases; flipping them is the acceptance test.
 
-### Tier 2 — before Phase 3 go-live
+### Tier 2 — before Phase 3 go-live — **BUILT 2026-11-08, needs three settings from you**
+
+Owner decisions 2026-11-08: Claude review through `claude-code-action` in CI; one
+approved `release` job with the Hostinger secrets in the `production` environment.
+
+| Item | Commit | State |
+|---|---|---|
+| 2.1 `REVIEW.md` + AI PR review | `0028a0f` | Built; **runs once you add the `ANTHROPIC_API_KEY` repository secret** (skips with a notice until then). Reads `REVIEW.md` from the base branch |
+| 2.2 Branch protection | — | **A repository setting — yours to apply**: steps in `docs/deploy.md` §3 (require `verify`, `e2e-smoke`, `actionlint`) |
+| 2.3 Release approval | `88b5036` | Built: `verify → build → release`, `release` gated by `production`, refuses to run if that environment is unprotected; rollback gated too. **Needs the environment created with you as reviewer** (`docs/deploy.md` §3). The token's read of the environment rules is unverified until the first run on `main` (fails closed) |
+| 2.4 PR template | `dddfc81` | Done |
+| 2.5 Rollback rehearsal | — | Cannot run before the first deploy; now a day-one item in `docs/go-live.md` §2.1 and a step in `docs/deploy.md` §4 |
+| (added) Workflow lint | `6a27c1c` | actionlint in its own workflow, so an invalid workflow file goes red instead of silently showing no checks (the PR #38 run #67 failure). Mutation-checked |
+
+The original plan, as proposed:
+
 
 **2.1 Independent AI PR review with a `REVIEW.md`.** *(Deploy · review drain)*
 Write `REVIEW.md` at the repo root: pass 1 the 11 invariants, pass 2 security incl.
