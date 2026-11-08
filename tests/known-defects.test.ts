@@ -13,12 +13,15 @@
  * "passing" merely because the scenario is mis-built.
  *
  * Entries:
- *   A. invariant 6  - count writes do not check `product.active`
- *        cause: lib/domain/counts.ts `upsertCountLineRow` (checks only
- *        `location.active`, ~line 313-331; the product lookup at ~line 369
- *        selects cost/case size and never reads `active`).
- *        ALSO: `resolveBarcodeForCount` (lib/domain/catalog.ts ~line 391) does
- *        not join `product` at all, so a retired product's barcode still scans.
+ *   A. FIXED 2026-11-08 (docs/known-defects.md #1; the tests below are now
+ *        plain regression guards, no longer `test.failing`). Count writes did
+ *        not check `product.active`. `upsertCountLineRow` (lib/domain/counts.ts)
+ *        now refuses a retired product with PRODUCT_RETIRED on every write,
+ *        BEFORE the existing-line lookup, the same as a retired location.
+ *        `resolveBarcodeForCount` still maps a retired product's barcode (owner
+ *        decision 2026-11-08: write-path refusal only), so A3 is refused by the
+ *        write, not by the lookup. Mutation-checked: dropping the throw fails
+ *        A1-A3; moving it to the insert-only branch fails exactly A1.
  *   B. FIXED 2026-11-06 (QA finding F5; the tests below are now plain
  *        regression guards, no longer `test.failing`). `deriveUnitCost` used
  *        to return a number for a $0, blank or NEGATIVE net amount instead of
@@ -162,14 +165,15 @@ describe("A. count writes and product.active (invariant 6)", () => {
     expect(row.active).toBe(false);
   });
 
-  test.failing(
+  test(
     "A1. an existing line of a product deactivated mid-count refuses the next increment",
     async () => {
       const c = await openCount(fx.owner, { type: "full" });
       await incrementCountLine(fx.owner, eachDelta(c.id, fx.pricedProductId)); // 1 each
       await deactivateProduct(fx.owner, fx.pricedProductId);
 
-      // CORRECT: a DomainError (product retired). OBSERVED: resolves, line -> 2.
+      // A DomainError (PRODUCT_RETIRED); the line stays at 1. Before the
+      // 2026-11-08 fix this resolved and the line went to 2.
       await expect(
         incrementCountLine(fx.owner, eachDelta(c.id, fx.pricedProductId)),
       ).rejects.toBeInstanceOf(DomainError);
@@ -179,13 +183,13 @@ describe("A. count writes and product.active (invariant 6)", () => {
     },
   );
 
-  test.failing(
+  test(
     "A2. a product deactivated BEFORE its first write in a count cannot get a first line",
     async () => {
       const c = await openCount(fx.owner, { type: "full" });
       await deactivateProduct(fx.owner, fx.pricedProductId);
 
-      // CORRECT: refused, no row. OBSERVED: a new count_line is inserted.
+      // Refused, no row. Before the fix a new count_line was inserted.
       await expect(
         incrementCountLine(fx.owner, eachDelta(c.id, fx.pricedProductId)),
       ).rejects.toBeInstanceOf(DomainError);
@@ -193,15 +197,15 @@ describe("A. count writes and product.active (invariant 6)", () => {
     },
   );
 
-  test.failing(
-    "A3. scanning the barcode of a deactivated product is refused (resolveBarcodeForCount ignores product.active)",
+  test(
+    "A3. scanning the barcode of a deactivated product is refused, even though the barcode still resolves",
     async () => {
       await enrollBarcode(fx.pricedProductId);
       const c = await openCount(fx.owner, { type: "full" });
       await deactivateProduct(fx.owner, fx.pricedProductId);
 
-      // CORRECT: refused (NotFound or a retired-product DomainError).
-      // OBSERVED: the scan resolves the barcode and writes a line.
+      // Refused by the write (PRODUCT_RETIRED). The barcode still resolves —
+      // the lookup is deliberately unchanged. Before the fix it wrote a line.
       await expect(
         scanCountLine(fx.owner, {
           clientLineId: newClientLineId(),

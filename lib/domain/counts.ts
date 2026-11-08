@@ -329,6 +329,42 @@ async function upsertCountLineRow(
     );
   }
 
+  // Same guarantee for the product (invariant 6, docs/known-defects.md #1),
+  // and for the same reason: the scan screen and catalog search hold a
+  // product id the client loaded earlier, and `resolveBarcodeForCount` maps a
+  // barcode to its product without reading `active`. So a product retired
+  // mid-count must be refused HERE, unconditionally and before the
+  // existing-line lookup — otherwise only the first write to a new line
+  // would be blocked and every increment of a line that already exists would
+  // keep landing on the retired product. Ownership is asserted by the same
+  // query (invariant 9): another tenant's product id is NotFound, never
+  // "retired". The cost/case-size columns are selected here too so the
+  // insert branch below can snapshot them (invariant 2) without a second
+  // read; they are only ever used on that branch.
+  const [productRow] = await tx
+    .select({
+      active: product.active,
+      currentUnitCost: product.currentUnitCost,
+      caseSize: product.caseSize,
+    })
+    .from(product)
+    .where(
+      and(
+        eq(product.id, params.productId),
+        eq(product.organizationId, params.organizationId),
+      ),
+    )
+    .limit(1);
+  if (!productRow) {
+    throw new NotFoundError("Product");
+  }
+  if (!productRow.active) {
+    throw new DomainError(
+      "PRODUCT_RETIRED",
+      "This product has been retired and can no longer be counted. Ask an owner to reactivate it if it is still stocked.",
+    );
+  }
+
   const [existing] = await tx
     .select()
     .from(countLine)
@@ -364,21 +400,9 @@ async function upsertCountLineRow(
   }
 
   // First write for this (count, product, location). Snapshot cost/case
-  // size from the product NOW (invariant 2) — this value must never be
-  // re-read live once written.
-  const [productRow] = await tx
-    .select({ currentUnitCost: product.currentUnitCost, caseSize: product.caseSize })
-    .from(product)
-    .where(
-      and(
-        eq(product.id, params.productId),
-        eq(product.organizationId, params.organizationId),
-      ),
-    )
-    .limit(1);
-  if (!productRow) {
-    throw new NotFoundError("Product");
-  }
+  // size from the product NOW (invariant 2) — `productRow` was read above,
+  // in this same transaction, and this value must never be re-read live
+  // once written.
 
   // Location ownership + active are already asserted above, unconditionally,
   // before the existing-line lookup. `location_id` arrives from the client
