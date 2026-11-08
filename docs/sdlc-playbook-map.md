@@ -248,8 +248,8 @@ approved `release` job with the Hostinger secrets in the `production` environmen
 | Item | Commit | State |
 |---|---|---|
 | 2.1 `REVIEW.md` + AI PR review | `0028a0f` | Built; **runs once you add the `ANTHROPIC_API_KEY` repository secret** (skips with a notice until then). Reads `REVIEW.md` from the base branch |
-| 2.2 Branch protection | — | **A repository setting — yours to apply**: steps in `docs/deploy.md` §3 (require `verify`, `e2e-smoke`, `actionlint`) |
-| 2.3 Release approval | `88b5036` | Built: `verify → build → release`, `release` gated by `production`, refuses to run if that environment is unprotected; rollback gated too. **Needs the environment created with you as reviewer** (`docs/deploy.md` §3). The token's read of the environment rules is unverified until the first run on `main` (fails closed) |
+| 2.2 Branch protection | — | **Done 2026-11-08** by the owner: a ruleset on `main` set up per `docs/deploy.md` §3 (no bypass; `verify`, `e2e-smoke`, `actionlint` required). GitHub reports `main` as protected; the rule details were not readable from the session that wrote this |
+| 2.3 Release approval | `88b5036`, `7a93eaf` | **Proven on GitHub 2026-11-08**: environment created by the owner (reviewer, `main`-only, no admin bypass); Deploy run #17 waited for approval, the gate step read the rules and passed, migrate stopped on the unset secrets. A deploy with real secrets is still to come |
 | 2.4 PR template | `dddfc81` | Done |
 | 2.5 Rollback rehearsal | — | Cannot run before the first deploy; now a day-one item in `docs/go-live.md` §2.1 and a step in `docs/deploy.md` §4 |
 | (added) Workflow lint | `6a27c1c` | actionlint in its own workflow, so an invalid workflow file goes red instead of silently showing no checks (the PR #38 run #67 failure). Mutation-checked |

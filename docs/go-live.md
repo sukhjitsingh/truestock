@@ -92,16 +92,17 @@ Blocking items. Each one is either done or the deploy waits.
       `@firecrawl/pdf-inspector`'s native binary, so that a later failure is a
       hosting problem rather than an unknown.
 
-- [ ] **The `production` environment gates every release.** Added 2026-11-08
-      (`docs/sdlc-playbook-map.md` Tier 2.3). Settings → Environments →
-      `production`: you as required reviewer, deployment branches limited to
-      `main`, administrator bypass off, and **all Hostinger secrets stored
-      there, none as repository secrets** (`docs/deploy.md` §3). Proof it holds: the first `deploy.yml` run
-      on `main` stops at `release` and waits for your approval. If instead it
-      fails at "Refuse an unprotected production environment", the reviewer is
-      missing — or, if the message is "Could not read…", the workflow token
-      cannot read the environment's rules; that check has not yet run on GitHub.
-- [ ] **Branch protection on `main`** requires `verify`, `e2e-smoke` and
+- [x] **The `production` environment gates every release.** Added 2026-11-08
+      (`docs/sdlc-playbook-map.md` Tier 2.3). **Done and proven 2026-11-08:**
+      required reviewer, `main`-only, administrator bypass off; Deploy run #17
+      waited for approval and its gate step passed on GitHub.
+- [ ] **All Hostinger secrets are in the `production` environment, none as
+      repository secrets** (`docs/deploy.md` §3). Not yet — added when hPanel is
+      set up. If a deploy's first step ever fails at "Refuse an unprotected
+      production environment", a setting above has changed.
+- [x] **Branch protection on `main`** (ruleset set up by the owner 2026-11-08;
+      GitHub reports `main` as protected — confirm the details on any PR's merge
+      box) requires `verify`, `e2e-smoke` and
       `actionlint` to pass and blocks force pushes (`docs/deploy.md` §3). Not
       `review` — the Claude review is informational.
 

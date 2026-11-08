@@ -239,12 +239,14 @@ Written, reviewed, typechecked — never observed working.
 are routed straight to it and stop at `EXTRACTION_UNAVAILABLE`, so invoice B's lines
 and the F9 path on Hostinger are unverified (open-item #47).
 
-**The release gate and the PR review (2026-11-08) have never run.** `deploy.yml`'s
-`release` job and `rollback.yml` wait on the `production` environment and refuse to run
-if it has no required reviewer; that check was tested against a stand-in, not GitHub,
-and whether the workflow token may read the environment's rules is unknown until the
-first run on `main` (it fails closed). `claude-review.yml` needs `ANTHROPIC_API_KEY`.
-The rollback has never been rehearsed — a day-one item in `docs/go-live.md`.
+**The release gate is proven on GitHub (2026-11-08); a real deploy and a rollback are
+not.** Deploy run #17 (PR #39's merge): `release` waited for the owner's approval
+(created 04:11, started 04:14 after approval), its first step read the `production`
+environment's rules with the workflow token and printed *"gated by a required reviewer
+and limited branches — continuing"*, and migrate then stopped on the unset
+`HOSTINGER_SSH_HOST`, so nothing reached Hostinger. Still unproven: a deploy with real
+secrets, `rollback.yml` (never run — a day-one rehearsal in `docs/go-live.md`), and
+`claude-review.yml`, which needs `ANTHROPIC_API_KEY`.
 
 **The CI browser gate is now proven (2026-11-08).** `e2e-smoke` ran green on GitHub
 on PR #38 (run #68, head `10256ee`): all three roles signed in, 26/26 passed. It was
