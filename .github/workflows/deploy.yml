@@ -1,13 +1,30 @@
 name: Deploy
 
-# Push to main only (CLAUDE.md: "Deploy on push to main only"). Three gated
-# jobs, each depending on the last, so a failure anywhere stops the
-# pipeline with the previous deployment still live:
+# Push to main runs this; nothing reaches production until YOU approve it.
 #
-#   verify  -> migrate -> build-and-deploy
+#   verify  ->  build  ->  release  (environment: production, required reviewer)
 #
-# See docs/deploy.md ("What breaks if this fails halfway") for exactly what
-# state each failure leaves things in.
+# - `verify` and `build` hold no secrets. `build` produces the exact archive
+#   that `release` ships, and uploads it as a workflow artifact.
+# - `release` is the only job that touches production (migrate, deploy,
+#   restart, publish the rollback release). It is tied to the `production`
+#   GitHub Environment, which must have you as a required reviewer: the job
+#   waits for your approval in the Actions tab before it starts. The
+#   Hostinger secrets live in that environment, NOT as repository secrets,
+#   so no other job — and no workflow on any PR branch — can read them.
+# - Its first step REFUSES to deploy if `production` has no required
+#   reviewer. That is not belt-and-braces: GitHub silently creates a missing
+#   environment, unprotected, the first time a job names it, so without this
+#   check a misconfigured repo would deploy every merge with no gate at all.
+#
+# Order changed 2026-11-08 (was verify -> migrate -> build-and-deploy): the
+# build now happens before anything touches production, so a build failure
+# can no longer leave the production schema migrated with old code live.
+#
+# Queued runs: the concurrency group lets one run wait for approval while at
+# most one newer run queues behind it (GitHub replaces an older queued run
+# with a newer one). Reject a stale run in the approval dialog rather than
+# deploying an old SHA. See docs/deploy.md §3 and §5.
 on:
   push:
     branches: [main]
@@ -15,17 +32,12 @@ on:
 
 concurrency:
   # One deploy at a time — a second push landing mid-deploy should queue,
-  # not race the first one's migrate/build/restart sequence.
+  # not race the first one's migrate/deploy/restart sequence.
   group: deploy-production
   cancel-in-progress: false
 
 permissions:
-  contents: write # only `build-and-deploy` needs this, to publish the rollback release
-
-env:
-  HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
-  HOSTINGER_DOMAIN: ${{ secrets.HOSTINGER_DOMAIN }}
-  HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
+  contents: read
 
 jobs:
   verify:
@@ -74,29 +86,8 @@ jobs:
           DATABASE_URL: mysql://truestock:truestock@127.0.0.1:3306/truestock_test
       - run: bun run check:migrations-immutable
 
-  migrate:
+  build:
     needs: verify
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.4.0" # = ci.yml and docker/app/Dockerfile BUN_VERSION
-      - run: bun install --frozen-lockfile
-      - name: Apply pending migrations over SSH tunnel
-        env:
-          HOSTINGER_SSH_HOST: ${{ secrets.HOSTINGER_SSH_HOST }}
-          HOSTINGER_SSH_PORT: ${{ secrets.HOSTINGER_SSH_PORT }}
-          HOSTINGER_SSH_USER: ${{ secrets.HOSTINGER_SSH_USER }}
-          HOSTINGER_SSH_PRIVATE_KEY: ${{ secrets.HOSTINGER_SSH_PRIVATE_KEY }}
-          HOSTINGER_DB_USER: ${{ secrets.HOSTINGER_DB_USER }}
-          HOSTINGER_DB_PASSWORD: ${{ secrets.HOSTINGER_DB_PASSWORD }}
-          HOSTINGER_DB_NAME: ${{ secrets.HOSTINGER_DB_NAME }}
-        run: bash scripts/hostinger-migrate.sh
-
-  build-and-deploy:
-    needs: migrate
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -119,12 +110,103 @@ jobs:
       - name: Package standalone output for Hostinger's archive API
         run: bash scripts/package-standalone.sh deploy/truestock-deploy.zip
 
+      - name: Hand the archive to the release job
+        uses: actions/upload-artifact@v4
+        with:
+          name: truestock-deploy
+          path: deploy/truestock-deploy.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: build
+    # Only main deploys — a workflow_dispatch from any other branch runs that
+    # branch's copy of this file, so this job skips there. Not a substitute
+    # for the environment's own branch policy (a hostile branch could delete
+    # this line); the first step checks that policy too.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The approval gate. The job does not start until a required reviewer of
+    # this environment approves it; its secrets exist only here, and each is
+    # passed only to the steps that use it.
+    environment:
+      name: production
+    permissions:
+      contents: write # publish the rollback release
+      # Intended for reading this environment's protection rules (first step).
+      # UNVERIFIED on GitHub as of 2026-11-08: if the first step reports
+      # "Could not read", the token lacks access — it fails closed. Do not
+      # widen the job's permissions to fix it without checking which is needed.
+      actions: read
+    steps:
+      - name: Refuse an unprotected production environment
+        # Fails closed: a missing environment, no required reviewer, or an
+        # API error all stop the deploy before anything touches production.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! reviewers="$(gh api "repos/${GITHUB_REPOSITORY}/environments/production" \
+                --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length')"; then
+            echo "::error::Could not read the 'production' environment's protection rules. Refusing to deploy."
+            exit 1
+          fi
+          if [ "${reviewers:-0}" -lt 1 ]; then
+            echo "::error::The 'production' environment has no required reviewer, so nothing gated this release. Add yourself under Settings → Environments → production → Required reviewers (docs/deploy.md §3), then re-run. Refusing to deploy."
+            exit 1
+          fi
+          # Without a branch policy, any branch could dispatch its own edited
+          # copy of this workflow into the environment (security review,
+          # 2026-11-08). The policy is null when "all branches" are allowed.
+          branch_policy="$(gh api "repos/${GITHUB_REPOSITORY}/environments/production" \
+                --jq '.deployment_branch_policy != null')"
+          if [ "$branch_policy" != "true" ]; then
+            echo "::error::The 'production' environment allows deployments from any branch. Limit it to main (Settings → Environments → production → Deployment branches, docs/deploy.md §3). Refusing to deploy."
+            exit 1
+          fi
+          echo "production is gated by a required reviewer and limited branches — continuing."
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false # no write token left in .git/config
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0" # = ci.yml and docker/app/Dockerfile BUN_VERSION
+      - run: bun install --frozen-lockfile
+
+      - name: Apply pending migrations over SSH tunnel
+        env:
+          HOSTINGER_SSH_HOST: ${{ secrets.HOSTINGER_SSH_HOST }}
+          HOSTINGER_SSH_PORT: ${{ secrets.HOSTINGER_SSH_PORT }}
+          HOSTINGER_SSH_USER: ${{ secrets.HOSTINGER_SSH_USER }}
+          HOSTINGER_SSH_PRIVATE_KEY: ${{ secrets.HOSTINGER_SSH_PRIVATE_KEY }}
+          HOSTINGER_DB_USER: ${{ secrets.HOSTINGER_DB_USER }}
+          HOSTINGER_DB_PASSWORD: ${{ secrets.HOSTINGER_DB_PASSWORD }}
+          HOSTINGER_DB_NAME: ${{ secrets.HOSTINGER_DB_NAME }}
+        run: bash scripts/hostinger-migrate.sh
+
+      - name: Fetch the archive the build job produced
+        uses: actions/download-artifact@v4
+        with:
+          name: truestock-deploy
+          path: deploy
+
       - name: Deploy archive to Hostinger
         id: deploy
+        env:
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_DOMAIN: ${{ secrets.HOSTINGER_DOMAIN }}
+          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
         run: python3 scripts/hostinger-deploy-archive.py deploy/truestock-deploy.zip
 
       - name: Wait for the Hostinger build to finish
-        run: python3 scripts/hostinger-poll-build.py "${{ steps.deploy.outputs.build_uuid }}"
+        env:
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_DOMAIN: ${{ secrets.HOSTINGER_DOMAIN }}
+          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
+          BUILD_UUID: ${{ steps.deploy.outputs.build_uuid }}
+        run: python3 scripts/hostinger-poll-build.py "$BUILD_UUID"
 
       - name: Restart the Node.js process
         # Belt-and-braces: a completed build is documented to already
@@ -132,6 +214,10 @@ jobs:
         # Hostinger side (e.g. a DATABASE_URL change made in hPanel) take
         # effect too, per Hostinger's own documented purpose for this
         # endpoint.
+        env:
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_DOMAIN: ${{ secrets.HOSTINGER_DOMAIN }}
+          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
         run: |
           curl -sf -X POST \
             -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \

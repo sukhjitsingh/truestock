@@ -11,6 +11,14 @@ When a feature ships, its one-line entry goes here (AGENTS.md, "Planning workflo
 
 ---
 
+- **2026-11-08** — **SDLC Tier 2 built; three settings left to the owner.** Deploys now
+  wait for approval: `verify → build → release`, with `release` (and rollback) tied to a
+  `production` environment that holds the Hostinger secrets, and refusing to run if that
+  environment has no required reviewer (`88b5036`). Each PR gets a Claude review against
+  `REVIEW.md`, read from the base branch (`0028a0f`); a PR template asks for proof
+  (`dddfc81`); actionlint runs in its own workflow so a broken workflow file goes red
+  (`6a27c1c`). Owner to do: create `production` with a required reviewer, set branch
+  protection, add `ANTHROPIC_API_KEY` (`docs/deploy.md` §3).
 - **2026-11-08** — **SDLC Tier 1 done, on one branch.** Evaluated the project against
   Anthropic's AI-native SDLC playbook (`docs/sdlc-playbook-map.md`) and landed its six
   "before Phase 2.9" items: known defect #1 fixed (a retired product can no longer be

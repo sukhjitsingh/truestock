@@ -254,7 +254,10 @@ lifetime. When a feature ships, add one line to `docs/history/state-log.md`.
 `next.config.ts`, and **warns** on a method-less `<form>` or `onClick` on a row. Pinned
 by `tests/edit-guards.test.ts`. CI (`.github/workflows/ci.yml`) runs typecheck, lint, the
 DB suite, the migration check, the build, and the Playwright smoke spec against a
-production build.
+production build; `workflow-lint.yml` runs actionlint on every workflow. Each PR gets an
+independent Claude review against `REVIEW.md` (informational — it never approves or
+blocks). **Deploys wait for the owner's approval** (`production` environment), and the
+release job refuses to run if that environment is unprotected (`docs/deploy.md` §3).
 
 ## CodeGraph (local only)
 
