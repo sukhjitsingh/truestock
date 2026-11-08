@@ -121,3 +121,137 @@ jobs:
         # regression in db/index.ts's laziness, not something to patch
         # around here.
         run: bun run build
+
+  # The browser gate. `verify` proves the server builds and the domain is
+  # right; it cannot see the failure this project has shipped twice — a page
+  # that renders, returns 200, and never hydrates (the static-CSP break of
+  # 2026-07-28; AGENTS.md: "A 200 is not evidence that a page works"). This
+  # job serves the PRODUCTION build and drives it in Chromium with the
+  # Playwright smoke spec: the login form hydrates as a POST form, every office
+  # page hydrates with no console or CSP errors, signed-out access redirects.
+  #
+  # Mutation-checked 2026-11-08: with the nonce removed from script-src in
+  # lib/csp.ts, global setup fails with `"form" never hydrated` and the job
+  # exits 1; with it restored, 26/26 pass (mobile + desktop projects).
+  #
+  # Runs in parallel with `verify` (its own build, its own database), so it
+  # adds wall-clock time only if it is the slower of the two. Only the smoke
+  # spec for now; grow to the full e2e set once its CI timing is known.
+  e2e-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      db:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          # Must end in `_e2e`: the suite refuses any other name
+          # (e2e/support/guard.ts) because resetCounts() deletes every count.
+          MARIADB_DATABASE: truestock_e2e
+          MARIADB_USER: truestock
+          MARIADB_PASSWORD: truestock
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mariadb-admin ping -h 127.0.0.1 -u root -proot --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+          --health-start-period=40s
+
+    env:
+      DATABASE_URL: mysql://truestock:truestock@127.0.0.1:3306/truestock_e2e
+      E2E_BASE_URL: http://localhost:3101
+      E2E_ENV_FILE: ${{ runner.temp }}/e2e.env
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0" # = verify job above and docker/app/Dockerfile
+
+      - name: Cache Bun install, Next build cache, Playwright browser
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            .next/cache
+            ~/.cache/ms-playwright
+          key: ${{ runner.os }}-e2e-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-e2e-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Chromium for the pinned Playwright (1.49.1)
+        run: node node_modules/playwright/cli.js install --with-deps chromium
+
+      - name: Migrate and seed the e2e database
+        run: |
+          bun run db:migrate
+          bun run db:seed
+
+      - name: Create one throwaway account per role
+        # Passwords are generated per run for a database that is destroyed with
+        # the runner — nothing here is a secret worth storing. They are still
+        # masked, and create-user is called through tsx directly because
+        # `bun run` echoes the full command line, password included.
+        run: |
+          set -euo pipefail
+          : > "$E2E_ENV_FILE"
+          for role in owner manager staff; do
+            pw="$(openssl rand -hex 16)"
+            echo "::add-mask::$pw"
+            upper="$(echo "$role" | tr a-z A-Z)"
+            printf 'E2E_%s_EMAIL=%s@example.test\nE2E_%s_PASSWORD=%s\n' "$upper" "$role" "$upper" "$pw" >> "$E2E_ENV_FILE"
+            ./node_modules/.bin/tsx scripts/create-user.ts --email "$role@example.test" \
+              --name "E2E $role" --org truestock --role "$role" --password "$pw"
+          done
+
+      - name: Production build
+        run: bun run build
+
+      - name: Serve the production build on 127.0.0.1:3101
+        # The same `next start` the local rig uses (scripts/e2e-rig.sh prod).
+        # The PID is kept and checked after readiness: a server that dies on
+        # EADDRINUSE would otherwise leave the suite talking to whatever else
+        # answers on the port.
+        run: |
+          set -euo pipefail
+          secret="$(openssl rand -base64 32)"
+          echo "::add-mask::$secret"
+          mkdir -p "$RUNNER_TEMP/invoices"
+          BETTER_AUTH_SECRET="$secret" \
+          BETTER_AUTH_URL=http://localhost:3101 \
+          INVOICE_STORAGE_DIR="$RUNNER_TEMP/invoices" \
+          NODE_ENV=production \
+            nohup npx next start -p 3101 -H 127.0.0.1 > "$RUNNER_TEMP/server.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/server.pid"
+          for _ in $(seq 1 60); do
+            curl -fsS -o /dev/null http://127.0.0.1:3101/login && break
+            sleep 1
+          done
+          kill -0 "$(cat "$RUNNER_TEMP/server.pid")"
+          curl -fsS -o /dev/null http://127.0.0.1:3101/login
+
+      - name: Playwright smoke spec (mobile + desktop)
+        # GitHub sets CI=true, which makes global setup FAIL (not skip) if any
+        # role cannot sign in — a pipeline cannot go green on skipped specs.
+        run: node node_modules/playwright/cli.js test smoke
+
+      - name: Server log
+        if: failure()
+        run: tail -n 200 "$RUNNER_TEMP/server.log" || true
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
