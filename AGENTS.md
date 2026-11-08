@@ -237,7 +237,8 @@ Subagents live in `.claude/agents/`; per slice, build in this order:
 `database` → `backend` → `frontend` + `ui-design` (sequential — they both edit `app/`) →
 `code-reviewer` and `security-reviewer` (read-only, safe in parallel) → `devops` once
 ship-ready. Running two writers on the same files collides; independent slices can run in
-separate git worktrees.
+separate git worktrees. Agent memory (`.claude/agent-memory/`) **is tracked in git** —
+shared context across sessions and machines (owner decision 2026-11-08); don't untrack it.
 
 Non-trivial work (schema changes, new endpoints, anything touching the count-write path)
 goes through the 4-gate workflow — Product → Architecture → Program Design → Vertical

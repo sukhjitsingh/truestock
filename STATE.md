@@ -237,7 +237,10 @@ Written, reviewed, typechecked — never observed working.
 
 **Scanned invoices (2026-11-07).** Vision has never run: there is no API key. Scans
 are routed straight to it and stop at `EXTRACTION_UNAVAILABLE`, so invoice B's lines
-and the F9 path on Hostinger are unverified (open-item #47).
+and the F9 path on Hostinger are unverified (open-item #47). **Vision is deferred past
+go-live (owner decision 2026-11-08)**: at launch scans are archived, not extracted, and
+their costs are entered by hand; this stays unproven on purpose until the feature
+returns.
 
 **The release gate is proven on GitHub (2026-11-08); a real deploy and a rollback are
 not.** Deploy run #17 (PR #39's merge): `release` waited for the owner's approval
@@ -372,7 +375,8 @@ only, not on a phone: a refused write should be dropped and named on screen.
   and a real Southern Glazer's text-PDF shape is covered. What has not happened
   is the Gate 1 product measurement: 20–25 real invoices, including actual
   photographed/scanned documents through the live Claude Vision API, reviewed
-  by the owner in under 30 minutes. The real SendGrid path and Hostinger storage
+  by the owner in under 30 minutes *(the scanned/Vision part is deferred past
+  go-live, 2026-11-08; the measurement now runs on text-PDF invoices)*. The real SendGrid path and Hostinger storage
   also remain unproven. Open item #39 records the two accepted audit-packet
   reliability debts: whole-file memory buffering and no stale-build reaper.
 - **The standalone server entrypoint.** The production-mode run used
@@ -580,8 +584,8 @@ suite proves the software contract, not the operating claims.
 2. **Phase 2.9 — owner data and field validation.** Use real supplier invoices
    to populate the remaining costs, case sizes, pars, vendors and wine producer
    names; measure Phase 2.5's Gate 1 target with 20–25 real invoices in one
-   under-30-minute sitting; and drive an actual photographed/scanned document
-   through the live Claude Vision path. Then run the redesigned counting UI on
+   under-30-minute sitting *(text PDFs — the scanned/Vision path is deferred
+   past go-live, 2026-11-08)*. Then run the redesigned counting UI on
    the phone: enrollment pass, timed full count, all locations, rapid scan
    checked against a hand count, multi-write offline replay, and the four Phase
    2 UI bets in `docs/phone-count-test.md`. A 2026-08-21 query of the shared
@@ -592,7 +596,8 @@ suite proves the software contract, not the operating claims.
    queued writes, a correction arriving in the right order, falling over to
    mobile data, and the flush after the app is killed. Second, fix or accept the
    pre-count findings V1, A18, A20, DB-1 and DB-4. Then enter data through real
-   invoices (add the 1 L product rows first, #47) and run Vision with a real key.
+   invoices (add the 1 L product rows first, #47). (Vision with a real key is
+   deferred past go-live, 2026-11-08.)
    The status of each item is in ROADMAP.md, Phase 2.9.
 3. **Phase 3 — go-live.** Only after Phase 2.9. Start the real standalone
    artifact with `node .next/standalone/server.js`, exercise `pdf-inspector`

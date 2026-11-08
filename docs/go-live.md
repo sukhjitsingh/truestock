@@ -64,9 +64,12 @@ Blocking items. Each one is either done or the deploy waits.
       pars/vendors are populated, 20–25 real invoices meet or revise the
       under-30-minute target, an actual scanned invoice completes through the
       live Claude Vision path, and the redesigned phone count has run across
-      all locations against a hand check.
+      all locations against a hand check. *(The scanned-invoice/Vision part is
+      deferred past go-live, owner decision 2026-11-08: the invoice target is met
+      on text PDFs, and scans are archived with costs entered by hand.)*
 - [ ] **Production Phase 2.5 configuration is set and proven.** Use a production
-      `ANTHROPIC_API_KEY`; set `INVOICE_STORAGE_DIR` to an **absolute persistent
+      `ANTHROPIC_API_KEY` *(not needed at go-live — it serves only the deferred
+      Vision path)*; set `INVOICE_STORAGE_DIR` to an **absolute persistent
       directory outside both the web root and replaceable release tree**; and
       configure `EMAIL_PROVIDER=sendgrid`, `EMAIL_API_KEY`, and `EMAIL_FROM`.
       Upload/download one retained original, restart and redeploy, then prove the
@@ -210,13 +213,16 @@ Not with `curl`. See the rule at the top.
 ### 2.3 Phase 2.5 production smoke — archive through audit packet
 
 - [ ] **Upload one text PDF and one real photographed/scanned invoice as the
-      owner.** Both originals survive a process restart and deploy; direct URL
+      owner.** *(Vision deferred 2026-11-08: the scan should be archived and stop at
+      `EXTRACTION_UNAVAILABLE` with a clear message, not extract.)* Both originals survive a process restart and deploy; direct URL
       guesses return 404; manager and staff sessions receive no file bytes.
-- [ ] **Run extraction through both providers.** The text PDF uses
+- [ ] **Run extraction through both providers.** *(Deferred with Vision,
+      2026-11-08 — at go-live only the text-PDF provider runs.)* The text PDF uses
       pdf-inspector from the standalone artifact. The scan reaches the real
       Claude Vision API, records provider/model/token/cost provenance, and lands
       in the owner review queue rather than silently inventing unmatched data.
-- [ ] **Canary: scans go straight to Vision and never touch PDFium.** Do this
+- [ ] **Canary: scans go straight to Vision and never touch PDFium.** *(Deferred
+      with Vision, 2026-11-08; part (3), the text-PDF check, still applies.)* Do this
       on a separate test site or test organization first, with one *synthetic*
       scanned PDF (never a real supplier document). Confirm all three:
       (1) the invoice reaches `needs_review` with line items, and its

@@ -324,17 +324,16 @@ rehearsed command*; it's built but has never run.
 
 ---
 
-## Open questions found during the scan (not changed here)
+## Open questions found during the scan — all resolved 2026-11-08
 
-1. **`docs/plans/ui-ux-redesign/00-status.md` says "do not open a PR from this branch
-   until the browser pass"**, but `feat/ui-ux-redesign-v2` merged as PR #29. Either the
-   pass happened and the status file is stale, or it merged unproven — `STATE.md`
-   should say which.
-2. **`lib/domain/extraction-pipeline.ts:906` sets `MODEL_ID = "claude-sonnet-5"`.**
-   Vision has never run (open-item #47), so the model id has never been exercised.
-   Confirm it is the model you intend when the API key arrives.
-3. **`docs/known-defects.md` header says "None of these are fixed"**, but #2 (zero/negative
-   net) was fixed by `2044644` and its tests flipped. The header is stale.
-4. **Agent memory was untracked then re-tracked** (`56c7c89`, `a954d17`). Decide the
-   policy once — it is 61 files and grows every phase; tracked memory is shared context
-   but also more for every agent to load.
+1. ~~**`docs/plans/ui-ux-redesign/00-status.md` says "do not open a PR from this branch
+   until the browser pass"**, but `feat/ui-ux-redesign-v2` merged as PR #29.~~
+   **Closed:** the owner confirms the redesign is proven; the status file now says so.
+2. ~~**`lib/domain/extraction-pipeline.ts:906` sets `MODEL_ID = "claude-sonnet-5"`**,
+   never exercised.~~ **Deferred:** Claude Vision as a whole moves past go-live (owner
+   decision). ROADMAP Phase 2.9, `docs/go-live.md`, `STATE.md` and open-item #47 now say
+   so; the model id is checked when Vision returns.
+3. ~~**`docs/known-defects.md` header says "None of these are fixed"**.~~ **Fixed** in
+   `1f47a69` (#1 and #2 struck through with date and commit).
+4. ~~**Agent memory was untracked then re-tracked**.~~ **Decided: keep it in git**,
+   recorded in `AGENTS.md` ("The team and the planning workflow").
