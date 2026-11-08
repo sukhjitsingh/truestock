@@ -180,7 +180,7 @@ single PR (owner decision). Status per item:
 | 1.1 Slim the context | `ab6ca01` (STATE split), `af00f6e` (AGENTS.md → core + `docs/lessons.md`) | `AGENTS.md` 35.7 KB → 16.0 KB; `STATE.md` 1,409 → 615 lines; every old paragraph checked as kept, moved verbatim, or condensed; 19/19 lesson links resolve |
 | 1.2 Settings + hooks | `b42f77d`, review fixes `0ab2ab5` | 20 tests incl. end-to-end; live-fired (an edit to an applied migration was refused); 0 warnings on the 72 existing `.tsx` files; each review fix mutation-checked |
 | 1.3 Verification block | `af00f6e` ("Commands and the definition of done") | — |
-| 1.4 e2e smoke in CI | `9804782` | Job's own steps rehearsed locally: 26/26; nonce removed from `lib/csp.ts` → exit 1, `"form" never hydrated`. **Not yet run on GitHub** — the first PR run is its real proof |
+| 1.4 e2e smoke in CI | `9804782` | Job's own steps rehearsed locally: 26/26; nonce removed from `lib/csp.ts` → exit 1, `"form" never hydrated`. **Green on GitHub** (PR #38 run #68, 26/26), after `10256ee` fixed a workflow-level error that had stopped run #67 from starting |
 | 1.5 Pin Bun | `ede08dd` | Pinned to **1.4.0** (the Dockerfile's version, not 1.4.4); suite 1,397 pass / 0 fail on 1.4.0 |
 | 1.6 Known defect #1 | `530d632`, docs `1f47a69` | A1–A3 now regression guards; mutation-checked two ways; owner decision: write-path refusal only |
 

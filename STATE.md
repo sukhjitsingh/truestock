@@ -239,9 +239,10 @@ Written, reviewed, typechecked — never observed working.
 are routed straight to it and stop at `EXTRACTION_UNAVAILABLE`, so invoice B's lines
 and the F9 path on Hostinger are unverified (open-item #47).
 
-**The CI browser gate (2026-11-08).** The `e2e-smoke` job in `.github/workflows/ci.yml`
-has never run on GitHub. Its steps were rehearsed locally (26/26), and it was
-mutation-checked there: a nonce-less CSP fails it. Its first green PR run is the proof.
+**The CI browser gate is now proven (2026-11-08).** `e2e-smoke` ran green on GitHub
+on PR #38 (run #68, head `10256ee`): all three roles signed in, 26/26 passed. It was
+mutation-checked locally (a nonce-less CSP fails it). Its first run never started:
+`runner.temp` in job-level `env` made GitHub reject the whole of `ci.yml`.
 The retired-product refusal (known defect #1, fixed 2026-11-08) is proven by DB tests
 only, not on a phone: a refused write should be dropped and named on screen.
 
