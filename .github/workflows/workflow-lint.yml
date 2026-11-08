@@ -1,0 +1,32 @@
+name: Workflow lint
+
+# actionlint over every workflow in .github/workflows/ (expression contexts,
+# action inputs, shellcheck on run: blocks).
+#
+# Its own file on purpose. When a workflow file is invalid, GitHub rejects
+# that whole file — no job in it runs and the PR shows no check at all, which
+# reads as "nothing to see" rather than red. That happened to ci.yml on PR #38
+# (run #67, 2026-11-08: `runner.temp` in job-level env). A lint job inside
+# ci.yml would have been rejected along with it; this one still runs and goes
+# red. Mutation-checked: actionlint reports exactly that error when the line
+# is put back, and exits 0 on the current files.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: workflow-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint (pinned image, includes shellcheck)
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -no-color

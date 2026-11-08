@@ -213,7 +213,7 @@ jobs:
           for role in owner manager staff; do
             pw="$(openssl rand -hex 16)"
             echo "::add-mask::$pw"
-            upper="$(echo "$role" | tr a-z A-Z)"
+            upper="$(echo "$role" | tr '[:lower:]' '[:upper:]')"
             printf 'E2E_%s_EMAIL=%s@example.test\nE2E_%s_PASSWORD=%s\n' "$upper" "$role" "$upper" "$pw" >> "$E2E_ENV_FILE"
             ./node_modules/.bin/tsx scripts/create-user.ts --email "$role@example.test" \
               --name "E2E $role" --org truestock --role "$role" --password "$pw"
