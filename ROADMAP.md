@@ -484,16 +484,25 @@ session log, because a run that is not written down is an anecdote.
   real scan hit `EXTRACTION_UNAVAILABLE` because there is no `ANTHROPIC_API_KEY`.
   Still open (#47): Vision on a real scan, alias re-matching from a second upload
   of the same supplier, and F9 past the key check and on Hostinger.
+  > **Deferred past go-live (owner decision 2026-11-08).** Claude Vision — reading scanned and
+  > photographed invoices — is no longer part of this phase or the go-live gate.
+  > At go-live text PDFs are read automatically (pdf-inspector); a scan is archived
+  > and stops at `EXTRACTION_UNAVAILABLE`, and its costs are entered by hand in the
+  > catalog. The field metric is measured on text-PDF invoices. Vision, its model
+  > id (`lib/domain/extraction-pipeline.ts`) and the scan canary come back as one
+  > later item.
 
 **Done when:** the catalog is costed, a full count runs on a phone in under 20
 minutes, the resulting valuation and reorder list are trusted enough to act on,
 and rapid mode's count matches a hand count. The #46 queue fix has to hold on the
 phone, and real invoices have to post real costs within the 30-minute field
-metric, with Vision proven on at least one scan.
+metric, with Vision proven on at least one scan *(Vision deferred past go-live
+2026-11-08 — see the note above; the metric is met on text-PDF invoices)*.
 
 **This is the last phase before go-live**, and its output is what makes Phase 3 a
 decision rather than a hope: `docs/go-live.md`'s remaining browser checks, the
-standalone-entrypoint item, and the Vision API key (#47) all close here.
+standalone-entrypoint item, and the Vision API key (#47) all close here *(the
+Vision key no longer does — deferred past go-live, 2026-11-08)*.
 
 ---
 

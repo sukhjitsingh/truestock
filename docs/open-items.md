@@ -2234,6 +2234,13 @@ Playwright 65 of 65, none skipped, with `E2E_REQUIRE_ALL=1`. Typecheck, lint and
 production build pass. Code and security reviews found nothing blocking. Those
 reviews read the code and ran nothing.
 
+> **2026-11-08 — Vision deferred past go-live (owner decision).** Items 1–3 below
+> stay unverified by choice, not oversight: they are no longer a go-live blocker
+> (ROADMAP Phase 2.9, `docs/go-live.md`). They come back, with the model id in
+> `lib/domain/extraction-pipeline.ts` and the scan canary, when Vision is scheduled.
+> The "Built and tested, not driven with a real file" and "Found during proof, not
+> fixed" lists below still apply.
+
 **Not verified. Skipped means unverified, never passed:**
 
 1. **Vision.** There is no `ANTHROPIC_API_KEY`, so no scanned document has been read.

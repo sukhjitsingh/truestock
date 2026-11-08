@@ -9,6 +9,13 @@ Covers ROADMAP.md Phase 2, `docs/design-system.md`, and the full screen inventor
 
 ---
 
+## CLOSED — proven (owner, 2026-11-08)
+
+The owner confirmed on 2026-11-08 that the browser pass this file asked for was done
+and the redesign is proven; it merged to `main` as PR #29. This closes the
+"do not open a PR until the browser pass" rule below and the open question raised in
+`docs/sdlc-playbook-map.md`. The 2026-10-24 state that follows is kept as history.
+
 ## State on branch `feat/ui-ux-redesign-v2` (2026-10-24)
 
 **Built, not proven.** All seven slices have code on this branch. None has been

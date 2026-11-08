@@ -11,6 +11,19 @@ When a feature ships, its one-line entry goes here (AGENTS.md, "Planning workflo
 
 ---
 
+- **2026-11-08** — **The roles spec runs in CI.** `e2e-smoke` now also runs
+  `e2e/specs/roles.e2e.ts`: invariants 7 and 8 checked against what the server sends each
+  role. `scripts/e2e-seed-invoice.mjs` gives the run one invoice with a real file, so the
+  owner's invoice-file check passes instead of skipping. Rehearsed locally from the
+  workflow's own steps: 48/48, 0 skipped; owner 200 with the seeded bytes, manager 403,
+  signed-out 401. Mutation-checked: cost sent to every role by `selectProducts`, or the
+  cost column shown to managers, each fails the manager catalog test.
+- **2026-11-08** — **Four open questions settled by the owner.** The UI redesign is
+  proven, so its plan status is closed (PR #29). Claude Vision (scanned invoices) is
+  **deferred past go-live**: removed from the Phase 2.9 and go-live gates, with scans
+  archived and costed by hand at launch (ROADMAP, `docs/go-live.md`, `STATE.md`, #47).
+  The stale known-defects header was already fixed (`1f47a69`). Agent memory stays
+  tracked in git (`AGENTS.md`).
 - **2026-11-08** — **SDLC Tier 2 built; three settings left to the owner.** Deploys now
   wait for approval: `verify → build → release`, with `release` (and rollback) tied to a
   `production` environment that holds the Hostinger secrets, and refusing to run if that
