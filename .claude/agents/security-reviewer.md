@@ -25,6 +25,11 @@ liquor-licence record.
 6. **File and path handling** — any user input reaching a path or URL construction.
 7. **Dependencies** — run an audit; flag known advisories, especially Next.js.
 8. **Error responses** — do they leak stack traces, SQL, or internal paths?
+9. **Tenant isolation** (`AGENTS.md` invariant 9) — is every query scoped to
+   `Actor.organizationId` from `requireSession`, and is every client-supplied id
+   ownership-checked rather than existence-checked? Can a cross-tenant id produce
+   anything other than `NotFound` — including a distinguishable error, timing, or a
+   leaked name? Includes invoice files and audit-packet downloads.
 
 **Output format:** severity (critical / high / medium / low), file and line, the concrete
 attack it enables, and the fix. Order by severity.
