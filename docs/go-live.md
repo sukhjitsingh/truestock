@@ -95,8 +95,8 @@ Blocking items. Each one is either done or the deploy waits.
 - [ ] **The `production` environment gates every release.** Added 2026-11-08
       (`docs/sdlc-playbook-map.md` Tier 2.3). Settings → Environments →
       `production`: you as required reviewer, deployment branches limited to
-      `main`, and **all Hostinger secrets stored there, none as repository
-      secrets** (`docs/deploy.md` §3). Proof it holds: the first `deploy.yml` run
+      `main`, administrator bypass off, and **all Hostinger secrets stored
+      there, none as repository secrets** (`docs/deploy.md` §3). Proof it holds: the first `deploy.yml` run
       on `main` stops at `release` and waits for your approval. If instead it
       fails at "Refuse an unprotected production environment", the reviewer is
       missing — or, if the message is "Could not read…", the workflow token

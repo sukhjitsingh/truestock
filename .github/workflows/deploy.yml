@@ -120,19 +120,25 @@ jobs:
 
   release:
     needs: build
+    # Only main deploys — a workflow_dispatch from any other branch runs that
+    # branch's copy of this file, so this job skips there. Not a substitute
+    # for the environment's own branch policy (a hostile branch could delete
+    # this line); the first step checks that policy too.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # The approval gate. The job does not start until a required reviewer of
-    # this environment approves it; its secrets exist only here.
+    # this environment approves it; its secrets exist only here, and each is
+    # passed only to the steps that use it.
     environment:
       name: production
     permissions:
       contents: write # publish the rollback release
-      actions: read # read this environment's protection rules (first step)
-    env:
-      HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
-      HOSTINGER_DOMAIN: ${{ secrets.HOSTINGER_DOMAIN }}
-      HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
+      # Intended for reading this environment's protection rules (first step).
+      # UNVERIFIED on GitHub as of 2026-11-08: if the first step reports
+      # "Could not read", the token lacks access — it fails closed. Do not
+      # widen the job's permissions to fix it without checking which is needed.
+      actions: read
     steps:
       - name: Refuse an unprotected production environment
         # Fails closed: a missing environment, no required reviewer, or an
@@ -150,9 +156,20 @@ jobs:
             echo "::error::The 'production' environment has no required reviewer, so nothing gated this release. Add yourself under Settings → Environments → production → Required reviewers (docs/deploy.md §3), then re-run. Refusing to deploy."
             exit 1
           fi
-          echo "production is gated by a required reviewer — continuing."
+          # Without a branch policy, any branch could dispatch its own edited
+          # copy of this workflow into the environment (security review,
+          # 2026-11-08). The policy is null when "all branches" are allowed.
+          branch_policy="$(gh api "repos/${GITHUB_REPOSITORY}/environments/production" \
+                --jq '.deployment_branch_policy != null')"
+          if [ "$branch_policy" != "true" ]; then
+            echo "::error::The 'production' environment allows deployments from any branch. Limit it to main (Settings → Environments → production → Deployment branches, docs/deploy.md §3). Refusing to deploy."
+            exit 1
+          fi
+          echo "production is gated by a required reviewer and limited branches — continuing."
 
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false # no write token left in .git/config
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.4.0" # = ci.yml and docker/app/Dockerfile BUN_VERSION
@@ -177,10 +194,19 @@ jobs:
 
       - name: Deploy archive to Hostinger
         id: deploy
+        env:
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_DOMAIN: ${{ secrets.HOSTINGER_DOMAIN }}
+          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
         run: python3 scripts/hostinger-deploy-archive.py deploy/truestock-deploy.zip
 
       - name: Wait for the Hostinger build to finish
-        run: python3 scripts/hostinger-poll-build.py "${{ steps.deploy.outputs.build_uuid }}"
+        env:
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_DOMAIN: ${{ secrets.HOSTINGER_DOMAIN }}
+          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
+          BUILD_UUID: ${{ steps.deploy.outputs.build_uuid }}
+        run: python3 scripts/hostinger-poll-build.py "$BUILD_UUID"
 
       - name: Restart the Node.js process
         # Belt-and-braces: a completed build is documented to already
@@ -188,6 +214,10 @@ jobs:
         # Hostinger side (e.g. a DATABASE_URL change made in hPanel) take
         # effect too, per Hostinger's own documented purpose for this
         # endpoint.
+        env:
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_DOMAIN: ${{ secrets.HOSTINGER_DOMAIN }}
+          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
         run: |
           curl -sf -X POST \
             -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \

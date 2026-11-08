@@ -28,30 +28,37 @@ permissions:
 
 jobs:
   rollback:
+    # Only from main — see deploy.yml's release job for why this and the
+    # environment's branch policy are both checked.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Same gate as deploy.yml's release job: the Hostinger secrets live only in
     # the `production` environment, and a rollback is a production change, so
     # it waits for the same required reviewer (one click — you are the one
-    # running it). Secrets are job-level, not workflow-level, because
-    # environment secrets only reach jobs that name the environment.
+    # running it). Each secret is passed only to the steps that use it.
     environment:
       name: production
     permissions:
       contents: read # download the deploy-<sha> release asset
-      actions: read # read this environment's protection rules (first step)
-    env:
-      HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
-      HOSTINGER_DOMAIN: ${{ secrets.HOSTINGER_DOMAIN }}
-      HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
+      # Intended for reading this environment's protection rules (first step);
+      # UNVERIFIED on GitHub as of 2026-11-08 — fails closed if insufficient.
+      actions: read
     steps:
-      - name: Refuse an unprotected production environment
+      - name: Refuse an unprotected production environment, and a malformed SHA
         # See deploy.yml: GitHub silently creates a missing environment with
-        # no protection, so the gate is checked rather than assumed.
+        # no protection, so the gate is checked rather than assumed. The SHA
+        # comes from the dispatcher, so it is validated before any use and only
+        # ever read from the environment, never interpolated into the script.
         env:
           GH_TOKEN: ${{ github.token }}
+          ROLLBACK_SHA: ${{ inputs.sha }}
         run: |
           set -euo pipefail
+          if ! [[ "$ROLLBACK_SHA" =~ ^[0-9a-f]{7,40}$ ]]; then
+            echo "::error::'$ROLLBACK_SHA' is not a short or full commit SHA (7-40 lowercase hex). Refusing to roll back."
+            exit 1
+          fi
           if ! reviewers="$(gh api "repos/${GITHUB_REPOSITORY}/environments/production" \
                 --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length')"; then
             echo "::error::Could not read the 'production' environment's protection rules. Refusing to roll back."
@@ -61,27 +68,49 @@ jobs:
             echo "::error::The 'production' environment has no required reviewer (docs/deploy.md §3). Refusing to roll back."
             exit 1
           fi
+          branch_policy="$(gh api "repos/${GITHUB_REPOSITORY}/environments/production" \
+                --jq '.deployment_branch_policy != null')"
+          if [ "$branch_policy" != "true" ]; then
+            echo "::error::The 'production' environment allows deployments from any branch (docs/deploy.md §3). Refusing to roll back."
+            exit 1
+          fi
 
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Download the archived deploy
         env:
           GH_TOKEN: ${{ github.token }}
+          ROLLBACK_SHA: ${{ inputs.sha }}
         run: |
           mkdir -p deploy
-          gh release download "deploy-${{ inputs.sha }}" \
-            --repo "${{ github.repository }}" \
+          gh release download "deploy-${ROLLBACK_SHA}" \
+            --repo "${GITHUB_REPOSITORY}" \
             --pattern "truestock-deploy.zip" \
             --dir deploy --clobber
 
       - name: Deploy that archive to Hostinger
         id: deploy
+        env:
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_DOMAIN: ${{ secrets.HOSTINGER_DOMAIN }}
+          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
         run: python3 scripts/hostinger-deploy-archive.py deploy/truestock-deploy.zip
 
       - name: Wait for the Hostinger build to finish
-        run: python3 scripts/hostinger-poll-build.py "${{ steps.deploy.outputs.build_uuid }}"
+        env:
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_DOMAIN: ${{ secrets.HOSTINGER_DOMAIN }}
+          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
+          BUILD_UUID: ${{ steps.deploy.outputs.build_uuid }}
+        run: python3 scripts/hostinger-poll-build.py "$BUILD_UUID"
 
       - name: Restart the Node.js process
+        env:
+          HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+          HOSTINGER_DOMAIN: ${{ secrets.HOSTINGER_DOMAIN }}
+          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
         run: |
           curl -sf -X POST \
             -H "Authorization: Bearer ${HOSTINGER_API_TOKEN}" \

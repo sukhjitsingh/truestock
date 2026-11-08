@@ -189,7 +189,12 @@ is set up by hand:
 2. **Required reviewers →** add yourself. Leave *Prevent self-review* off — you are
    the only reviewer, and you approve your own releases.
 3. **Deployment branches and tags → Selected branches →** add `main`, so only `main`
-   can ever deploy.
+   can ever deploy. **Required, not optional:** `workflow_dispatch` runs the workflow
+   file *from the branch it is dispatched on*, so without this policy any pushed
+   branch could carry its own edited `deploy.yml` into the environment and its
+   secrets. The `release` and `rollback` jobs refuse to run if this is unset.
+   Also untick **Allow administrators to bypass configured protection rules** (on by
+   default) — for a repo with one admin, that box is the whole gate.
 4. **Environment secrets →** add every secret in the table below **here**, in the
    `production` environment — **not** as repository secrets. Environment secrets
    reach only the jobs tied to that environment (`deploy.yml`'s `release`,
@@ -227,9 +232,13 @@ hPanel (§2.4). These are exclusively for the pipeline.
   build`) and `e2e-smoke` (the Playwright smoke spec against a production build).
 - `.github/workflows/workflow-lint.yml` — `actionlint` over every workflow. Its own
   file so that a broken `ci.yml` still produces a red check instead of none.
-- `.github/workflows/claude-review.yml` — an independent AI review of each PR against
-  `REVIEW.md`. Needs the `ANTHROPIC_API_KEY` **repository** secret (it is not a
-  production secret); skips with a notice without it. Informational only.
+- `.github/workflows/claude-review.yml` — an independent AI review of each PR into
+  `main` against `REVIEW.md`. Needs the `ANTHROPIC_API_KEY` **repository** secret (it
+  is not a production secret); skips with a notice without it. Informational only.
+  **Use a dedicated Anthropic API key with a low monthly spend limit** for it, created
+  for this purpose only: the reviewer reads attacker-written PR content, and the
+  workflow's tool limits reduce but cannot rule out a prompt injection leaking the
+  key. The spend limit is what bounds the damage if it does.
 - `.github/workflows/deploy.yml` — push to `main`: `verify` → `build` → `release`.
   `release` waits for your approval (the environment above).
 - `.github/workflows/rollback.yml` — manual (`workflow_dispatch`), redeploys
