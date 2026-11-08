@@ -25,8 +25,9 @@
  * never stops work. tests/edit-guards.test.ts pins every rule.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const mode = process.argv[2];
 
@@ -47,9 +48,24 @@ function incomingText(input) {
   return "";
 }
 
+/** Resolve symlinks; for a file that does not exist yet (a Write), resolve its folder. */
+function real(p) {
+  try {
+    return realpathSync(p);
+  } catch {
+    try {
+      return path.join(realpathSync(path.dirname(p)), path.basename(p));
+    } catch {
+      return p;
+    }
+  }
+}
+
 function projectRelative(input, filePath) {
-  const root = process.env.CLAUDE_PROJECT_DIR || input?.cwd || process.cwd();
-  const rel = path.relative(root, path.resolve(root, filePath));
+  // Both sides resolved through symlinks, so a project reached through a
+  // symlinked path does not produce a "../" relative path and get skipped.
+  const root = real(process.env.CLAUDE_PROJECT_DIR || input?.cwd || process.cwd());
+  const rel = path.relative(root, real(path.resolve(root, filePath)));
   return { root, rel: rel.split(path.sep).join("/") };
 }
 
@@ -79,7 +95,7 @@ export function preViolation(rel, text, landedOnMain) {
       "really is a deliberate pre-launch exception, ask the user first."
     );
   }
-  if (rel === "next.config.ts" && /content-security-policy/i.test(text)) {
+  if (/^next\.config\.(ts|js|mjs|cjs)$/.test(rel) && /content-security-policy/i.test(text)) {
     return (
       "The CSP must never be set in next.config.ts. It is served from " +
       "middleware.ts with a per-request nonce; a static header cannot carry " +
@@ -94,26 +110,73 @@ export function preViolation(rel, text, landedOnMain) {
 /**
  * Blank out comments (block, JSX `{/* *\/}`, and line) so a tag named in prose —
  * "a nested `<form>` here would be invalid" — is not mistaken for code. Newlines
- * are kept so reported line numbers stay true. A `//` right after `:` or a quote
- * is left alone (URLs in strings).
+ * are kept so reported line numbers stay true.
+ *
+ * A small scanner, not a regex, so a comment marker inside a string literal
+ * (`"components/*"`, `"https://…"`) is left alone instead of blanking real code
+ * up to the next `*\/`. `'` and `"` strings end at a newline, as in JS, so an
+ * apostrophe in JSX text ("Don't") cannot swallow the rest of the file.
+ * Known gap: a `//` in JSX *text* is treated as a comment to end of line.
  */
 export function stripComments(source) {
-  const blank = (s) => s.replace(/[^\n]/g, " ");
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, blank)
-    .replace(/(^|[^:"'`\\])\/\/[^\n]*/gm, (m, lead) => lead + blank(m.slice(lead.length)));
+  let out = "";
+  let i = 0;
+  const n = source.length;
+  const blankUntil = (end) => {
+    out += source.slice(i, end).replace(/[^\n]/g, " ");
+    i = end;
+  };
+  while (i < n) {
+    const c = source[i];
+    const next = source[i + 1];
+    if (c === '"' || c === "'" || c === "`") {
+      let j = i + 1;
+      while (j < n && source[j] !== c && !(c !== "`" && source[j] === "\n")) {
+        j += source[j] === "\\" ? 2 : 1;
+      }
+      j = Math.min(j + 1, n);
+      out += source.slice(i, j);
+      i = j;
+    } else if (c === "/" && next === "*") {
+      const end = source.indexOf("*/", i + 2);
+      blankUntil(end === -1 ? n : end + 2);
+    } else if (c === "/" && next === "/") {
+      const end = source.indexOf("\n", i);
+      blankUntil(end === -1 ? n : end);
+    } else {
+      out += c;
+      i += 1;
+    }
+  }
+  return out;
 }
 
-/** Opening tag bodies: everything up to the first `>` that is not part of `=>`. */
+/**
+ * Opening tags of the given names, with their attribute text. Scans to the `>`
+ * that closes the TAG — outside every `{…}` expression and string — so neither
+ * an arrow function's `=>` nor `hidden={a > b}` ends the tag early.
+ */
 function openingTags(source, tagPattern) {
   source = stripComments(source);
-  // `=>` MUST come first in the alternation: with `[^>]` first, the `=` of an
-  // arrow function is consumed alone and its `>` then ends the tag early.
-  const re = new RegExp(`<(?:${tagPattern})\\b((?:=>|[^>])*)>`, "g");
+  const re = new RegExp(`<(?:${tagPattern})\\b`, "g");
   const found = [];
   let m;
   while ((m = re.exec(source)) !== null) {
-    found.push({ attrs: m[1], line: source.slice(0, m.index).split("\n").length });
+    let depth = 0;
+    let quote = null;
+    let j = re.lastIndex;
+    for (; j < source.length; j++) {
+      const ch = source[j];
+      if (quote) {
+        if (ch === "\\") j++;
+        else if (ch === quote) quote = null;
+      } else if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+      else if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      else if (ch === ">" && depth <= 0) break;
+    }
+    found.push({ attrs: source.slice(re.lastIndex, j), line: source.slice(0, m.index).split("\n").length });
+    re.lastIndex = j;
   }
   return found;
 }
@@ -189,7 +252,17 @@ function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === `file://${path.resolve(process.argv[1])}`) {
+// Run only when executed directly, not when the test imports it. Compared as
+// real-path file URLs: `import.meta.url` is percent-encoded and symlink-resolved,
+// so a naive `file://${argv[1]}` comparison silently disabled the guard in any
+// checkout whose path had a space or a symlink (found in review, 2026-11-08).
+let isEntry = false;
+try {
+  isEntry = !!process.argv[1] && pathToFileURL(realpathSync(process.argv[1])).href === import.meta.url;
+} catch {
+  isEntry = false;
+}
+if (isEntry) {
   try {
     main();
   } catch {

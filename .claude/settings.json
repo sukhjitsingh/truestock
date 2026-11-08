@@ -23,6 +23,8 @@
       "Read(./.env.local)",
       "Read(./.env.*.local)",
       "Read(./.env.production)",
+      "Read(./.env.development)",
+      "Read(./.env.test)",
       "Read(./.env.e2e)"
     ]
   },

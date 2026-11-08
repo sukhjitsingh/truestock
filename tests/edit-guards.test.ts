@@ -11,7 +11,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { postWarnings, preViolation, stripComments } from "../.claude/hooks/guard-edits.mjs";
@@ -42,6 +42,12 @@ describe("pre: the CSP stays in middleware", () => {
     expect(preViolation("next.config.ts", 'key: "Content-Security-Policy"', false)).not.toBeNull();
   });
 
+  test("the .js / .mjs / .cjs spellings of next.config are guarded too", () => {
+    for (const f of ["next.config.js", "next.config.mjs", "next.config.cjs"]) {
+      expect(preViolation(f, "Content-Security-Policy", false)).not.toBeNull();
+    }
+  });
+
   test("other next.config.ts edits, and CSP work in middleware.ts, are allowed", () => {
     expect(preViolation("next.config.ts", "output: 'standalone'", false)).toBeNull();
     expect(preViolation("middleware.ts", "Content-Security-Policy", false)).toBeNull();
@@ -67,6 +73,27 @@ describe("post: <form> carries a method", () => {
     expect(postWarnings("a.tsx", "{/* <form onSubmit={x}> */}\n")).toEqual([]);
   });
 
+  test("a `>` inside an attribute expression does not end the tag (review 2026-11-08)", () => {
+    // Was a false positive: the tag ended at `a >`, so method= was never seen.
+    expect(postWarnings("a.tsx", '<form onSubmit={s} hidden={a > b} method="post">')).toEqual([]);
+    // And `>=` before a missing method is still caught.
+    expect(postWarnings("a.tsx", "<form hidden={n >= 2} onSubmit={s}>")).toHaveLength(1);
+  });
+
+  test("a comment marker inside a string cannot hide a real form (review 2026-11-08)", () => {
+    // Was a false negative: "components/*" opened a block comment that ran to
+    // the next */ and blanked the form between them.
+    const src = 'const g = "components/*";\nexport const F = () => <form onSubmit={s}></form>;\n/* note */';
+    const w = postWarnings("a.tsx", src);
+    expect(w).toHaveLength(1);
+    expect(w[0]).toContain("a.tsx:2");
+  });
+
+  test("an apostrophe in JSX text does not swallow the rest of the file", () => {
+    const src = "<p>Don't panic</p>\n<form onSubmit={s}>\n";
+    expect(postWarnings("a.tsx", src)).toHaveLength(1);
+  });
+
   test("non-JSX files are not checked", () => {
     expect(postWarnings("lib/x.ts", "<form onSubmit={s}>")).toEqual([]);
   });
@@ -75,6 +102,8 @@ describe("post: <form> carries a method", () => {
 describe("post: row-level edit is a button", () => {
   test("onClick on a <tr> or <TableRow> is flagged", () => {
     expect(postWarnings("a.tsx", "<tr onClick={() => edit(row)}>")).toHaveLength(1);
+    // Was a false negative: the tag ended at `a >` before onClick was reached.
+    expect(postWarnings("a.tsx", "<tr data-x={a > b} onClick={e}>")).toHaveLength(1);
     expect(postWarnings("a.tsx", '<TableRow key={r.id} onClick={() => edit(r)} className="x">')).toHaveLength(1);
   });
 
@@ -128,6 +157,32 @@ describe("the hook as Claude Code runs it", () => {
     expect(out.hookSpecificOutput.hookEventName).toBe("PostToolUse");
     expect(out.hookSpecificOutput.additionalContext).toContain("f.tsx:1");
     expect(out.decision).toBeUndefined();
+  });
+
+  test("still denies when the checkout path has a space or goes through a symlink (review 2026-11-08)", () => {
+    // The entry-point check used to compare import.meta.url (percent-encoded,
+    // symlink-resolved) with a raw path, so in such a checkout the hook ran,
+    // printed nothing, and every guard was silently off.
+    const base = mkdtempSync(path.join(tmpdir(), "guard space-"));
+    const hookDir = path.join(base, "with space", ".claude", "hooks");
+    mkdirSync(hookDir, { recursive: true });
+    copyFileSync(HOOK, path.join(hookDir, "guard-edits.mjs"));
+    const link = path.join(base, "linked");
+    symlinkSync(path.join(base, "with space"), link);
+
+    for (const projectDir of [path.join(base, "with space"), link]) {
+      const hook = path.join(projectDir, ".claude", "hooks", "guard-edits.mjs");
+      const r = spawnSync("node", [hook, "pre"], {
+        input: JSON.stringify({
+          tool_name: "Write",
+          tool_input: { file_path: path.join(projectDir, "next.config.ts"), content: "Content-Security-Policy" },
+        }),
+        env: { ...process.env, CLAUDE_PROJECT_DIR: projectDir },
+        encoding: "utf8",
+      });
+      expect(r.stdout).not.toBe("");
+      expect(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision).toBe("deny");
+    }
   });
 
   test("clean edits and unparseable input produce no output (fail open)", () => {
