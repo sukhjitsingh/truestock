@@ -1991,17 +1991,20 @@ about that change, so each regression test was run against its reverted fix:
   binding). They pass in Docker (`bun run test:docker`); the host-side run is
   expected to show exactly those two.
 
-**Known defects the suite found (none fixed; each encoded as a test that is green
-today and goes red when the defect is fixed).** The full write-up (where each lives,
+**Known defects the suite found (#1 fixed 2026-11-08, #2 fixed 2026-11-06; each was
+encoded as a test that was green while the defect existed and went red when it was
+fixed).** The full write-up (where each lives,
 impact, suggested fix, the test to flip) is in [`docs/known-defects.md`](known-defects.md);
 this list is the short form:
 
-1. **A deactivated product is still countable** (`tests/known-defects.test.ts`).
+1. ~~**A deactivated product is still countable**~~ **FIXED 2026-11-08 (`530d632`)** —
+   refused on every count write with `PRODUCT_RETIRED`; the barcode lookup is
+   deliberately unchanged (owner decision). Original note: (`tests/known-defects.test.ts`).
    First write, increment and scan-by-barcode all succeed against an
    `active = false` product. This is invariant 6 on the write path;
    `resolveBarcodeForCount` does not join `product`. The location equivalent was
    fixed 2026-08-12.
-2. **`deriveUnitCost` accepts a zero or negative net** (`lib/domain/cost-derivation.ts`:
+2. ~~**`deriveUnitCost` accepts a zero or negative net**~~ **FIXED 2026-11-06 (`2044644`).** Original note: (`lib/domain/cost-derivation.ts`:
    `-60.00` becomes `-6.0000`; `0.00`, `""` and `" "` become `0.0000`), and
    `approveInvoice` posts that as a product cost plus a history row.
 3. **`productUpdateSchema.wasteFactor` accepts values of 1 or more** (`.max(9.999)`),

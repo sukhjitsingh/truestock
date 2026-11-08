@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(bun run typecheck)",
+      "Bash(bun run lint *)",
+      "Bash(bun run test *)",
+      "Bash(bun run test:docker *)",
+      "Bash(bun run build)",
+      "Bash(bun run e2e *)",
+      "Bash(bun run check:migrations-immutable *)",
+      "Bash(bun test *)",
+      "Bash(bun install --frozen-lockfile)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(docker compose ps *)",
+      "Bash(docker compose logs *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Read(./.env.*.local)",
+      "Read(./.env.production)",
+      "Read(./.env.development)",
+      "Read(./.env.test)",
+      "Read(./.env.e2e)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-edits.mjs\" pre",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-edits.mjs\" post",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
