@@ -92,6 +92,19 @@ Blocking items. Each one is either done or the deploy waits.
       `@firecrawl/pdf-inspector`'s native binary, so that a later failure is a
       hosting problem rather than an unknown.
 
+- [ ] **The `production` environment gates every release.** Added 2026-11-08
+      (`docs/sdlc-playbook-map.md` Tier 2.3). Settings → Environments →
+      `production`: you as required reviewer, deployment branches limited to
+      `main`, and **all Hostinger secrets stored there, none as repository
+      secrets** (`docs/deploy.md` §3). Proof it holds: the first `deploy.yml` run
+      on `main` stops at `release` and waits for your approval. If instead it
+      fails at "Refuse an unprotected production environment", the reviewer is
+      missing — or, if the message is "Could not read…", the workflow token
+      cannot read the environment's rules; that check has not yet run on GitHub.
+- [ ] **Branch protection on `main`** requires `verify`, `e2e-smoke` and
+      `actionlint` to pass and blocks force pushes (`docs/deploy.md` §3). Not
+      `review` — the Claude review is informational.
+
 ### 1.2 Non-blocking but decide deliberately
 
 These do not stop a deploy. Each is a conscious “yes, launch with this state.”
@@ -124,6 +137,12 @@ first week.
 ### 2.1 The app is actually alive — do this first, in a browser
 
 Not with `curl`. See the rule at the top.
+
+- [ ] **Rehearse a rollback once, now, while the stakes are lowest.** Run
+      `gh workflow run rollback.yml -f sha=<this deploy's short sha>`, approve it,
+      and confirm the site comes back up on the same build. It has never run;
+      the first time it runs should not be during an incident. (Code only — it
+      never touches the schema; see `rollback.yml`'s header.)
 
 - [ ] **Load the sign-in page on a real phone over the bar's WiFi.** Not a desktop
       browser, not localhost.

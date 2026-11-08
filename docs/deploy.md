@@ -179,7 +179,30 @@ for you.
 
 ## 3. GitHub repository setup
 
-### Secrets (Settings → Secrets and variables → Actions)
+### The `production` environment — the release gate (do this first)
+
+Nothing reaches production without your approval (`deploy.yml`'s `release` job,
+2026-11-08). The gate is a GitHub Environment, which is a repository setting, so it
+is set up by hand:
+
+1. **Settings → Environments → New environment →** name it exactly `production`.
+2. **Required reviewers →** add yourself. Leave *Prevent self-review* off — you are
+   the only reviewer, and you approve your own releases.
+3. **Deployment branches and tags → Selected branches →** add `main`, so only `main`
+   can ever deploy.
+4. **Environment secrets →** add every secret in the table below **here**, in the
+   `production` environment — **not** as repository secrets. Environment secrets
+   reach only the jobs tied to that environment (`deploy.yml`'s `release`,
+   `rollback.yml`), so no other workflow and no PR branch can read them.
+
+**Order matters: steps 1–2 before step 4.** GitHub creates a missing environment
+silently, with no protection, the first time a workflow names it — so the first
+`deploy.yml` run after this change may already have created an unprotected
+`production`. That is safe on its own: the `release` job's first step refuses to
+deploy unless the environment has a required reviewer, so it fails rather than
+deploying ungated. Add the reviewer, then the secrets.
+
+### Secrets (Settings → Environments → `production` → Environment secrets)
 
 | Secret | Value | Used by |
 |---|---|---|
@@ -199,12 +222,30 @@ hPanel (§2.4). These are exclusively for the pipeline.
 
 ### Workflows (already committed)
 
-- `.github/workflows/ci.yml` — every push and PR: `bun install`, typecheck,
-  lint, test, the migrations-immutable check, `next build`. Must be green.
-- `.github/workflows/deploy.yml` — push to `main` only: `verify` →
-  `migrate` → `build-and-deploy`, each gated on the last.
+- `.github/workflows/ci.yml` — every PR and every push to `main`: `verify`
+  (`bun install`, typecheck, lint, test, the migrations-immutable check, `next
+  build`) and `e2e-smoke` (the Playwright smoke spec against a production build).
+- `.github/workflows/workflow-lint.yml` — `actionlint` over every workflow. Its own
+  file so that a broken `ci.yml` still produces a red check instead of none.
+- `.github/workflows/claude-review.yml` — an independent AI review of each PR against
+  `REVIEW.md`. Needs the `ANTHROPIC_API_KEY` **repository** secret (it is not a
+  production secret); skips with a notice without it. Informational only.
+- `.github/workflows/deploy.yml` — push to `main`: `verify` → `build` → `release`.
+  `release` waits for your approval (the environment above).
 - `.github/workflows/rollback.yml` — manual (`workflow_dispatch`), redeploys
-  a previously-published build artifact with no rebuild.
+  a previously-published build artifact with no rebuild. Same approval gate.
+
+### Branch protection on `main` (Settings → Branches → Add rule, or Rules → Rulesets)
+
+With one human there is no second approver to require, so the protection is checks,
+not reviews:
+
+- **Require a pull request before merging** (approvals: 0).
+- **Require status checks to pass:** `verify`, `e2e-smoke`, `actionlint`. Tick
+  *Require branches to be up to date*.
+- **Do not** add `review` (Claude review) as a required check — it is informational,
+  costs money per run, and skips without a key.
+- **Block force pushes** and **restrict deletions**.
 
 ---
 
@@ -247,8 +288,14 @@ Do this once, from your own machine, after §2 and §3 are done:
    (`SEED_ORG_SLUG=theirbar SEED_ORG_NAME="Their Bar" bun run db:seed`), then
    create their owner against that slug.
 
-3. **Push to `main`.** From here on, every push runs the full
-   `verify → migrate → build-and-deploy` pipeline with no manual steps.
+3. **Push to `main`, then approve.** Every push runs `verify → build`, then the
+   `release` job waits in the Actions tab ("Review deployments") until you approve
+   it. Approving runs migrate → deploy → restart → publish the rollback release.
+
+4. **Rehearse a rollback straight after the first successful deploy**, while the
+   stakes are lowest (`docs/go-live.md` §2.1): run `rollback.yml` with that deploy's
+   own SHA, approve it, and confirm the site still answers. A rollback path that has
+   never run is a guess.
 
 ---
 
@@ -257,18 +304,28 @@ Do this once, from your own machine, after §2 and §3 are done:
 Push to `main` → GitHub Actions:
 1. **`verify`** — typecheck, lint, test, migrations-immutable check. Any
    failure stops here; nothing else runs.
-2. **`migrate`** — tunnels over SSH, runs `drizzle-kit migrate` against
-   production. Only applies migration files that haven't run yet
-   (drizzle-kit tracks this itself via `drizzle/meta/_journal.json`).
-3. **`build-and-deploy`** — `next build`, packages the standalone output,
-   uploads it to Hostinger via the archive API, polls until the build
-   finishes, restarts the app, and publishes the artifact as a GitHub
-   Release (`deploy-<short-sha>`) for rollback.
+2. **`build`** — `next build` and package the standalone output, with no secrets.
+   The archive is handed to `release` as a workflow artifact, so what you approve is
+   exactly what ships. A build failure stops here, before production is touched.
+3. **`release`** — waits for your approval (`production` environment). Then: refuses
+   to continue if the environment has no required reviewer; tunnels over SSH and runs
+   `drizzle-kit migrate` (only unapplied files — drizzle-kit tracks this via
+   `drizzle/meta/_journal.json`); uploads the archive to Hostinger, polls until the
+   build finishes, restarts the app; publishes the archive as a GitHub Release
+   (`deploy-<short-sha>`) for rollback.
+
+**Stale runs.** One run at a time holds the `deploy-production` group; while it waits
+for approval, at most one newer run queues behind it (GitHub replaces an older queued
+run with a newer one). If the waiting run is for an old SHA, reject it in the review
+dialog and approve the newer one instead.
 
 ### What breaks if the deploy fails halfway
 
 - **`verify` fails:** nothing happens. The site keeps serving whatever was
   last deployed successfully. Safest failure mode.
+- **`build` fails:** nothing in production has changed — no migration ran, no
+  archive was uploaded. (Before 2026-11-08 the build ran *after* migrate, so a build
+  failure left the schema migrated with the old code live.)
 - **`migrate` fails partway through a single migration file:** this is the
   one genuinely dangerous case. MariaDB, like MySQL, auto-commits DDL per
   statement — neither supports the transactional-DDL rollback you'd get with
@@ -284,7 +341,7 @@ Push to `main` → GitHub Actions:
   actually applied (`SHOW CREATE TABLE ...`), and hand-write a follow-up
   migration that reconciles it — never edit the failed file in place
   (open-items.md #6).
-- **`build-and-deploy` fails at the Hostinger API/build step:** the previous
+- **`release` fails at the Hostinger API/build step:** the previous
   build stays live — Hostinger's build-state model (pending/running/
   completed/failed) is designed around exactly this; a failed build is not
   documented to interrupt a currently-running one. (Noted as assumed rather
@@ -364,7 +421,9 @@ gh release list --limit 20   # find a deploy-<sha> tag from before the bad deplo
 gh workflow run rollback.yml -f sha=<short-sha>
 ```
 
-One command, per the brief. It redeploys that exact previously-built
+One command, per the brief, plus one approval: the rollback job waits for the same
+`production` reviewer as a deploy (it is a production change, and its secrets live in
+that environment). It redeploys that exact previously-built
 archive — no rebuild, so it works even if the old commit's dependencies
 wouldn't install cleanly today. It rolls back **application code only**;
 see the caution in `.github/workflows/rollback.yml`'s header about why a

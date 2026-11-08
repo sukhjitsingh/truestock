@@ -26,16 +26,42 @@ on:
 permissions:
   contents: read
 
-env:
-  HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
-  HOSTINGER_DOMAIN: ${{ secrets.HOSTINGER_DOMAIN }}
-  HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
-
 jobs:
   rollback:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Same gate as deploy.yml's release job: the Hostinger secrets live only in
+    # the `production` environment, and a rollback is a production change, so
+    # it waits for the same required reviewer (one click — you are the one
+    # running it). Secrets are job-level, not workflow-level, because
+    # environment secrets only reach jobs that name the environment.
+    environment:
+      name: production
+    permissions:
+      contents: read # download the deploy-<sha> release asset
+      actions: read # read this environment's protection rules (first step)
+    env:
+      HOSTINGER_USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+      HOSTINGER_DOMAIN: ${{ secrets.HOSTINGER_DOMAIN }}
+      HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
     steps:
+      - name: Refuse an unprotected production environment
+        # See deploy.yml: GitHub silently creates a missing environment with
+        # no protection, so the gate is checked rather than assumed.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! reviewers="$(gh api "repos/${GITHUB_REPOSITORY}/environments/production" \
+                --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length')"; then
+            echo "::error::Could not read the 'production' environment's protection rules. Refusing to roll back."
+            exit 1
+          fi
+          if [ "${reviewers:-0}" -lt 1 ]; then
+            echo "::error::The 'production' environment has no required reviewer (docs/deploy.md §3). Refusing to roll back."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
 
       - name: Download the archived deploy
