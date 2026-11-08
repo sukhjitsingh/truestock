@@ -348,6 +348,47 @@ describe("the reorder list", () => {
     expect(list.items[0].suggestedOrderQty).toBe(9);
   });
 
+  /** Same, with open bottles: on hand becomes fractional (`[0.5]` is half a bottle). */
+  async function closeCountWithFills(productId: number, eaches: number, fills: number[]) {
+    const c = await openCount(fx.owner, { type: "full" });
+    await incrementCountLine(fx.owner, {
+      clientLineId: newClientLineId(),
+      countId: c.id,
+      productId,
+      locationId: fx.locationId,
+      sealedCaseQtyDelta: 0,
+      sealedEachQtyDelta: eaches,
+      newPartialFills: fills,
+    });
+    await submitCount(fx.owner, c.id);
+    await reviewCount(fx.owner, c.id);
+    await closeCount(fx.owner, c.id);
+  }
+
+  // QA 2026-11-08, finding 4: an open bottle made on hand 1.5 and the list
+  // suggested ordering "4.5" — and Copy order copied that. Nobody orders half
+  // a bottle; the suggestion rounds UP so the order reaches par. On hand
+  // itself stays exact.
+  test("the suggested order rounds UP to a whole unit when on hand is fractional", async () => {
+    await closeCountWithFills(fx.pricedProductId, 1, [0.5]);
+    await updateProduct(fx.owner, { productId: fx.pricedProductId, parLevel: 6 });
+
+    const [item] = (await reorderList(fx.owner)).items;
+    expect(item.onHand).toBe(1.5);
+    expect(item.suggestedOrderQty).toBe(5);
+  });
+
+  test("rounding is not thrown off by float noise in summed tenths", async () => {
+    // Three open bottles at 0.6, 0.7 and 0.7 sum to 1.9999999999999998 in
+    // floating point. A bare Math.ceil(3 − that) gives 2; the true shortfall
+    // is exactly 1. Found by searching tenths combinations, 2026-11-08.
+    await closeCountWithFills(fx.pricedProductId, 0, [0.6, 0.7, 0.7]);
+    await updateProduct(fx.owner, { productId: fx.pricedProductId, parLevel: 3 });
+
+    const [item] = (await reorderList(fx.owner)).items;
+    expect(item.suggestedOrderQty).toBe(1);
+  });
+
   test("distinguishes 'nothing is short' from 'no par exists anywhere'", async () => {
     await closeCountWith(fx.pricedProductId, 30);
 

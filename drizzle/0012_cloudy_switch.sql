@@ -1,0 +1,1 @@
+ALTER TABLE `vendor` ADD CONSTRAINT `vendor_organization_name_unique` UNIQUE(`organization_id`,`name`);

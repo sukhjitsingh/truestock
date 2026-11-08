@@ -34,7 +34,7 @@ import { product, vendor } from "@/db/schema";
 import { createVendor, updateVendor, assignVendorToProducts, listVendors } from "@/lib/domain/catalog";
 import { openCount, incrementCountLine, submitCount, reviewCount, closeCount } from "@/lib/domain/counts";
 import { reorderList } from "@/lib/domain/reports";
-import { NotFoundError } from "@/lib/domain/errors";
+import { ConflictError, NotFoundError } from "@/lib/domain/errors";
 import { migrateTestDatabase, resetDatabase, createFixtures, newClientLineId, type Fixtures } from "./helpers/test-db";
 
 let fx: Fixtures;
@@ -89,7 +89,7 @@ describe("updateVendor", () => {
   });
 
   test("a cross-tenant vendor id is refused as NotFound — never an answer that confirms the row is real", async () => {
-    const theirs = await createVendor(fx.otherOwner, { name: "Their Distributor" });
+    const theirs = await createVendor(fx.otherOwner, { name: "Their Second Distributor" });
 
     const attempt = updateVendor(fx.owner, { id: theirs.id, contact: "hijacked@example.com" });
     await expect(attempt).rejects.toBeInstanceOf(NotFoundError);
@@ -97,6 +97,65 @@ describe("updateVendor", () => {
     const [row] = await db.select().from(vendor).where(eq(vendor.id, theirs.id));
     expect(row.contact).toBeNull();
     expect(row.organizationId).toBe(fx.otherOrganizationId);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Vendor names are unique per organization (QA 2026-11-08, finding 2).
+//
+// Two "QA Vendor" rows were accepted. The reorder list groups by vendor, so a
+// duplicate splits one supplier's order across two blocks and the product
+// form's vendor picker offers two identical names. Locations already refuse
+// this through a unique index; vendors now match them.
+// ---------------------------------------------------------------------------
+
+describe("vendor names are unique per organization", () => {
+  test("creating a second vendor with the same name is a ConflictError, and no second row is written", async () => {
+    await createVendor(fx.owner, { name: "Republic National" });
+
+    const attempt = createVendor(fx.owner, { name: "Republic National" });
+    await expect(attempt).rejects.toBeInstanceOf(ConflictError);
+    await expect(createVendor(fx.owner, { name: "Republic National" })).rejects.toThrow(/already exists/);
+
+    const rows = await db
+      .select()
+      .from(vendor)
+      .where(and(eq(vendor.organizationId, fx.organizationId), eq(vendor.name, "Republic National")));
+    expect(rows).toHaveLength(1);
+  });
+
+  test("a name differing only in capitals or trailing spaces counts as the same vendor", async () => {
+    await createVendor(fx.owner, { name: "Republic National" });
+
+    await expect(createVendor(fx.owner, { name: "REPUBLIC national" })).rejects.toBeInstanceOf(ConflictError);
+    // The action's schema trims leading spaces; the column's PAD SPACE
+    // collation is what makes a trailing one compare equal here.
+    await expect(createVendor(fx.owner, { name: "Republic National   " })).rejects.toBeInstanceOf(ConflictError);
+
+    const all = await listVendors(fx.owner);
+    expect(all.filter((v) => v.name.toLowerCase().trim() === "republic national")).toHaveLength(1);
+  });
+
+  test("renaming a vendor onto another vendor's name is refused, and the rename does not land", async () => {
+    await createVendor(fx.owner, { name: "Republic National" });
+    const other = await createVendor(fx.owner, { name: "Breakthru Beverage" });
+
+    await expect(updateVendor(fx.owner, { id: other.id, name: "republic national" })).rejects.toBeInstanceOf(ConflictError);
+
+    const [row] = await db.select().from(vendor).where(eq(vendor.id, other.id));
+    expect(row.name).toBe("Breakthru Beverage");
+  });
+
+  test("saving a vendor under its own name is not a conflict (positive control)", async () => {
+    const v = await createVendor(fx.owner, { name: "Republic National" });
+    const saved = await updateVendor(fx.owner, { id: v.id, name: "Republic National", leadTimeDays: 2 });
+    expect(saved.leadTimeDays).toBe(2);
+  });
+
+  test("the same name in another organization is allowed — uniqueness is per tenant", async () => {
+    await createVendor(fx.owner, { name: "Republic National" });
+    const theirs = await createVendor(fx.otherOwner, { name: "Republic National" });
+    expect(theirs.id).toBeGreaterThan(0);
   });
 });
 
@@ -176,7 +235,7 @@ describe("assignVendorToProducts", () => {
   });
 
   test("a vendor id from another tenant is refused even when every product id is valid", async () => {
-    const theirVendor = await createVendor(fx.otherOwner, { name: "Their Distributor" });
+    const theirVendor = await createVendor(fx.otherOwner, { name: "Their Second Distributor" });
 
     const attempt = assignVendorToProducts(fx.owner, {
       productIds: [fx.pricedProductId, fx.secondProductId],

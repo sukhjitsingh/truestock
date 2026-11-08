@@ -15,6 +15,7 @@ import {
   productUpdateSchema,
   productDeactivateSchema,
   productSearchSchema,
+  catalogListSchema,
   getProductsByIdsSchema,
   resolveBarcodeSchema,
   linkBarcodeSchema,
@@ -94,6 +95,33 @@ export async function createProductAction(
     const actor = await requireRole("owner", "manager", "staff");
     const parsed = productCreateSchema.parse(input);
     return catalog.createProduct(actor, parsed);
+  });
+}
+
+/**
+ * The whole active catalog for the back-office table — uncapped, unlike
+ * `searchProductsAction` (the phone's picker). Owner/manager only: it backs
+ * an office page, and staff never reach the office (invariant 7 — checked
+ * here, not only by the page gate).
+ */
+export async function listCatalogProductsAction(
+  input: unknown,
+): Promise<ActionResult<catalog.ProductSummary[]>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = catalogListSchema.parse(input);
+    return catalog.listCatalogProducts(actor, parsed);
+  });
+}
+
+/** One product with its par and on-hand — the edit page's read. Owner/manager only. */
+export async function getProductWithStockAction(
+  input: unknown,
+): Promise<ActionResult<catalog.ProductSummary>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = productDeactivateSchema.parse(input);
+    return catalog.getProductWithStock(actor, parsed.productId);
   });
 }
 

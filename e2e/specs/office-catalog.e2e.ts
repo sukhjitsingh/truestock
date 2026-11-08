@@ -195,3 +195,40 @@ test("KNOWN DEFECT: the inline cost cell never shows its 'Saved' confirmation", 
     await db.setProductCost(target.id, original);
   }
 });
+
+/**
+ * Back-office "Add product" (QA 2026-11-08, finding 1): the only way to create
+ * a product with no usable barcode. Mutation check: remove the "Add product"
+ * link from app/(office)/office/catalog/page.tsx, or the router.push in
+ * components/office/product-create-form.tsx, and this fails.
+ *
+ * Products are never hard-deleted (invariant 6), so the probe is deactivated
+ * through the UI afterwards and carries a per-run name.
+ */
+test("Add product creates a barcode-less product and lands on its edit page", async ({ page, db }) => {
+  const name = `E2E House Infusion ${Date.now().toString(36)}`;
+  const before = await db.activeProductCount();
+
+  const add = page.getByRole("link", { name: "Add product" });
+  await add.click();
+  await expect(page.getByRole("heading", { level: 1, name: "Add product" })).toBeVisible();
+  const submit = page.getByRole("button", { name: "Add product" });
+  await waitForHydration(page, "button[type='submit']");
+  await expect(submit, "Save is off until there is a name").toBeDisabled();
+
+  await page.getByRole("textbox", { name: "Name" }).fill(name);
+  await submit.click();
+
+  await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("Product added");
+  // productByName throws unless exactly one ACTIVE product has this name.
+  const created = await db.productByName(name);
+  expect(created.sizeMl, "the Spirits default size").toBe(750);
+  expect(await db.activeProductCount()).toBe(before + 1);
+
+  // Leave the catalog as it was: deactivate through the UI (never deleted).
+  page.once("dialog", (d) => void d.accept());
+  await page.getByRole("button", { name: "Deactivate" }).click();
+  await page.waitForURL("**/office/catalog");
+  expect(await db.activeProductCount()).toBe(before);
+});

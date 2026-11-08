@@ -45,7 +45,15 @@ export interface CountSummaryLine {
   productId: number;
   productName: string;
   category: string;
+  /** For `formatProductSize` — the size is printed one way everywhere. */
+  unitType: string;
+  sizeMl: number;
   locationId: number;
+  locationName: string;
+  /** As recorded — cases, eaches and open bottles kept apart (invariant 4). */
+  sealedCaseQty: number;
+  sealedEachQty: number;
+  partialFills: number[];
   units: number;
   /** Owner only. */
   extendedValue?: number;
@@ -119,6 +127,8 @@ export async function countSummary(actor: Actor, countId: number): Promise<Count
       caseSizeAtCount: countLine.caseSizeAtCount,
       productName: product.name,
       category: product.category,
+      unitType: product.unitType,
+      sizeMl: product.sizeMl,
       locationName: location.name,
     })
     .from(countLine)
@@ -185,7 +195,13 @@ export async function countSummary(actor: Actor, countId: number): Promise<Count
       productId: r.productId,
       productName: r.productName,
       category: r.category,
+      unitType: r.unitType,
+      sizeMl: r.sizeMl,
       locationId: r.locationId,
+      locationName: r.locationName,
+      sealedCaseQty: r.sealedCaseQty,
+      sealedEachQty: r.sealedEachQty,
+      partialFills: r.partialFills ?? [],
       units: v.units ?? 0,
     };
     if (showCost) {
@@ -195,6 +211,9 @@ export async function countSummary(actor: Actor, countId: number): Promise<Count
     addTo(locationGroups, String(r.locationId), r.locationName, v.units, v.extendedValue);
     return line;
   });
+  // Location, then product: the office table then reads in the order the bar
+  // was walked rather than in insertion order.
+  lines.sort((a, b) => `${a.locationName}|${a.productName}`.localeCompare(`${b.locationName}|${b.productName}`));
 
   const byUnitsDesc = (a: SummaryGroup, b: SummaryGroup) =>
     b.units - a.units || a.label.localeCompare(b.label);
@@ -470,7 +489,13 @@ export async function reorderList(actor: Actor): Promise<ReorderList> {
 
     if (onHand > threshold) continue;
 
-    const suggestedOrderQty = Math.max(parLevel - onHand, 0);
+    // Rounded UP to a whole unit (QA 2026-11-08): an open bottle made on
+    // hand fractional and the list asked for "4.5". The shortfall is first
+    // rounded to 4 places, the precision of the DECIMAL columns, so float
+    // noise in summed tenths (0.6 + 0.7 + 0.7 = 1.9999999999999998) cannot
+    // push a whole-number shortfall up by one. `onHand` stays exact.
+    const shortfall = Math.round((parLevel - onHand) * 10_000) / 10_000;
+    const suggestedOrderQty = Math.max(Math.ceil(shortfall), 0);
     items.push({
       productId: p.id,
       productName: p.name,

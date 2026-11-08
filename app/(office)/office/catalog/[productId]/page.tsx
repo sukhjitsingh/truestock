@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireOfficeUser } from "@/lib/current-user";
-import { searchProductsAction, listVendorsAction } from "@/app/actions/catalog";
+import { getProductWithStockAction, listVendorsAction } from "@/app/actions/catalog";
 import { PageHeader } from "@/components/office/page-header";
 import { ProductEditForm } from "@/components/office/product-edit-form";
 
@@ -13,31 +13,34 @@ export const metadata = { title: "Edit product · Truestock" };
  */
 export default async function ProductEditPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ productId: string }>;
+  searchParams: Promise<{ created?: string }>;
 }) {
   const user = await requireOfficeUser();
   const productId = Number((await params).productId);
   if (!Number.isInteger(productId) || productId <= 0) notFound();
 
-  // There is no getProduct(id) read; searchProducts is the catalog read and
-  // returns the same role-shaped summary. Rather than add a near-duplicate
-  // domain function, this filters the list — 97 products, one indexed query.
-  const [all, vendors] = await Promise.all([
-    // includeOnHand so the form can render the product's current par level —
-    // par lives in `product_par`, not on the product row, and this read is
-    // the only thing that fetches it.
-    searchProductsAction({ limit: 100, activeOnly: false, includeOnHand: true }),
+  // One product by id, par and on-hand attached. This used to filter a capped
+  // 100-row search, which 404'd every product past the 100th alphabetically
+  // once the catalog grew (QA 2026-11-08).
+  const [found, vendors] = await Promise.all([
+    getProductWithStockAction({ productId }),
     listVendorsAction(),
   ]);
-  if (!all.ok) notFound();
-
-  const product = all.data.find((p) => p.id === productId);
-  if (!product) notFound();
+  if (!found.ok) notFound();
+  const product = found.data;
+  const { created } = await searchParams;
 
   return (
     <div className="max-w-2xl">
       <PageHeader title={product.name} breadcrumb={{ label: "← Catalog", href: "/office/catalog" }} />
+      {created === "1" ? (
+        <p className="mt-4 rounded-md bg-success-bg px-3 py-2 text-caption text-success" role="status">
+          Product added. Set its par level below so it shows up on the reorder list.
+        </p>
+      ) : null}
 
       <ProductEditForm
         product={product}

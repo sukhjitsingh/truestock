@@ -339,6 +339,12 @@ export const vendor = mysqlTable(
     // `count_organization_id_id_unique`. Added by the 2026-07-27 schema audit
     // (finding B1).
     uniqueIndex("vendor_organization_id_id_unique").on(table.organizationId, table.id),
+    // One vendor per name per tenant (QA 2026-11-08): a duplicate split one
+    // supplier's reorder list across two blocks. The column's collation
+    // (utf8mb4_general_ci, PAD SPACE) makes "RNDC", "rndc" and "RNDC " the
+    // same key, and the action's schema trims leading spaces. Same shape as
+    // `location_organization_name_unique`.
+    uniqueIndex("vendor_organization_name_unique").on(table.organizationId, table.name),
   ],
 );
 
