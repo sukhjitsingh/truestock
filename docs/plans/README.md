@@ -144,7 +144,7 @@ When a gate produces a decision that outlives one feature, offer to record
 it as an ADR in `docs/adr/NNNN-<slug>.md` (context, decision, consequences;
 never rewrite old ADRs — supersede them). Create the directory the first
 time it's actually needed. This repo already has an informal equivalent for
-most durable decisions — STATE.md's dated history log, and the append-only
+most durable decisions — the dated history log (`docs/history/state-log.md`), and the append-only
 correction blockquotes in `docs/reviews/*.md` — so reach for a real ADR only
 when a decision doesn't fit either of those.
 

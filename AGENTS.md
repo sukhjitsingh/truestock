@@ -394,7 +394,8 @@ work. Two things are easy to get backwards, so state them explicitly:
   `docs/plans/<slug>/` is authoritative for *how* one non-trivial feature gets
   built, for that feature's lifetime only. A feature's Gate 1 doc should cite
   the relevant ROADMAP phase or open-item rather than re-deriving it; when the
-  feature ships, STATE.md's history log gets its usual one-line entry.
+  feature ships, the history log (`docs/history/state-log.md`) gets its usual
+  one-line entry.
 - **Gate 4 vs. the subagent sequence above — they compose, not compete.** Gate 4
   slices are the *unit of work* (tracer bullet → real logic → one capability
   per slice). The `database → backend → frontend/ui-design →
