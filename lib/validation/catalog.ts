@@ -12,6 +12,7 @@
  * then strip" beats "reject the whole request").
  */
 import { z } from "zod";
+import { ORDER_METHOD_VALUES } from "@/lib/vendor-order-methods";
 // From db/enums.ts, never db/schema.ts: this module is imported by client
 // components (components/office/catalog-table.tsx pulls `unitCostSchema`), and
 // a value import of the enums from the schema drags drizzle-orm and every
@@ -179,6 +180,10 @@ export const productSearchSchema = z.object({
 });
 export type ProductSearchInput = z.infer<typeof productSearchSchema>;
 
+/** The back-office catalog list: the search's filters, without its cap. */
+export const catalogListSchema = productSearchSchema.omit({ limit: true, category: true });
+
+
 /**
  * Fetch specific products by id — the exact-match complement to
  * `productSearchSchema`'s text/category search. Exists so a screen that
@@ -209,7 +214,8 @@ export const resolveBarcodeSchema = z.object({
 export const vendorCreateSchema = z.object({
   name: z.string().trim().min(1, "Name is required.").max(255),
   contact: z.string().trim().max(255).nullable().optional(),
-  orderMethod: z.string().trim().max(255).nullable().optional(),
+  // A fixed list (lib/vendor-order-methods.ts); free text is refused.
+  orderMethod: z.enum(ORDER_METHOD_VALUES).nullable().optional(),
   /**
    * Lead time in days — non-negative integer. NULL means unknown/unspecified.
    * Validated as an integer to reject "3.5 days" before it reaches the
@@ -228,7 +234,7 @@ export const vendorUpdateSchema = z.object({
   id: z.number().int().positive(),
   name: z.string().trim().min(1).max(255).optional(),
   contact: z.string().trim().max(255).nullable().optional(),
-  orderMethod: z.string().trim().max(255).nullable().optional(),
+  orderMethod: z.enum(ORDER_METHOD_VALUES).nullable().optional(),
   leadTimeDays: z.number().int().nonnegative().nullable().optional(),
 });
 export type VendorUpdateInput = z.infer<typeof vendorUpdateSchema>;

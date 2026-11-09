@@ -2313,3 +2313,48 @@ and items #45, #46 and #47.
 real count: prove the #46 fix on the phone, and fix or accept the pre-count
 findings. Then enter data through real invoices (add the 1 L product rows first,
 #47), and run Vision with a real key. Then Run A, then Run B.
+
+---
+
+## 49. A vendor cannot be retired
+
+**Trigger: the first time the owner stops buying from a supplier, or before
+Phase 3 go-live — whichever comes first.**
+
+Found by the 2026-11-08 user QA. Vendors can be created, edited and (since the
+same pass) never duplicated, but there is no way to retire one. A supplier the
+bar no longer uses stays in every vendor picker — the product form, the bulk
+assign bar, invoice review — and keeps its block on the reorder list for any
+product still pointing at it.
+
+What retiring must do, per invariant 6: set `active = false`, never delete
+(products, invoices and vendor aliases reference the row), and **refuse the
+retired vendor on the write path** — assigning it to a product, matching an
+invoice line to it — above any existing-row lookup, not just hide it from the
+pickers. Locations are the model: `deactivateLocation` in
+`lib/domain/catalog.ts`, the two-tap Retire control in
+`components/office/locations-table.tsx`, and the `LOCATION_RETIRED` write-path
+refusal. Decide before building whether a retired vendor's name stays taken
+(locations: yes, Decision 1) — the 2026-11-08 unique index on
+`(organization_id, name)` makes that the default. Needs an `active` column, so
+it is a migration.
+
+---
+
+## 50. The office side menu has no visible keyboard focus
+
+**Trigger: the next change to `components/office/office-rail.tsx`, or the
+accessibility pass in #29 — whichever comes first.**
+
+`scripts/verify-browser.mjs`'s `assertFocusVisible` fails on `/office/catalog`:
+tabbing onto the rail's links — Dashboard, Counts, Locations, Vendors,
+Invoices, Reorder, Users — shows no outline or equivalent. Seen in the cloud QA
+on 2026-11-06 and again on 2026-11-08 against `main`; the redesign's rail
+introduced it (the barcode merge did not touch the rail). Every other control
+on the screen passes, so a keyboard user can operate the page and loses track
+of where they are only in the menu.
+
+The fix is a `focus-visible:` ring on the rail's link class matching the
+`Button` primitive's. Close it when `verify-browser` reports that assertion as
+PASS — and per #29, extend the same assertion to the other office routes in the
+same change.

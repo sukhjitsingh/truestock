@@ -177,6 +177,33 @@ describe("countSummary — owner payload", () => {
     expect(unpriced.extendedValue).not.toBe(0);
   });
 
+  // QA 2026-11-08, finding 6: the office count page showed only rollups, so a
+  // manager reviewing before Close could not see WHAT was counted where. Each
+  // line now carries what a per-product table needs: where, what size, and
+  // how it was counted (cases, eaches and open bottles kept separate,
+  // invariant 4 — never pre-converted).
+  test("per-line detail: location name, size and the sealed/open breakdown, as recorded", async () => {
+    const { countId } = await buildMainCount();
+
+    const s = await countSummary(fx.owner, countId);
+    const tito = s.lines.find((l) => l.productId === fx.pricedProductId)!;
+    const bulleit = s.lines.find((l) => l.productId === fx.secondProductId)!;
+
+    expect(tito).toMatchObject({ locationName: "Back Bar", sealedCaseQty: 0, sealedEachQty: 2, partialFills: [0.5] });
+    expect(bulleit).toMatchObject({ locationName: "Storeroom", sealedEachQty: 4, partialFills: [] });
+    expect(typeof tito.sizeMl).toBe("number");
+    expect(typeof tito.unitType).toBe("string");
+  });
+
+  test("lines come back ordered by location, then product, so the table reads like the walk", async () => {
+    const { countId } = await buildMainCount();
+
+    const s = await countSummary(fx.owner, countId);
+
+    const keys = s.lines.map((l) => `${l.locationName}|${l.productName}`);
+    expect(keys).toEqual([...keys].sort((a, b) => a.localeCompare(b)));
+  });
+
   test("byCategory: units, lineCount, excludedLineCount and value are right, ordered by units desc", async () => {
     const { countId } = await buildMainCount();
 

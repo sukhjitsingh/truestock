@@ -272,6 +272,39 @@ export async function searchProducts(
 }
 
 /**
+ * The whole catalog for the back office — `searchProducts` without its cap.
+ *
+ * `searchProducts` is capped at 100 because it is the phone's picker, and the
+ * picker is latency-critical. The back-office catalog table is not a picker:
+ * it lists everything and pages on the client, so reading it through the
+ * capped search made products past the 100th alphabetically silently vanish
+ * once the 97-product seed grew by four (QA 2026-11-08). Same fix as the
+ * dashboard's open item #14 — a dedicated read rather than a capped one.
+ *
+ * Bounded at 10,000 rather than unbounded, so a runaway tenant cannot make one
+ * page load the whole table; a bar catalog is in the hundreds.
+ */
+export async function listCatalogProducts(
+  actor: Actor,
+  input: Omit<ProductSearchInput, "limit" | "category"> & { category?: string },
+): Promise<ProductSummary[]> {
+  return searchProducts(actor, { ...input, limit: CATALOG_LIST_BOUND } as ProductSearchInput);
+}
+const CATALOG_LIST_BOUND = 10_000;
+
+/**
+ * One product by id, with its stock (par, on hand) attached — the edit
+ * page's read. Inactive products resolve too (the edit page opens them); a
+ * product from another organization is NotFound (invariant 9).
+ */
+export async function getProductWithStock(actor: Actor, productId: number): Promise<ProductSummary> {
+  const [row] = await getProductsByIds(actor, [productId]);
+  if (!row) throw new NotFoundError("Product");
+  const [withStock] = await attachStock(actor, [row]);
+  return withStock;
+}
+
+/**
  * Resolve specific products by id, regardless of `active` status.
  *
  * `searchProducts` alone cannot back "what product does this line already
@@ -1220,21 +1253,33 @@ export async function listVendors(actor: Actor): Promise<VendorSummary[]> {
     .orderBy(vendor.name);
 }
 
+function vendorNameTaken(name: string): string {
+  return `A vendor named "${name.trim()}" already exists. Edit that vendor instead of adding a second one.`;
+}
+
 /**
  * Create a new vendor. Simple insert; no ownership check needed since the id
  * is server-generated.
  */
 export async function createVendor(actor: Actor, input: VendorCreateInput): Promise<VendorSummary> {
-  const [inserted] = await db
-    .insert(vendor)
-    .values({
-      organizationId: actor.organizationId,
-      name: input.name,
-      contact: input.contact ?? null,
-      orderMethod: input.orderMethod ?? null,
-      leadTimeDays: input.leadTimeDays ?? null,
-    })
-    .$returningId();
+  let inserted: { id: number };
+  try {
+    [inserted] = await db
+      .insert(vendor)
+      .values({
+        organizationId: actor.organizationId,
+        name: input.name,
+        contact: input.contact ?? null,
+        orderMethod: input.orderMethod ?? null,
+        leadTimeDays: input.leadTimeDays ?? null,
+      })
+      .$returningId();
+  } catch (err) {
+    // `vendor_organization_name_unique` — one vendor per name per tenant,
+    // compared without case or trailing spaces (the column's collation).
+    if (isDuplicateKeyError(err)) throw new ConflictError(vendorNameTaken(input.name));
+    throw err;
+  }
 
   const rows = await db
     .select({
@@ -1274,12 +1319,17 @@ export async function updateVendor(actor: Actor, input: VendorUpdateInput): Prom
 
     // Only write if there is something to update.
     if (Object.keys(patch).length > 0) {
-      await tx
-        .update(vendor)
-        .set(patch)
-        .where(
-          and(eq(vendor.id, input.id), eq(vendor.organizationId, actor.organizationId)),
-        );
+      try {
+        await tx
+          .update(vendor)
+          .set(patch)
+          .where(
+            and(eq(vendor.id, input.id), eq(vendor.organizationId, actor.organizationId)),
+          );
+      } catch (err) {
+        if (isDuplicateKeyError(err)) throw new ConflictError(vendorNameTaken(input.name ?? ""));
+        throw err;
+      }
     }
   });
 

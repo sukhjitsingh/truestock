@@ -9,13 +9,16 @@ import {
   TableContainer,
   Table,
   TableCaption,
+  TableHeader,
+  TableHead,
   TableBody,
   TableRow,
   TableCell,
 } from "@/components/ui/table";
+import { formatProductSize } from "@/lib/bottle-sizes";
 import { EmptyState } from "@/components/ui/empty-state";
 import { formatUnits, formatDate } from "@/lib/utils";
-import type { SummaryGroup } from "@/lib/domain/reports";
+import type { CountSummaryLine, SummaryGroup } from "@/lib/domain/reports";
 import { describeValuationCoverage } from "@/lib/valuation-coverage";
 
 export const metadata = { title: "Count summary · Truestock" };
@@ -138,8 +141,94 @@ export default async function CountSummaryPage({
         <Rollup title="Rollup by Category" groups={summary.byCategory} showCost={summary.totalValue != null} />
         <Rollup title="Rollup by Location" groups={summary.byLocation} showCost={summary.totalValue != null} />
       </div>
+
+      <CountedProducts lines={summary.lines} showCost={summary.totalValue != null} />
     </div>
   );
+}
+
+/**
+ * Every line of the count, product by product (QA 2026-11-08): the rollups
+ * alone never showed what was counted where, which is what a manager needs
+ * to check before Close. Cases, eaches and open bottles are shown as
+ * recorded, never converted (invariant 4); value is owner-only and arrives
+ * absent for anyone else (invariant 8).
+ */
+function CountedProducts({ lines, showCost }: { lines: CountSummaryLine[]; showCost: boolean }) {
+  const cols = showCost ? 6 : 5;
+  return (
+    <section className="mt-8 min-w-0">
+      <h2 className="mb-3 text-label uppercase text-muted-foreground font-semibold">Counted products</h2>
+      <TableContainer className="glass-card">
+        <Table>
+          <TableCaption>Counted products, {lines.length} lines</TableCaption>
+          <TableHeader>
+            <tr>
+              <TableHead>Product</TableHead>
+              <TableHead>Location</TableHead>
+              <TableHead numeric>Sealed</TableHead>
+              <TableHead>Open bottles</TableHead>
+              <TableHead numeric>Units</TableHead>
+              {showCost ? <TableHead numeric>Value</TableHead> : null}
+            </tr>
+          </TableHeader>
+          <TableBody>
+            {lines.length === 0 ? (
+              <tr>
+                <td colSpan={cols}>
+                  <EmptyState message="Nothing counted." />
+                </td>
+              </tr>
+            ) : (
+              lines.map((line) => (
+                <TableRow key={`${line.locationId}-${line.productId}`} interactive={false}>
+                  <TableCell className="max-w-[18rem]">
+                    <span className="block truncate font-medium" title={line.productName}>
+                      {line.productName}
+                    </span>
+                    <span className="block text-caption text-muted-foreground">
+                      {formatProductSize(line)} &middot; {line.category}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{line.locationName}</TableCell>
+                  <TableCell numeric className="tabular-nums">
+                    {formatSealed(line)}
+                  </TableCell>
+                  <TableCell className="tabular-nums text-muted-foreground">
+                    {line.partialFills.length === 0
+                      ? "—"
+                      : line.partialFills.map((f) => `${Math.round(f * 100)}%`).join(", ")}
+                  </TableCell>
+                  <TableCell numeric className="tabular-nums">
+                    {formatUnits(line.units)}
+                  </TableCell>
+                  {showCost ? (
+                    <TableCell numeric>
+                      {line.extendedValue != null ? (
+                        <Money value={line.extendedValue} className="tabular-nums" />
+                      ) : (
+                        <span className="text-caption text-warning" title="No unit cost or case size snapshot — excluded, never valued at zero">
+                          excluded
+                        </span>
+                      )}
+                    </TableCell>
+                  ) : null}
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </section>
+  );
+}
+
+/** "2 cs · 3 ea", "3 ea", "2 cs", or "—" — the two buckets as recorded. */
+function formatSealed(line: Pick<CountSummaryLine, "sealedCaseQty" | "sealedEachQty">): string {
+  const parts: string[] = [];
+  if (line.sealedCaseQty > 0) parts.push(`${line.sealedCaseQty} cs`);
+  if (line.sealedEachQty > 0) parts.push(`${line.sealedEachQty} ea`);
+  return parts.length > 0 ? parts.join(" · ") : "—";
 }
 
 function Stat({ label, value, subtext }: { label: string; value: React.ReactNode; subtext?: string }) {

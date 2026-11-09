@@ -1,9 +1,11 @@
 import { requireOfficeUser } from "@/lib/current-user";
-import { searchProductsAction, listVendorsAction } from "@/app/actions/catalog";
+import { listCatalogProductsAction, listVendorsAction } from "@/app/actions/catalog";
 import { lastClosedCountAction } from "@/app/actions/reports";
 import { PageHeader } from "@/components/office/page-header";
 import { CatalogTable } from "@/components/office/catalog-table";
 import { formatDate } from "@/lib/utils";
+import Link from "next/link";
+import { buttonVariants } from "@/components/ui/button";
 
 export const metadata = { title: "Catalog · Truestock" };
 
@@ -25,9 +27,10 @@ export default async function CatalogPage({
   const { q, view } = await searchParams;
 
   const [productResult, vendorResult, lastClosedResult] = await Promise.all([
-    searchProductsAction({
+    // Uncapped: the capped picker search silently dropped every product past
+    // the 100th alphabetically (QA 2026-11-08). See listCatalogProducts.
+    listCatalogProductsAction({
       query: q,
-      limit: 100,
       activeOnly: true,
       includeOnHand: true,
     }),
@@ -48,6 +51,11 @@ export default async function CatalogPage({
     <div>
       <PageHeader
         title="Catalog"
+        action={
+          <Link href="/office/catalog/new" className={buttonVariants({ variant: "primary" })}>
+            Add product
+          </Link>
+        }
         subtitle={
           <div className="flex flex-col gap-1">
             <p className="text-row-subtitle text-muted-foreground">

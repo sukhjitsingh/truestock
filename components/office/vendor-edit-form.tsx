@@ -6,6 +6,7 @@ import { createVendorAction, updateVendorAction } from "@/app/actions/catalog";
 import type { VendorSummary } from "@/lib/domain/catalog";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/field";
+import { ORDER_METHODS, isOrderMethod } from "@/lib/vendor-order-methods";
 
 /**
  * Vendor create/edit form.
@@ -15,10 +16,11 @@ import { Field, Input, Select } from "@/components/ui/field";
  * the current values. No deactivate button — there is no delete path for
  * vendors (task spec).
  *
- * Common order methods are offered in a select with a free-text option:
- * "email", "phone", "portal", "rep" are typical, but the column is a free
- * varchar so any method can be stored. Offering presets with an "Other…"
- * option keeps the UI predictable while not constraining the data.
+ * Order method is a fixed list (lib/vendor-order-methods.ts, QA 2026-11-08):
+ * Email, Phone, Text message, Portal, Sales rep. There is no free-text
+ * option. A value stored before the list was fixed is shown as its own
+ * option and is only sent back if the user picks something else, so opening
+ * and saving an old vendor never silently erases it or trips validation.
  *
  * Lead time is in days and must be a non-negative integer, or null for
  * "unknown". Empty input submits as null rather than 0, because 0 days is a
@@ -34,17 +36,9 @@ export function VendorEditForm({
   const router = useRouter();
   const [name, setName] = useState(vendor?.name ?? "");
   const [contact, setContact] = useState(vendor?.contact ?? "");
-  const [orderMethod, setOrderMethod] = useState(vendor?.orderMethod ?? "");
-  /**
-   * Order method is a free varchar but we offer common presets with an
-   * "Other…" option for flexibility. When "other" is selected, show a text
-   * input for free-form entry.
-   */
-  const [orderMethodMode, setOrderMethodMode] = useState<"preset" | "other">(
-    vendor && vendor.orderMethod && !["email", "phone", "portal", "rep"].includes(vendor.orderMethod)
-      ? "other"
-      : "preset",
-  );
+  const initialOrderMethod = vendor?.orderMethod ?? "";
+  const [orderMethod, setOrderMethod] = useState(initialOrderMethod);
+  const legacyOrderMethod = initialOrderMethod !== "" && !isOrderMethod(initialOrderMethod) ? initialOrderMethod : null;
   const [leadTimeDays, setLeadTimeDays] = useState(
     vendor?.leadTimeDays == null ? "" : String(vendor.leadTimeDays),
   );
@@ -68,7 +62,10 @@ export function VendorEditForm({
       ...(vendor ? { id: vendor.id } : {}),
       name: name.trim(),
       contact: contact.trim() === "" ? null : contact.trim(),
-      orderMethod: orderMethod.trim() === "" ? null : orderMethod.trim(),
+      // An unchanged legacy value is left alone (not sent) rather than refused.
+      ...(legacyOrderMethod !== null && orderMethod === legacyOrderMethod
+        ? {}
+        : { orderMethod: orderMethod === "" ? null : orderMethod }),
       leadTimeDays: leadTime,
     };
 
@@ -122,37 +119,19 @@ export function VendorEditForm({
           label="Order method"
           htmlFor="orderMethod"
           error={fieldErrors.orderMethod}
-          hint="How orders are placed with this vendor. Common methods shown; use Other for custom values."
+          hint="How orders are placed with this vendor."
         >
-          <Select
-            id="orderMethod"
-            value={orderMethodMode === "other" ? "other" : orderMethod}
-            onChange={(e) => {
-              if (e.target.value === "other") {
-                setOrderMethodMode("other");
-              } else {
-                setOrderMethodMode("preset");
-                setOrderMethod(e.target.value);
-              }
-            }}
-          >
+          <Select id="orderMethod" value={orderMethod} onChange={(e) => setOrderMethod(e.target.value)}>
             <option value="">No method set</option>
-            <option value="email">Email</option>
-            <option value="phone">Phone</option>
-            <option value="portal">Portal</option>
-            <option value="rep">Sales rep</option>
-            <option value="other">Other…</option>
+            {ORDER_METHODS.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
+            ))}
+            {legacyOrderMethod !== null ? (
+              <option value={legacyOrderMethod}>{legacyOrderMethod} (no longer offered)</option>
+            ) : null}
           </Select>
-          {orderMethodMode === "other" ? (
-            <Input
-              id="orderMethod-other"
-              type="text"
-              aria-label="Custom order method"
-              value={orderMethod}
-              onChange={(e) => setOrderMethod(e.target.value)}
-              placeholder="Enter custom method"
-            />
-          ) : null}
         </Field>
 
         <Field

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { orderMethodLabel } from "@/lib/vendor-order-methods";
 import { useRouter } from "next/navigation";
 import type { VendorSummary } from "@/lib/domain/catalog";
 import {
@@ -178,7 +179,7 @@ export function VendorsList({ vendors }: { vendors: VendorSummary[] }) {
                     <TableCell className="py-3">
                       {vendor.orderMethod ? (
                         <span className="text-row-subtitle text-muted-foreground">
-                          {vendor.orderMethod}
+                          {orderMethodLabel(vendor.orderMethod)}
                         </span>
                       ) : (
                         <NullValue reason="not-entered" />

@@ -11,6 +11,20 @@ When a feature ships, its one-line entry goes here (AGENTS.md, "Planning workflo
 
 ---
 
+- **2026-11-08** — **User-QA fixes for vendors, catalog, count and reorder.** A
+  user-level QA of `main` (61 checks across the four features) found seven
+  issues; fixed and re-run at 66 of 67 (the one not run is vendor retire, now
+  open item #49). Back-office **Add product** with an optional barcode
+  (stored through `normalizeBarcode`); **duplicate vendor names refused** by a
+  unique index (migration 0012, case- and trailing-space-insensitive);
+  vendor **order methods a fixed list** with Text message, labels printed
+  capitalised; **reorder rounds up** to whole units, guarded against float
+  noise in summed tenths; the **office count page lists every product line**.
+  Found on the way: the catalog and product-edit pages read through the
+  100-row picker search, so a 101st product would have vanished from the
+  catalog and 404'd — both now use dedicated reads. Focus outline on the
+  office rail is open item #50.
+
 - **2026-11-08** — **The roles spec runs in CI.** `e2e-smoke` now also runs
   `e2e/specs/roles.e2e.ts`: invariants 7 and 8 checked against what the server sends each
   role. `scripts/e2e-seed-invoice.mjs` gives the run one invoice with a real file, so the
