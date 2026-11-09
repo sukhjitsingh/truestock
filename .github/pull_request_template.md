@@ -1,3 +1,7 @@
+<!-- Target branch: qa-release for every feature / bugfix / chore branch.
+     Into main only: the qa-release release PR, or a hotfix/* branch.
+     The `branch-policy` check enforces this. See docs/branching.md. -->
+
 ## What and why
 
 <!-- One or two sentences. Link the plan slice (docs/plans/<slug>/04-slices.md),
