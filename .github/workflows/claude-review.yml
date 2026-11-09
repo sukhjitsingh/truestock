@@ -20,9 +20,12 @@ name: Claude review
 # rules, is what bounds the damage if the key leaks (docs/deploy.md §3).
 on:
   pull_request:
-    # Only PRs into main: a PR into another branch would be reviewed against
-    # that branch's REVIEW.md, which its author controls.
-    branches: [main]
+    # Only PRs into protected branches: a PR into any other branch would be
+    # reviewed against that branch's REVIEW.md, which its author controls.
+    # qa-release qualifies (2026-11-09): it has its own ruleset (PR required,
+    # no force push, no bypass), and every feature PR now targets it rather
+    # than main, so leaving it out would stop reviewing feature work at all.
+    branches: [main, qa-release]
     types: [opened, synchronize, ready_for_review, reopened]
 
 concurrency:

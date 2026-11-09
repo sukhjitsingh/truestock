@@ -12,7 +12,7 @@ name: Workflow lint
 # is put back, and exits 0 on the current files.
 on:
   push:
-    branches: [main]
+    branches: [main, qa-release]
   pull_request:
 
 concurrency:

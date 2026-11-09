@@ -230,10 +230,13 @@ hPanel (§2.4). These are exclusively for the pipeline.
 - `.github/workflows/ci.yml` — every PR and every push to `main`: `verify`
   (`bun install`, typecheck, lint, test, the migrations-immutable check, `next
   build`) and `e2e-smoke` (the Playwright smoke spec against a production build).
+- `.github/workflows/branch-policy.yml` — on every PR: refuses any source branch
+  but `qa-release` or `hotfix/*` into `main`, and anything but a work branch or a
+  `main` back-merge into `qa-release`. See `docs/branching.md`.
 - `.github/workflows/workflow-lint.yml` — `actionlint` over every workflow. Its own
   file so that a broken `ci.yml` still produces a red check instead of none.
 - `.github/workflows/claude-review.yml` — an independent AI review of each PR into
-  `main` against `REVIEW.md`. Needs the `ANTHROPIC_API_KEY` **repository** secret (it
+  `main` or `qa-release` against `REVIEW.md`. Needs the `ANTHROPIC_API_KEY` **repository** secret (it
   is not a production secret); skips with a notice without it. Informational only.
   **Use a dedicated Anthropic API key with a low monthly spend limit** for it, created
   for this purpose only: the reviewer reads attacker-written PR content, and the
@@ -244,7 +247,13 @@ hPanel (§2.4). These are exclusively for the pipeline.
 - `.github/workflows/rollback.yml` — manual (`workflow_dispatch`), redeploys
   a previously-published build artifact with no rebuild. Same approval gate.
 
-### Branch protection on `main` (Settings → Rules → Rulesets → New branch ruleset)
+### Branch protection on `main` and `qa-release`
+
+**Superseded 2026-11-09 by `docs/branching.md`.** The rulesets are now in code
+(`.github/rulesets/*.json`) and are applied with `scripts/github/apply-branch-rulesets.sh`.
+Do not set them by hand. The changes from the hand-made setup below: `main` also requires
+`branch-policy` and allows merge commits only, and `qa-release` has its own ruleset. The
+original 2026-11-08 setup is kept below for the reasoning:
 
 Owner decision 2026-11-08: **strict, no bypass** — every change to `main` arrives by a
 PR with green checks, the owner's and Claude's alike. With one human there is no second

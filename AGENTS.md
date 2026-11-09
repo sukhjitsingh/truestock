@@ -219,6 +219,11 @@ Each links to its reason in `docs/lessons.md`.
 - Migrations go through drizzle-kit; applied migrations are append-only (blocked by an
   edit hook and by CI). No hand-edited schema drift.
 - Conventional commits. Small, reviewable changes.
+- **Every work branch PRs into `qa-release`, never `main`.** `main` is production
+  and accepts only the `qa-release` release PR or a `hotfix/*` branch, and only as
+  merge commits. After a hotfix, back-merge `main` into `qa-release` with a merge
+  commit. The required `branch-policy` check enforces the source branch. See
+  `docs/branching.md`. Branch new work from `origin/qa-release`, not `origin/main`.
 
 ## Open questions — ask, don't assume
 

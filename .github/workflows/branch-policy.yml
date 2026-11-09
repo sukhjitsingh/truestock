@@ -1,0 +1,98 @@
+name: Branch policy
+
+# Enforces the release flow (docs/branching.md):
+#
+#   feature/*, bugfix/*, … ──PR──▶ qa-release ──PR──▶ main ──▶ deploy.yml
+#   hotfix/*  ───────────────────────────────PR──▶ main     (the only bypass)
+#   main      ──PR (back-merge)──▶ qa-release               (after every hotfix)
+#
+# GitHub rulesets can require a PR and green checks on a branch, but they
+# cannot say WHICH branch a PR may come from. This job is that rule: it is a
+# required status check (`branch-policy`) on both `main` and `qa-release`, so
+# a PR from anywhere else stays red and cannot be merged.
+#
+# Three things that are easy to get wrong here, all deliberate:
+#
+# - `edited` is in the trigger types. The base of an open PR can be changed
+#   after it was opened. A required check is recorded against the HEAD SHA,
+#   not the base, so a PR opened into qa-release (pass) and then retargeted
+#   at main would otherwise keep that old green check and be mergeable into
+#   production. Re-running on `edited` re-judges it against the new base.
+# - A PR into main must come from THIS repository. The repo is public: a fork
+#   can name its branch `qa-release` or `hotfix/x` too, and only the repo
+#   check tells the two apart.
+# - Branch names reach the script through `env`, never `${{ }}` inside `run`.
+#   A branch name is chosen by whoever opens the PR, and an inline expression
+#   is pasted into the shell before it runs — a script-injection sink.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+concurrency:
+  group: branch-policy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  branch-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check the PR's source branch is allowed into its target
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Work branches that may merge into qa-release. Conventional-commit
+          # types plus `claude/` (cloud Claude Code sessions name branches so).
+          # Add a prefix here, in one place, if a new kind of branch appears.
+          QA_PREFIXES="feature/ feat/ bugfix/ fix/ chore/ docs/ test/ refactor/ perf/ ci/ build/ claude/"
+
+          fail() {
+            echo "::error title=Branch policy::$1"
+            echo
+            echo "Allowed:"
+            echo "  into main:       qa-release (the release PR), hotfix/* (emergency fixes only)"
+            echo "  into qa-release: ${QA_PREFIXES// /* }* , and main (back-merge after a hotfix)"
+            echo "See docs/branching.md."
+            exit 1
+          }
+
+          echo "PR: ${HEAD_REPO}:${HEAD} -> ${BASE}"
+
+          case "$BASE" in
+            main)
+              [ "$HEAD_REPO" = "$THIS_REPO" ] \
+                || fail "PRs into main must come from ${THIS_REPO}, not a fork (${HEAD_REPO})."
+              case "$HEAD" in
+                qa-release) echo "OK: release PR qa-release -> main." ;;
+                hotfix/?*)  echo "OK: hotfix -> main. Back-merge main into qa-release once it lands." ;;
+                *) fail "'${HEAD}' cannot merge into main. Open this PR against qa-release instead." ;;
+              esac
+              ;;
+            qa-release)
+              if [ "$HEAD" = "main" ] && [ "$HEAD_REPO" = "$THIS_REPO" ]; then
+                echo "OK: back-merge main -> qa-release."
+                exit 0
+              fi
+              for p in $QA_PREFIXES; do
+                case "$HEAD" in
+                  "$p"?*) echo "OK: ${HEAD} -> qa-release."; exit 0 ;;
+                esac
+              done
+              case "$HEAD" in
+                hotfix/*) fail "hotfix/* goes to main, then main is back-merged into qa-release." ;;
+                *) fail "'${HEAD}' is not a recognised work branch. Rename it with one of: ${QA_PREFIXES}" ;;
+              esac
+              ;;
+            *)
+              # Stacked PRs (feature -> feature) and anything else: no policy.
+              echo "No policy for base '${BASE}' — OK."
+              ;;
+          esac
