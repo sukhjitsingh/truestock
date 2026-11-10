@@ -2350,7 +2350,7 @@ it is a migration.
 
 ---
 
-## ~~50. The office side menu has no visible keyboard focus~~ — **CLOSED 2026-11-09 (code fix landed; browser PASS not yet observed, see below)**
+## 50. The office side menu has no visible keyboard focus — **FIX LANDED 2026-11-09, open until verify-browser reports PASS**
 
 **Trigger: the next change to `components/office/office-rail.tsx`, or the
 accessibility pass in #29 — whichever comes first.**

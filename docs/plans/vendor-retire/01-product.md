@@ -100,15 +100,12 @@ that a screen opened *before* retirement cannot save the retired vendor.
 
 ---
 
-## Questions for the owner (answer at this gate)
+## Owner decisions (2026-11-09, at this gate)
 
-1. **Retire while products still use it — allow, or refuse?** This draft
-   **allows** it and flags those products (point 5), because refusing would
-   force reassigning every product before the supplier can be dropped. The
-   alternative is to refuse until no product points at it, the way a location
-   with lines on an open count can't be retired.
-2. **Reactivate — include it?** This draft includes it, because the name stays
-   taken. Without it, the only way back to a supplier is a support fix.
+1. **Retiring is allowed while products still use the vendor.** Those products
+   keep the link and are flagged (point 5), rather than the retire being
+   refused until every product is reassigned.
+2. **Reactivate is included.** Required because the name stays taken.
 
 ---
 
