@@ -1534,6 +1534,7 @@ try {
   let ownerOrgId = null;
   const fixtureBarcodeIds = [];
   const createdProductIds = [];
+  let productIdWatermark = null;
   const camBrowser = await chromium.launch({
     channel: "chrome",
     args: [
@@ -1547,6 +1548,13 @@ try {
     // into. Removed below — a fixture, not the app deleting a count.
     const [[signedInUser]] = await sql.execute("SELECT id, organization_id FROM `user` WHERE email = ?", [EMAIL]);
     ownerOrgId = signedInUser.organization_id;
+    // Every product this section creates through the app (the "different size"
+    // Jameson) is found at teardown by id > this watermark, not by a list the
+    // test body has to remember to push to. The list missed the row whenever
+    // the section threw or timed out between the save and the lookup, leaving
+    // a stray Jameson 1.75 L that failed e2e count-flow on a strict-mode match.
+    const [[mark]] = await sql.execute("SELECT COALESCE(MAX(id), 0) AS maxId FROM product");
+    productIdWatermark = Number(mark.maxId);
     const [ins] = await sql.execute(
       "INSERT INTO `count` (organization_id, type, status, opened_by, notes) VALUES (?, 'spot', 'in_progress', ?, 'verify-browser fake camera')",
       [signedInUser.organization_id, signedInUser.id],
@@ -1817,7 +1825,16 @@ try {
     // teardown, the same way the throwaway locations are — the app itself
     // never hard-deletes a product (invariant 6). Nothing references it: no
     // count line was written.
-    for (const id of createdProductIds) {
+    if (ownerOrgId != null && productIdWatermark != null) {
+      const [made] = await sql.execute(
+        "SELECT id FROM product WHERE organization_id = ? AND id > ?",
+        [ownerOrgId, productIdWatermark],
+      );
+      for (const row of made) createdProductIds.push(row.id);
+    }
+    for (const id of new Set(createdProductIds)) {
+      await sql.execute("DELETE FROM count_line_write WHERE count_line_id IN (SELECT id FROM count_line WHERE product_id = ?)", [id]);
+      await sql.execute("DELETE FROM count_line WHERE product_id = ?", [id]);
       await sql.execute("DELETE FROM product_barcode WHERE product_id = ?", [id]);
       await sql.execute("DELETE FROM product WHERE id = ?", [id]);
     }
