@@ -24,3 +24,10 @@
 - Open item #30's vendors part is already done on `qa-release`
   (`vendors-list.tsx` uses the shared table primitives, a caption and
   `<NullValue>`); the earlier summary that it still needed work was stale.
+- **Clarified by the owner 2026-11-09 (during Gate 3):** "disabled" means the
+  *vendor* is disabled, not its products. A retired vendor can never be
+  assigned again (pickers exclude it, saves refuse it). Products already on it
+  stay fully usable — counted, edited, reassigned — and show the vendor greyed
+  with a Retired marker. Approved invoices stay readable; invoices still in
+  review are held (no submit/approve, reject allowed). Matches Gates 1–3 as
+  drafted; nothing changed.
