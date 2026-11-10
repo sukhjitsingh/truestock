@@ -2370,7 +2370,7 @@ findings. Then enter data through real invoices (add the 1 L product rows first,
 
 ---
 
-## 49. A vendor cannot be retired
+## 49. A vendor cannot be retired — **CLOSED 2026-11-09 (browser PASS)**
 
 **Trigger: the first time the owner stops buying from a supplier, or before
 Phase 3 go-live — whichever comes first.**
@@ -2392,6 +2392,23 @@ refusal. Decide before building whether a retired vendor's name stays taken
 (locations: yes, Decision 1) — the 2026-11-08 unique index on
 `(organization_id, name)` makes that the default. Needs an `active` column, so
 it is a migration.
+
+**Closed 2026-11-09** through the 4-gate plan in `docs/plans/vendor-retire/`.
+Migration 0013 adds `vendor.active`. `assertVendorActive`
+(`lib/domain/vendor-active.ts`) refuses a retired vendor first in
+`createProduct`, `updateProduct`, `assignVendorToProducts` and
+`createInvoiceForUpload`. Owner decisions: the name stays taken (creating it
+again says to reactivate instead); retiring is allowed while products use it,
+and those products stay fully usable with the vendor greyed and marked
+Retired; Reactivate is a two-tap control; invoices already in review still
+submit and approve and post costs, with an informational note only.
+Pickers list active vendors only; the reorder list puts a retired vendor's
+block first and asks for a new vendor.
+
+Proof:
+- `tests/vendor-retire*.test.ts` (DB-backed and mutation-checked).
+- `e2e/specs/vendors-retire.e2e.ts`, 4/4, now in CI's e2e run.
+- `scripts/verify-vendor-retire.mjs`, 27/27 against a production build.
 
 ---
 

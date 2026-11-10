@@ -9,7 +9,7 @@
 - [x] Slice 1 — schema, guard and the four guarded writes
 - [x] Slice 2 — retire / reactivate end to end (actions, name-taken refusal, vendors screen)
 - [x] Slice 3 — every other surface honours it (pickers, product form, catalog marker, reorder, invoices)
-- [ ] Slice 4 — browser proof (e2e spec, verify-browser) and close-out
+- [x] Slice 4 — browser proof (e2e spec, verify-browser) and close-out
 
 ## Notes for a fresh session
 

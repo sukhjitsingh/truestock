@@ -276,7 +276,7 @@ jobs:
       - name: Playwright smoke and roles specs (mobile + desktop)
         # GitHub sets CI=true, which makes global setup FAIL (not skip) if any
         # role cannot sign in — a pipeline cannot go green on skipped specs.
-        run: node node_modules/playwright/cli.js test smoke roles
+        run: node node_modules/playwright/cli.js test smoke roles vendors-retire
 
       - name: Server log
         if: failure()

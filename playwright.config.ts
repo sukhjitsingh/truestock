@@ -49,7 +49,7 @@ export default defineConfig({
       // The product is a phone app; this is the viewport it is built for.
       name: "mobile",
       // The back-office catalog table is a desk surface (see its spec header).
-      testIgnore: ["**/office-catalog.e2e.ts"],
+      testIgnore: ["**/office-catalog.e2e.ts", "**/vendors-retire.e2e.ts"],
       use: {
         ...devices["Pixel 7"],
         viewport: { width: 390, height: 844 },

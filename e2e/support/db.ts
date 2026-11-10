@@ -311,6 +311,56 @@ export async function invoiceIds(): Promise<number[]> {
   return found.map((r) => Number(r.id));
 }
 
+// ---- vendors ---------------------------------------------------------------
+
+export interface VendorRow {
+  id: number;
+  name: string;
+  active: boolean;
+}
+
+export async function vendorByName(name: string): Promise<VendorRow[]> {
+  const org = await getOrgId();
+  const found = await rows<RowDataPacket>("SELECT id, name, active FROM vendor WHERE organization_id = ? AND name = ?", [
+    org,
+    name,
+  ]);
+  return found.map((r) => ({ id: Number(r.id), name: String(r.name), active: Number(r.active) === 1 }));
+}
+
+/**
+ * Seeds one active vendor with `productCount` active products pointing at it.
+ * The caller removes them with `deleteVendorFixture` (vendors and products are
+ * never hard-deleted by the app, so a throwaway fixture has to be removed here).
+ */
+export async function seedVendorWithProducts(
+  name: string,
+  productCount: number,
+): Promise<{ vendorId: number; productIds: number[] }> {
+  const org = await getOrgId();
+  const [v] = await getPool().query<ResultSetHeader>("INSERT INTO vendor (organization_id, name) VALUES (?, ?)", [org, name]);
+  const productIds: number[] = [];
+  for (let i = 1; i <= productCount; i += 1) {
+    const [p] = await getPool().query<ResultSetHeader>(
+      "INSERT INTO product (organization_id, name, category, unit_type, size_ml, vendor_id, active) VALUES (?, ?, 'Spirits', 'bottle', 750, ?, 1)",
+      [org, `${name} Product ${i}`, v.insertId],
+    );
+    productIds.push(p.insertId);
+  }
+  return { vendorId: v.insertId, productIds };
+}
+
+/** Removes exactly what `seedVendorWithProducts` created, by id and organization. */
+export async function deleteVendorFixture(vendorId: number, productIds: number[]): Promise<void> {
+  const org = await getOrgId();
+  for (const id of productIds) {
+    await getPool().query("DELETE FROM product_par WHERE organization_id = ? AND product_id = ?", [org, id]);
+    await getPool().query("DELETE FROM product WHERE organization_id = ? AND id = ?", [org, id]);
+  }
+  await getPool().query("DELETE FROM vendor_alias WHERE organization_id = ? AND vendor_id = ?", [org, vendorId]);
+  await getPool().query("DELETE FROM vendor WHERE organization_id = ? AND id = ?", [org, vendorId]);
+}
+
 /** The `db` fixture's shape — one object so a spec reads `db.countLines(id)`. */
 export const dbApi = {
   getOrgId,
@@ -326,6 +376,9 @@ export const dbApi = {
   locationByName,
   barcodeExists,
   invoiceIds,
+  vendorByName,
+  seedVendorWithProducts,
+  deleteVendorFixture,
   closeDb,
 };
 export type Db = typeof dbApi;
