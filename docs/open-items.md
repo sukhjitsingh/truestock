@@ -1304,7 +1304,7 @@ extended checks find is still unseen. What remains is the counting screens
 
 ---
 
-## 30. Three of seven table surfaces never moved onto the shared primitives
+## 30. ~~Three of seven table surfaces never moved onto the shared primitives~~ — CLOSED 2026-11-09
 
 **Trigger: the next time `vendors-list.tsx`, `locations-table.tsx` or
 `users-list.tsx` is opened for any reason. Not worth a dedicated pass.**
@@ -1329,6 +1329,14 @@ None of this is a hazard, and none of it is a data-correctness risk — it is a
 migration that reached four of seven surfaces. Recorded so it is not mistaken for
 a decision. The whole-row-click hazard, which *was* a hazard, is gone everywhere:
 no `<tr>` in the codebase carries an `onClick` (item #27, closed 2026-08-12).
+
+**CLOSED 2026-11-09.** All three surfaces now use `components/ui/table.tsx`: `users-list.tsx`,
+`locations-table.tsx` and `vendors-list.tsx` each render a `TableCaption` ("Users, N users",
+etc.) and every header is a `TableHead`, which emits `scope="col"` unconditionally. The vendors
+null cells use `<NullValue reason="not-entered">`. The code landed in `aa0c876` / `5046e31`; this
+note records the verification, not a new change. Verified 2026-11-09 against a production build:
+the full `scripts/verify-browser.mjs` run passes 100/100, including the users, locations and
+vendors screens. The locations Retire control was left untouched.
 
 ---
 
