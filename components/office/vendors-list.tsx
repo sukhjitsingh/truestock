@@ -111,13 +111,25 @@ export function VendorsList({ vendors }: { vendors: VendorSummary[] }) {
 
   async function confirmArm(vendor: VendorSummary, kind: Armed["kind"]) {
     setPendingId(vendor.id);
-    const result =
-      kind === "retire"
-        ? await deactivateVendorAction({ vendorId: vendor.id })
-        : await reactivateVendorAction({ vendorId: vendor.id });
-    setPendingId(null);
-    setArmed(null);
-    pendingFocus.current = { kind: "primary", id: vendor.id };
+    let result: Awaited<ReturnType<typeof deactivateVendorAction>>;
+    try {
+      result =
+        kind === "retire"
+          ? await deactivateVendorAction({ vendorId: vendor.id })
+          : await reactivateVendorAction({ vendorId: vendor.id });
+    } catch {
+      // A server action throws (rather than returning an error) when the network
+      // is down; without this the row stays on "Retiring…" until a reload.
+      setRowErrors((prev) => ({
+        ...prev,
+        [vendor.id]: "Couldn’t reach the server. Reload to see the vendor’s current status, then try again.",
+      }));
+      return;
+    } finally {
+      setPendingId(null);
+      setArmed(null);
+      pendingFocus.current = { kind: "primary", id: vendor.id };
+    }
     if (!result.ok) {
       setRowErrors((prev) => ({ ...prev, [vendor.id]: result.error.message }));
       return;

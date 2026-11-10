@@ -11,13 +11,14 @@
  */
 import { createHash } from "node:crypto";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import mysql from "mysql2/promise";
 import { chromium } from "playwright";
 import { assertLocalTarget } from "./lib/assert-local-target.mjs";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
-const SHOTS = process.env.SHOTS_DIR ?? "/Users/moni/.claude/jobs/a7365fec/tmp/shots";
+const SHOTS = process.env.SHOTS_DIR ?? path.join(os.tmpdir(), "truestock-vendor-retire-shots");
 const OWNER = { email: process.env.CHECK_EMAIL, password: process.env.CHECK_PASSWORD };
 const MANAGER = { email: process.env.CHECK_MANAGER_EMAIL, password: process.env.CHECK_MANAGER_PASSWORD };
 if (!OWNER.email || !OWNER.password) {

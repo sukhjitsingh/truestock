@@ -567,7 +567,9 @@ export function InvoiceReviewForm({
           className="mb-4 rounded-md border border-warning/40 bg-warning-bg px-3 py-2 text-body text-warning"
           role="status"
         >
-          {`${vendorRetired.name} is retired. You can still submit and approve this invoice; new invoices from it can’t be uploaded.`}
+          {canReturn
+            ? `${vendorRetired.name} is retired. You can still submit and approve this invoice; new invoices from it can’t be uploaded.`
+            : `${vendorRetired.name} is retired. New invoices from it can’t be uploaded.`}
         </p>
       ) : null}
 

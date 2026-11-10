@@ -425,6 +425,10 @@ export async function createInvoiceForUpload(
   actor: Actor,
   input: CreateInvoiceForUploadInput,
 ): Promise<CreateInvoiceForUploadResult> {
+  // The duplicate check runs before the vendor guard on purpose: it writes
+  // nothing and only reads the caller's own org, so answering "duplicate" for a
+  // retired or foreign vendorId changes no data and leaks nothing (vendor-retire
+  // Gate 3). Every path that writes still passes assertVendorActive first.
   const existing = await findLiveCopy(actor.organizationId, input.fileSha256);
   if (existing) {
     return { outcome: "duplicate", duplicate: existing };
