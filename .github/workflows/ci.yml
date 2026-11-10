@@ -273,17 +273,35 @@ jobs:
           kill -0 "$(cat "$RUNNER_TEMP/server.pid")"
           curl -fsS -o /dev/null http://127.0.0.1:3101/login
 
-      - name: Playwright smoke, roles, vendors-retire and count-flow specs
+      - name: Playwright desktop (smoke, roles, vendors-retire)
         # GitHub sets CI=true, which makes global setup FAIL (not skip) if any
         # role cannot sign in — a pipeline cannot go green on skipped specs.
-        #
+        # Desktop and mobile are separate runs (as they are locally:
+        # `bun run e2e:desktop` / `e2e:mobile`); each repeats global setup's
+        # three sign-ins, well inside the rate limit. vendors-retire is
+        # desktop-only (a desk surface).
+        # Each run writes its own HTML report folder (the env var beats the
+        # config's outputFolder), so the second run cannot overwrite the first's
+        # evidence; the upload step below takes both.
+        id: e2e_desktop
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/desktop
+        run: node node_modules/playwright/cli.js test --project=desktop smoke roles vendors-retire
+
+      - name: Playwright mobile (smoke, roles, count-flow)
+        # Runs whenever the desktop step ran, pass or fail, so a desktop failure
+        # never hides the mobile result (and a server that never started skips
+        # both).
+        if: ${{ !cancelled() && (steps.e2e_desktop.outcome == 'success' || steps.e2e_desktop.outcome == 'failure') }}
         # count-flow (2026-11-10) is the count write path end to end: search,
         # enter, save, read back from the database, plus the offline-queue
         # ordering, the Finish-section warning and the pending-write Submit
         # gate (open item #46). It runs in the mobile project only and resets
         # every count before and after itself, which is safe on this
         # throwaway database.
-        run: node node_modules/playwright/cli.js test smoke roles vendors-retire count-flow
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/mobile
+        run: node node_modules/playwright/cli.js test --project=mobile smoke roles count-flow
 
       - name: Server log
         if: failure()

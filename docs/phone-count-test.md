@@ -183,6 +183,58 @@ bun run phone:rig down        # stop the server, remove the tunnels
 - The tunnel *is* wireless debugging, so **turning the phone's Wi-Fi off cuts
   the app too** — that is a real offline test, but adb needs `up` again after.
 
+### Playwright on the phone
+
+The e2e specs can drive the real phone's Chrome (the `phone` project in
+`playwright.config.ts`, over the same DevTools forward on 9333). The browser
+runs on the phone; the test runner, the database checks and the sign-in setup
+run on the laptop. It is a separate run from the desktop and emulated-mobile
+ones: `bun run e2e:desktop` and `bun run e2e:mobile` never touch the phone, and
+`e2e:phone` never launches a local browser for the tests.
+
+The suite needs the **e2e database and the e2e accounts**, so the server must
+be a second rig on another port, with the e2e env file (the one
+`E2E_ENV_FILE` points at: a `DATABASE_URL` for a `_e2e` database plus the
+`E2E_*` role accounts; see `e2e/README.md`). The build is the same `.next`:
+
+```bash
+PORT=3206 ENV_FILE=<e2e env file> bun run phone:rig up
+E2E_ENV_FILE=<e2e env file> E2E_BASE_URL=http://localhost:3206 bun run e2e:phone
+E2E_ENV_FILE=<e2e env file> E2E_BASE_URL=http://localhost:3206 bun run e2e:phone -- count-flow   # one spec
+PORT=3206 bun run phone:rig down
+```
+
+- Global setup signs each role in **from the laptop** and saves the cookies;
+  each test then opens a fresh, incognito-like context on the phone with that
+  state. Your own Chrome sign-in on the phone is untouched.
+- Tabs open and close on the phone while it runs. **Keep the screen on and
+  unlocked** and leave Chrome in the foreground. A sleeping phone stops
+  rendering and every test dies on its 60 s timeout, so `e2e:phone` checks
+  over adb first and refuses to start (exit 2) if the screen is off or locked.
+  The screen can still time out mid-run; Developer options → Stay awake
+  (while charging) prevents that.
+- `count-flow` resets every count in that `_e2e` database before and after
+  itself. Never point it at a database you care about (the suite refuses any
+  name not ending `_e2e`).
+- Office-only specs (`office-catalog`, `vendors-retire`) are not run on the
+  phone, as in the emulated mobile project. The phone runs the same 39 tests
+  as `e2e:mobile`.
+- The soft keyboard is neutralised for the phone project only: each test
+  context sets `navigator.virtualKeyboard.overlaysContent = true`
+  (`e2e/support/fixtures.ts`). Without it, focusing a field makes Chrome pan
+  the visual viewport (236 px on the Pixel) while Playwright still clicks by
+  layout coordinates, so the first click after a `fill` misses — the login
+  specs time out waiting for a sign-in POST and the trace shows a label
+  "intercepting" the button. A person's tap was never affected; this is a
+  harness-over-CDP problem, not an app defect.
+- Failure screenshots include one per tab already open in the phone's
+  Chrome (the CDP default context); the test's own page is the last one.
+
+**Result, 2026-11-10 (Pixel 10 Pro XL, Chrome 156, this branch's build):
+39/39 passed in 2.9 min**, including all of `count-flow` (the #46a
+Finish-section warning, the #46b Submit gate, the queue draining without an
+`online` event). Desktop 33/33 and emulated mobile 39/39 on the same build.
+
 ### #29 — accessibility on the counting screens
 
 With the phone signed in and showing a counting screen:

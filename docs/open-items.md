@@ -2278,8 +2278,16 @@ OPEN for the retry-timer bullet and the phone proof (#48).
   holds one Jameson (id 18, 750 ml, active).
 - 2026-11-10: `count-flow` now runs in CI (`e2e-smoke` job), so 46a/46b are
   gated on every PR, not only proven once.
-- Still open: the retry timer lives in the scan screen only, and none of this
-  has run on a phone. The phone rig and the drills are ready in
+- 2026-11-10, later: the Playwright specs now run on the real phone
+  (`bun run e2e:phone`, Pixel 10 Pro XL, Chrome 156): **39/39**, including all
+  9 of `count-flow`. So the 46a Finish-section warning, the 46b Submit gate and
+  the queue draining by retry (no `online` event) are proven in real Android
+  Chrome. They are not proven against a real network loss: there, "offline" is
+  Playwright's `setOffline` and route interception inside the browser, while
+  the phone's Wi-Fi and mobile data stay up.
+- Still open: the retry timer lives in the scan screen only, and the
+  hand-driven drills (server down, the phone's own Wi-Fi off with mobile data
+  on, leave and come back) have not been run. They are ready in
   `docs/phone-count-test.md` → "Host-only phone rig".
 
 ## 47. Eight invoice failures from the 2026-11-06 QA run

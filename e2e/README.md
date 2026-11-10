@@ -12,9 +12,11 @@ The suite needs an app and a database that already exist (it does not start
 them), then:
 
 ```sh
-E2E_ENV_FILE=/path/outside/the/repo/e2e.env bun run e2e          # both projects
-E2E_ENV_FILE=... bun run e2e -- --project=mobile                 # phone only
-E2E_ENV_FILE=... bun run e2e -- office-catalog --project=desktop # one spec
+E2E_ENV_FILE=/path/outside/the/repo/e2e.env bun run e2e          # desktop + mobile, one run
+E2E_ENV_FILE=... bun run e2e:desktop                             # desktop only
+E2E_ENV_FILE=... bun run e2e:mobile                              # emulated Pixel 7 in local Chromium
+E2E_ENV_FILE=... bun run e2e:phone                               # REAL phone over CDP (below)
+E2E_ENV_FILE=... bun run e2e:desktop -- office-catalog           # one spec
 bun run e2e:report                                               # open the last HTML report
 ```
 
@@ -31,6 +33,7 @@ Configuration is environment variables; names only here, values never in the rep
 | `E2E_BASE_URL` | app under test, loopback only; default `http://localhost:3101` |
 | `E2E_DATABASE_URL` or `DATABASE_URL` | the database that app writes to (`E2E_` wins) |
 | `E2E_OWNER_EMAIL` / `E2E_OWNER_PASSWORD` | one account per role, likewise `E2E_MANAGER_*`, `E2E_STAFF_*` |
+| `E2E_PHONE_CDP` | optional: DevTools endpoint of a real Android Chrome (`http://127.0.0.1:9333`); when set, a third project `phone` exists. `bun run e2e:phone` defaults it |
 | `E2E_CHANNEL` | optional: `chrome` to use installed Chrome instead of bundled Chromium |
 
 A role with no credentials is not a failure and not silent: its specs skip with a
@@ -39,6 +42,22 @@ passed.** A skipped spec in the report is a hole, so the suite never uses skip f
 "does not apply" (those are excluded per project in `playwright.config.ts`).
 Under `CI` or `E2E_REQUIRE_ALL=1` the same condition fails global setup instead,
 so a pipeline with no secrets cannot go green with every role-gated spec skipped.
+
+## The phone project (real device)
+
+`bun run e2e:phone` runs the mobile specs in the Chrome of a real Android phone
+attached over adb (`bun run phone:rig up` makes the DevTools forward on 9333).
+The project exists only while `E2E_PHONE_CDP` is set, so plain runs and CI never
+need a device (do not export it in your shell profile: a bare `bun run e2e`
+would then include the phone). Its `browser` fixture
+(`e2e/support/fixtures.ts`) connects with `connectOverCDP` and only disconnects
+at the end (the phone's Chrome stays open). Android refuses
+`Browser.setWindowBounds`, so contexts use `viewport: null` and the phone's own
+screen. Its `context` fixture sets `navigator.virtualKeyboard.overlaysContent`
+so the soft keyboard draws over the page instead of panning the visual
+viewport; without it, Playwright's click after a `fill` lands off target (the
+login specs time out). The app must be served to the phone against the e2e database; the full
+procedure is in `docs/phone-count-test.md`, "Playwright on the phone".
 
 ## Building the rig
 
@@ -85,7 +104,7 @@ signs in once per role.
   catalog (97 products) and one owner, manager and staff account.
 - The Docker rig, not `next dev`: dev reloads the page when the network drops and
   skips the CSP, so it would test a different app.
-- Chromium only, `workers: 1`, no retries. Specs share one database and
+- Chromium only (the phone project is Chrome on Android), `workers: 1`, no retries. Specs share one database and
   `resetCounts()` deletes every count in it, so parallel workers would delete each
   other's fixtures.
 
@@ -110,7 +129,7 @@ flag to skip this: `resetCounts()` is destructive by design.
 ## Layout
 
 ```
-playwright.config.ts      projects: mobile (Pixel 7, 390x844, touch) and desktop (1280x800)
+playwright.config.ts      projects: mobile (Pixel 7, 390x844, touch), desktop (1280x800), and phone (real device over CDP, only when E2E_PHONE_CDP is set)
 e2e/global-setup.ts       guards, then signs each role in ONCE -> e2e/.auth/<role>.json
 e2e/support/              env, guard, db (raw SQL ground truth), fixtures, problems,
                           hydration, auth, count (UI drivers + fake camera)
@@ -126,10 +145,10 @@ tests).
 
 | Spec | Project | What it proves |
 |---|---|---|
-| `smoke` | both | login form is a hydrating POST form; wrong password is generic; owner signs in; signed-out access redirects; every office page loads without console/CSP errors |
-| `roles` | both | staff and manager receive no cost data in HTML or the RSC payload (invariant 8), with an owner-side positive control for each; invoice-file route is 401 / 403 / 200-or-404 (invariant 7) |
-| `count-flow` | mobile | start, pick a section, search, enter quantity, save: one line, one ledger row; same bottle again increments (invariants 3 and 5); SET states its consequence; tenths location takes Half |
-| `phone-round2` | mobile | the three phone-test fixes. Proven to fail when the code is reverted: no stale hub after Back (production build), enroll form says why Save is off. Pins the contract with **no proven teeth**: Save stays disabled once tapped, the in-app Back links (see `docs/open-items.md` item 41) |
+| `smoke` | all | login form is a hydrating POST form; wrong password is generic; owner signs in; signed-out access redirects; every office page loads without console/CSP errors |
+| `roles` | all | staff and manager receive no cost data in HTML or the RSC payload (invariant 8), with an owner-side positive control for each; invoice-file route is 401 / 403 / 200-or-404 (invariant 7) |
+| `count-flow` | mobile, phone | start, pick a section, search, enter quantity, save: one line, one ledger row; same bottle again increments (invariants 3 and 5); SET states its consequence; tenths location takes Half |
+| `phone-round2` | mobile, phone | the three phone-test fixes. Proven to fail when the code is reverted: no stale hub after Back (production build), enroll form says why Save is off. Pins the contract with **no proven teeth**: Save stays disabled once tapped, the in-app Back links (see `docs/open-items.md` item 41) |
 | `office-catalog` | desktop | TanStack table paging and sorting; owner inline cost edit reaches the database and survives reload; known-defect probe |
 
 Ground truth for count specs is the database, never the same screen under test:
