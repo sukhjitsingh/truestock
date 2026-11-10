@@ -29,7 +29,7 @@ import { BarcodeScanner } from "@/components/count/barcode-scanner";
 import { QuantityEntry, type QuantitySubmission } from "@/components/count/quantity-entry";
 import { FillEntry } from "@/components/count/fill-entry";
 import { planFillSave } from "@/lib/fill-save";
-import { afterSave, saveStillApplies } from "@/lib/entry-drafts";
+import { afterSave, finishSectionWarning, saveStillApplies } from "@/lib/entry-drafts";
 import { EnrollForm } from "@/components/count/enroll-form";
 import { LocationPicker } from "@/components/count/location-picker";
 import { StrayBottleModal } from "@/components/count/stray-bottle-modal";
@@ -282,6 +282,7 @@ export function CountLeg({
   // far as the browser knows, so `online` never fires and a queued write would
   // wait until the screen happened to remount.
   const hasPending = pendingWrites > 0;
+  const finishWarning = finishSectionWarning(pendingWrites);
   useEffect(() => {
     if (!hasPending) return;
     const timer = setInterval(() => {
@@ -1149,6 +1150,18 @@ export function CountLeg({
           setPhase({ kind: "entry", product, locationId: targetLocationId, isStray: true });
         }}
       />
+
+      {finishWarning ? (
+        <div className="fixed inset-x-0 bottom-[calc(var(--spacing-action-bar))] z-40 px-bar-pad">
+          <p
+            className="rounded-md bg-warning-bg px-3 py-2 text-caption text-warning"
+            role="status"
+            data-testid="finish-section-warning"
+          >
+            {finishWarning}
+          </p>
+        </div>
+      ) : null}
 
       {/* Floating Bottom Action Bar — One-Handed Accessible 56px Floor */}
       <div className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-2 border-t border-border bg-background px-bar-pad pt-bar-pad pb-safe-bottom">

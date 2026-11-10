@@ -12,6 +12,7 @@ import {
   pendingDraftValue,
   afterSave,
   canSubmitCount,
+  finishSectionWarning,
   saveStillApplies,
 } from "@/lib/entry-drafts";
 
@@ -173,6 +174,20 @@ describe("canSubmitCount", () => {
       expect(r.message).toContain("Keep counting");
       expect(r.message).toContain("sync indicator");
     }
+  });
+});
+
+describe("finishSectionWarning", () => {
+  test("nothing pending -> no warning", () => {
+    expect(finishSectionWarning(0)).toBeNull();
+  });
+
+  test("one pending names the count in the singular", () => {
+    expect(finishSectionWarning(1)).toContain("1 save hasn't synced yet");
+  });
+
+  test("many pending names the count", () => {
+    expect(finishSectionWarning(12)).toContain("12 saves haven't synced yet");
   });
 });
 

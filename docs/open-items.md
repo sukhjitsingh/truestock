@@ -2201,6 +2201,33 @@ tested on `main`.
   `count-flow` fails with a strict-mode error if it runs afterwards. That looks
   like an app failure and is not one.
 
+**2026-11-09 code pass (item stays OPEN; no browser or phone run was possible
+in this session: no e2e or verify-browser accounts).**
+
+- *Finish section warning (46a).* `components/count/count-leg.tsx` shows an
+  inline `role="status"` line above the bottom bar, "N saves haven't synced
+  yet...", while the queue is non-empty. No modal. Text from
+  `finishSectionWarning` in `lib/entry-drafts.ts`; proved by the
+  `finishSectionWarning` tests in `tests/entry-drafts.test.ts` (fail with the
+  `pending <= 0` guard removed). The rendering itself is unproven on a phone.
+- *Count session page (46b).* `components/count/session-actions.tsx` now polls
+  the IndexedDB queue (3 s, plus focus and online) and, at draft/in_progress,
+  disables Submit with the `canSubmitCount` message shown as a status line. The
+  click-time check stays as the backstop. Fails open if IndexedDB is unreadable
+  (unchanged). Because the queue only drains on the scan screen, the text says
+  to tap Keep counting. Unproven in a browser.
+- *`canSubmitCount` tests (46c).* The function already had five tests in
+  `tests/entry-drafts.test.ts` (0, negative, 1, many, message). Mutation check:
+  with the guard removed three of them fail; with the new warning helper also
+  mutated, 5 fail in total. Restored afterwards.
+- *verify-browser leak (46d).* `scripts/verify-browser.mjs` took the stray
+  `Jameson` id from a list only pushed to after the post-save lookup, so any
+  throw or timeout in between leaked the row. Teardown now deletes every
+  product in the org with an id above a watermark taken before the section
+  (with its barcodes and any count lines). A row already leaked by an earlier
+  run must still be removed once by hand; not touched here. Proof is owed: run
+  verify-browser then `count-flow` against `truestock_e2e`.
+
 ## 47. Eight invoice failures from the 2026-11-06 QA run
 
 **Trigger:** next work on `feat/phase-2.5-invoice-automation`, and before any

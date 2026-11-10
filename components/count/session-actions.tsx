@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   submitCountAction,
@@ -31,6 +31,34 @@ async function readPendingWrites(countId: number): Promise<number> {
   } catch {
     return 0;
   }
+}
+
+/**
+ * Writes queued on this device for the count, kept fresh while the page is
+ * open. Drives the Submit gate. `null` until the first read, so Submit is not
+ * locked on a guess. The click-time read in the Submit handler stays as the
+ * backstop: this is what the counter SEES, that is what protects the server.
+ */
+function usePendingWrites(countId: number): number | null {
+  const [pending, setPending] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const read = () =>
+      readPendingWrites(countId).then((n) => {
+        if (alive) setPending(n);
+      });
+    void read();
+    const timer = setInterval(read, 3000);
+    window.addEventListener("focus", read);
+    window.addEventListener("online", read);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      window.removeEventListener("focus", read);
+      window.removeEventListener("online", read);
+    };
+  }, [countId]);
+  return pending;
 }
 
 /**
@@ -65,6 +93,7 @@ export function SessionActions({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const queued = usePendingWrites(countId);
 
   if (status === "closed") {
     return null;
@@ -85,8 +114,10 @@ export function SessionActions({
   }
 
   if (status === "draft" || status === "in_progress") {
+    const verdict = canSubmitCount(queued ?? 0);
+    const blocked = verdict.ok ? null : verdict.message;
     return (
-      <Bar error={error}>
+      <Bar error={error} note={blocked && !error ? blocked : null}>
         <Button
           variant="outline"
           size="primary"
@@ -97,7 +128,7 @@ export function SessionActions({
         </Button>
         <ActionBarPrimary
           label={pending ? "Submitting…" : "Submit count"}
-          disabled={pending}
+          disabled={pending || blocked !== null}
           onClick={() =>
             run(async () => {
               // Submitting freezes the count, and the server then refuses every
@@ -177,9 +208,29 @@ export function SessionActions({
   );
 }
 
-function Bar({ children, error }: { children: React.ReactNode; error: string | null }) {
+function Bar({
+  children,
+  error,
+  note = null,
+}: {
+  children: React.ReactNode;
+  error: string | null;
+  /** Why the primary action is disabled: a status line, not an alert. */
+  note?: string | null;
+}) {
   return (
     <>
+      {note ? (
+        <div className="fixed inset-x-0 bottom-[calc(var(--spacing-action-bar))] z-40 px-bar-pad">
+          <p
+            className="rounded-md bg-warning-bg px-3 py-2 text-caption text-warning"
+            role="status"
+            data-testid="submit-blocked-note"
+          >
+            {note}
+          </p>
+        </div>
+      ) : null}
       {error ? (
         <div className="fixed inset-x-0 bottom-[calc(var(--spacing-action-bar))] z-40 px-bar-pad">
           <p className="rounded-md bg-negative-bg px-3 py-2 text-caption text-negative" role="alert">
