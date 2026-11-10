@@ -182,8 +182,16 @@ export function OfficeRail({
   // that pixel on the others, the active item's icon sits 1px in from the rest
   // of the column. One item out of alignment in a vertical strip of icons is
   // visible even when you can't name what changed.
+  //
+  // The focus ring is explicit here rather than left to the global
+  // `a:focus-visible` floor in globals.css, for the same reason as the Button
+  // primitive's: it is the design-system ring (`--color-ring`, #60a5fa in dark
+  // mode), and an explicit class survives anything on the item that would
+  // otherwise animate the outline away. The links used to carry
+  // `transition-all`, which also transitions `outline-width` from 0, so a
+  // keyboard user's first frame on a link showed no ring at all (open item #50).
   const itemClass = cn(
-    "flex min-h-tap-min items-center rounded-md border border-transparent text-muted-foreground",
+    "flex min-h-tap-min items-center rounded-md border border-transparent text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
     expanded ? "gap-3 px-3" : "w-tap-min justify-center",
   );
 
@@ -232,7 +240,7 @@ export function OfficeRail({
             title={expanded ? undefined : link.label}
             className={cn(
               itemClass,
-              "transition-all duration-150",
+              "transition-colors duration-150",
               active && "border-accent/40 bg-accent/10 font-semibold text-accent shadow-xs",
             )}
           >
