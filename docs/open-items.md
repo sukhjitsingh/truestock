@@ -2406,3 +2406,31 @@ harness samples. **Caveat on the evidence:** that diagnosis and the flip to
 PASS were not observed — the fix was made in a worktree whose dev database has
 none of the `verify-browser` accounts, so the browser run is still owed. Re-open
 if `verify-browser` still reports the rail links as bare.
+
+## 51. The local databases use a NO PAD collation that CI and the compose comment say they don't
+
+**Found 2026-11-09.** `docker-compose.yml` starts MariaDB with
+`--collation-server=utf8mb4_0900_ai_ci`, and its comment says MariaDB 11.x
+treats that as an alias for `utf8mb4_uca1400_ai_ci`. On 11.8.8 it is not:
+`SELECT 'a' = 'a ' COLLATE utf8mb4_0900_ai_ci` is `0` (NO PAD, as in MySQL),
+while the same comparison under `utf8mb4_uca1400_ai_ci` is `1` (PAD SPACE).
+`truestock`, `truestock_test` and `truestock_e2e` were all created with the
+0900 collation, so every unique name index there treats a trailing space as a
+different name. CI's MariaDB service sets no collation, gets the PAD SPACE
+default, and passes.
+
+**Symptom:** `tests/vendor-write-path.test.ts` › "a name differing only in
+capitals or trailing spaces counts as the same vendor" fails locally at line
+133 (`"Republic National   "` is accepted as a second vendor) and passes in CI.
+User input is not exposed today: every name schema in `lib/validation/catalog.ts`
+trims both ends before the domain sees it. The exposure is a direct domain
+caller, and the bigger risk is production: if the Hostinger database is created
+with the 0900 collation, its string comparisons differ from CI's.
+
+**Fix (owner decision, touches the Docker setup):** either set the compose
+server collation to `utf8mb4_uca1400_ai_ci` and fix the comment, or pin CI to
+the 0900 name so both match. Existing local databases keep their collation
+until they are recreated or `ALTER DATABASE`/`ALTER TABLE … CONVERT TO` is run.
+Decide the production collation as part of `docs/go-live.md`.
+**Trigger:** before the first deploy, or the next time the local stack is
+rebuilt.
