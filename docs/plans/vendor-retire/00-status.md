@@ -2,11 +2,14 @@
 
 - Gate 1 — Product: APPROVED 2026-11-09
 - Gate 2 — Architecture: APPROVED 2026-11-09 (decisions A–F as drafted)
-- Gate 3 — Program Design: drafted 2026-11-09, awaiting approval (`03-program-design.md`)
-- Gate 4 — Slice plan: pending
+- Gate 3 — Program Design: APPROVED 2026-11-09 (amended same day: in-review invoices complete normally)
+- Gate 4 — Slice plan: drafted 2026-11-09, awaiting approval (`04-slices.md`)
 
 ## Slices
-(written at Gate 4)
+- [ ] Slice 1 — schema, guard and the four guarded writes
+- [ ] Slice 2 — retire / reactivate end to end (actions, name-taken refusal, vendors screen)
+- [ ] Slice 3 — every other surface honours it (pickers, product form, catalog marker, reorder, invoices)
+- [ ] Slice 4 — browser proof (e2e spec, verify-browser) and close-out
 
 ## Notes for a fresh session
 
