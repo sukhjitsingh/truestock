@@ -172,7 +172,7 @@ Clearing a vendor (`vendorId: null`) is never refused.
 
 ---
 
-## Decisions worth challenging (answer at this gate)
+## Decisions (approved 2026-11-09: A–F as drafted)
 
 - **A. `listVendorsAction` becomes active-only**; name lookups move to a new
   `listAllVendorsAction`. Alternative: keep it returning everything and filter
