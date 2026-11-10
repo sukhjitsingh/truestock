@@ -2,6 +2,11 @@
 
 No databases, schemas, endpoints or file names in this document. That is Gate 2.
 
+**Gate 1 APPROVED 2026-11-09. Amended 2026-11-09 (during Gate 3):** the owner
+reversed the treatment of invoices already in review when their vendor is
+retired. They are no longer held; they complete normally (Behaviour point 6,
+Owner decision 4).
+
 ---
 
 ## Problem
@@ -35,13 +40,14 @@ supplier.
 
 **One number:**
 
-> **Zero products, invoice lines or reorder lines assigned to a retired vendor
+> **Zero products, new invoices or reorder lines assigned to a retired vendor
 > after it was retired** — except what was already assigned before, which is
 > kept and shown as needing a new vendor.
 
 Measured by: a check run against the database after the feature ships (and in
 an automated test that runs on every change): any assignment to a retired
-vendor dated after its retirement is a failure. The automated test also proves
+vendor dated after its retirement is a failure (an invoice already in review
+when the vendor was retired is not a new assignment). The automated test also proves
 that a screen opened *before* retirement cannot save the retired vendor.
 
 **Supporting checks, each pass/fail:**
@@ -64,12 +70,13 @@ that a screen opened *before* retirement cannot save the retired vendor.
 
 > **You can now retire a vendor.** When the bar stops buying from a supplier,
 > tap Retire on the vendors screen and confirm. It drops out of every vendor
-> list — the product form, bulk assign and invoice review — and Truestock
+> list — the product form, bulk assign and invoice upload — and Truestock
 > refuses to assign anything new to it, even from a screen that was already
 > open. Products that still point at it show up on the reorder list under
 > **"Retired vendor — choose a new one"**, so nothing is ordered from the wrong
 > place. Its history stays intact: old invoices and audit packets still name
-> it, and its name stays reserved, so if you ever go back to that supplier,
+> it, invoices already in review can still be reviewed and approved (new
+> invoices from it can't be uploaded), and its name stays reserved, so if you ever go back to that supplier,
 > tap Reactivate.
 
 ---
@@ -85,15 +92,20 @@ that a screen opened *before* retirement cannot save the retired vendor.
 4. **Saving a retired vendor is refused**, with a message that names it:
    *"Southern Glazer's is retired. Choose another vendor, or reactivate it on
    the Vendors screen."* This covers assigning it to one product, to many at
-   once, and confirming it as the vendor of an invoice.
+   once, and uploading a new invoice that names it.
 5. **Products already assigned keep the link** (the history is real) but are
    flagged: the reorder list groups them under "Retired vendor — choose a new
    one", and the catalog shows the vendor name with a Retired marker. The
    manager reassigns them with the existing bulk-assign bar.
 6. **Invoices:** past invoices from a retired vendor stay readable, approved
-   and in audit packets. A *new* invoice whose supplier is a retired vendor is
-   held at review with the message above, rather than posting costs against
-   it.
+   and in audit packets. An invoice already in review when its vendor is
+   retired is **not held**: it can be submitted and approved normally, and its
+   costs post (the goods were delivered; the prices are real). The review screen
+   shows an informational note — *"{name} is retired. This invoice can still be
+   reviewed and approved; new invoices from this vendor can't be uploaded."* —
+   that blocks nothing. Rejecting is unchanged. A *new* invoice upload naming a
+   retired vendor is refused with the message in point 4, and the upload picker
+   lists active vendors only.
 7. **Name stays taken:** creating or renaming a vendor to a retired vendor's
    name is refused with *"A retired vendor already uses this name — reactivate
    it instead."*
@@ -114,6 +126,12 @@ that a screen opened *before* retirement cannot save the retired vendor.
 2. **Reactivate is included.** Required because the name stays taken.
 3. **Reactivate asks for confirmation** before it acts — two taps, stating the
    consequence, the same no-modal pattern as Retire (point 8).
+4. **Invoices already in review are not held** (added 2026-11-09, during Gate 3).
+   When a vendor is retired, an invoice already in review can still be
+   submitted and approved normally and its costs post: the goods were
+   delivered and the prices are real. The review screen shows an informational
+   note and blocks nothing. A new invoice upload naming a retired vendor is
+   still refused. Rejecting is unchanged (point 6).
 
 ---
 

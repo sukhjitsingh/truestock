@@ -29,5 +29,17 @@
   assigned again (pickers exclude it, saves refuse it). Products already on it
   stay fully usable — counted, edited, reassigned — and show the vendor greyed
   with a Retired marker. Approved invoices stay readable; invoices still in
-  review are held (no submit/approve, reject allowed). Matches Gates 1–3 as
-  drafted; nothing changed.
+  review were first drafted as held, but that part was reversed later the same
+  day — see the next note. The rest matches Gates 1–3 as drafted.
+- **Decided by the owner 2026-11-09 (during Gate 3), amending Gates 1 and 2:**
+  an invoice already in review when its vendor is retired is **not held**. It
+  can be submitted AND approved normally, and its costs post (the goods were
+  delivered; the prices are real). The review screen shows an informational
+  note only. A NEW invoice upload naming a retired vendor is still refused
+  (`createInvoiceForUpload` guard; upload picker active-only). Rejecting is
+  unchanged. Consequences: no guards on `submitInvoiceReview`,
+  `approveInvoice` or `upsertAliasCore` (alias learning runs inside submit), no
+  `assertInvoiceVendorActiveTx`; guarded writes are 4, not 7 (`createProduct`,
+  `updateProduct`, `assignVendorToProducts`, `createInvoiceForUpload`). Gate 1
+  stays APPROVED, amended 2026-11-09; Gate 2 Decision D is superseded.
+  Gate 3 needs re-approval with these changes.

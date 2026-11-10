@@ -1,7 +1,7 @@
 # Gate 2 — Architecture: retire a vendor
 
 Read against the code at `103f4ba` (2026-11-09). Spec: `01-product.md`
-(APPROVED). Model: the location retire path (`deactivateLocation`,
+(APPROVED; amended 2026-11-09 — in-review invoices are not held, see Decision D). Model: the location retire path (`deactivateLocation`,
 `LOCATION_RETIRED` in `scanCountLineTx`, `listLocations({includeInactive})`).
 
 **Headline:** one column (`vendor.active`), migration **0013**. Two new server
@@ -33,22 +33,22 @@ Three facts in the code shaped this (each verified 2026-11-09):
 | `lib/domain/catalog.ts` — vendors | `listVendors`, `createVendor`, `updateVendor`, `assignVendorToProducts`, `assertVendorOwned`, `vendorNameTaken` | `VendorSummary` gains `active`, `productCount`; `listVendors(actor, {includeInactive})`; new `deactivateVendor`, `reactivateVendor`, `assertVendorActive`; a duplicate name tells retired from active |
 | `lib/domain/catalog.ts` — products | `createProduct`/`updateProduct` call `assertVendorOwned` | call `assertVendorActive` (ownership + active, one locking read) |
 | `lib/domain/invoices.ts` | `createInvoiceForUpload` has its own `assertVendorOwned` | use the shared active check |
-| `lib/domain/invoice-lines.ts` | `submitInvoiceReview` → `applyLineReviewTx` → CAS → `learnAliasesTx` | refuse first if the invoice's vendor is retired |
-| `lib/domain/invoice-approval.ts` | `approveInvoice`: lock, replay check, status check, post costs | refuse after the replay branch, before the status write |
-| `lib/domain/matching.ts` | `upsertAliasCore`, the only `vendor_alias` writer | active check before insert (backstop) |
 | `lib/domain/reports.ts` `reorderList` | vendor map `{id → name}` | `{id → {name, active}}`; `ReorderItem.vendorActive`; retired sorts first |
 | `lib/validation/catalog.ts` | `locationDeactivateSchema` | add `vendorIdSchema` (`{ vendorId: int > 0 }`) for both new actions |
 | `app/actions/catalog.ts` | vendor actions, owner+manager | `listAllVendorsAction`, `deactivateVendorAction`, `reactivateVendorAction` |
 | `components/office/vendors-list.tsx` | table + edit form | status badge, two-tap Retire **and** two-tap Reactivate (from `locations-table.tsx`), "N active, M retired" |
 | reorder page + `reorder-vendor-block.tsx` | groups by `vendorName` | one flagged block on top, "Retired vendor — choose a new one", vendor column |
 | catalog page, `catalog-table.tsx`, product detail, `product-edit-form.tsx` | no vendor column; form always sends `vendorId` | show vendor name + Retired marker; pickers active-only; form sends `vendorId` only when changed |
-| invoices list, invoice detail, `invoice-review-form.tsx` | names from `listVendorsAction()`, else `Vendor #id` | names from the all-vendors list; upload picker active-only; review shows a hold banner, Submit disabled |
+| invoices list, invoice detail, `invoice-review-form.tsx` | names from `listVendorsAction()`, else `Vendor #id` | names from the all-vendors list; upload picker active-only; review shows an informational "vendor is retired" note; Submit and Approve stay enabled |
 
-**Not touched:** `lib/domain/audit-packets.ts` — `selectInvoicesForPacket`
+**Not touched:** `lib/domain/invoice-lines.ts`, `lib/domain/invoice-approval.ts`
+and `lib/domain/matching.ts` (owner decision 2026-11-09: an invoice already in
+review completes normally, and learned aliases are history), `lib/domain/audit-packets.ts` — `selectInvoicesForPacket`
 left-joins `vendor` with no `active` filter, so retired names stay in packets (a
 test pins it). Counts, `count_line`, closed-count history,
 `lib/domain/extraction-pipeline.ts`. Matching only *reads* aliases; a retired
-vendor's aliases may still pre-match lines on an invoice that is then held.
+vendor's aliases may still pre-match lines on an invoice in review, and
+alias learning inside `submitInvoiceReview` still writes them.
 
 ---
 
@@ -66,9 +66,9 @@ today's vendor writes.
 | `reactivateVendorAction({vendorId})` (new) | reactivate; returns `{ vendorId, productCount }` |
 | `createVendorAction`, `updateVendorAction` (behaviour) | a retired vendor's name → `VENDOR_NAME_RETIRED` |
 | `assignVendorToProductsAction`, `createProductAction`, `updateProductAction`, `uploadInvoiceAction` (behaviour) | retired vendor → `VENDOR_RETIRED` |
-| `reviewInvoiceAction`, `approveInvoiceAction` (behaviour; roles unchanged) | invoice on a retired vendor → `VENDOR_RETIRED` (held) |
 
-`rejectInvoiceAction` is unchanged — a held invoice can still be rejected.
+`reviewInvoiceAction`, `approveInvoiceAction` and `rejectInvoiceAction` are all
+unchanged — an invoice in review whose vendor is retired is not held.
 
 ---
 
@@ -96,9 +96,6 @@ never deletes.
   name, active FROM vendor WHERE id=? AND organization_id=? FOR UPDATE`. No row
   → NotFound; `!active` → `VENDOR_RETIRED`. A *locking* read on purpose: a plain
   snapshot read would let a retire that commits mid-transaction slip past.
-- **`assertInvoiceVendorActiveTx(tx, actor, invoiceId)`** — `SELECT
-  invoice.vendor_id … FOR UPDATE` (org-scoped; no row → NotFound), then
-  `assertVendorActive` if non-null. An invoice with no vendor passes.
 - **`listVendors(actor, {includeInactive})`** — vendor rows plus a correlated
   `COUNT(*)` of *active* products with that `vendor_id` (uses
   `product_vendor_id_idx`). **This is where the confirmations' "12 products"
@@ -116,7 +113,7 @@ never deletes.
 - **`reorderList`** — the existing vendor select adds `active`; sort is
   (retired first, vendor name, product name). Still three queries.
 
-**Writes guarded by `assertVendorActive`, each inside its existing transaction,
+**Writes guarded by `assertVendorActive` (four), each inside its existing transaction,
 before any other row lookup** (verified line numbers, `103f4ba`):
 
 1. `createProduct` — `catalog.ts:660`, before the insert.
@@ -126,12 +123,12 @@ before any other row lookup** (verified line numbers, `103f4ba`):
    product-ownership select (~1395), when non-null.
 4. `createInvoiceForUpload` — `invoices.ts:443`, before the insert
    (`findLiveCopy` before the transaction only reads and returns).
-5. `submitInvoiceReview` — `invoice-lines.ts:568`, first statement, above
-   `applyLineReviewTx`: no line corrections, no CAS to `reviewed`, no alias
-   learning for a retired vendor.
-6. `approveInvoice` — `invoice-approval.ts:144–163`, after the
-   already-approved replay branch, before the status write and cost posting.
-7. `upsertAliasCore` — `matching.ts:232`, before the insert (backstop).
+
+**Deliberately not guarded** (owner decision 2026-11-09): `submitInvoiceReview`,
+`approveInvoice` and `upsertAliasCore`. An invoice already in review completes
+normally and its costs post; alias learning runs inside `submitInvoiceReview`,
+so a guard on `upsertAliasCore` would make the allowed submit fail. A retired
+vendor's aliases are history; matching only reads them.
 
 Clearing a vendor (`vendorId: null`) is never refused.
 
@@ -153,11 +150,14 @@ Clearing a vendor (`vendorId: null`) is never refused.
    *Form change:* send `vendorId` only if the user changed it; the detail page
    passes active vendors plus the product's current vendor labelled
    "(retired)" so the select can show it.
-4. **Invoice from a retired vendor** reaches `needs_review` as usual. Detail
-   page sees `active=false` → hold banner + Submit disabled. A stale Submit →
-   refused as the first statement, nothing written. Already `reviewed` →
-   `approveInvoice` refuses, no `product_cost_history` row. Remedies:
-   reactivate, or reject the invoice.
+4. **Invoice already in review when its vendor is retired.** Detail page sees
+   `active=false` → informational note ("{name} is retired. This invoice can
+   still be reviewed and approved; new invoices from this vendor can't be
+   uploaded."); Submit and Approve stay enabled. Submit → `submitInvoiceReview`
+   runs unchanged, aliases are learned. Approve → `approveInvoice` runs
+   unchanged and posts `product_cost_history`, updating cost on any product
+   still linked to the vendor. Reject is unchanged. A *new* upload naming the
+   retired vendor is refused in `createInvoiceForUpload` (Flow 3).
 5. **Reorder.** Items with `vendorActive=false` sort first → one flagged block,
    vendor column, "Open in catalog", no Copy/Print (it is not an order for
    anyone). Normal vendor blocks follow.
@@ -187,9 +187,11 @@ Clearing a vendor (`vendorId: null`) is never refused.
   the location model's plain read; serialises writes per vendor, harmless at
   bar scale. *Recommended: as drafted* — it is what makes "zero assignments
   after retirement" hold under a race.
-- **D. Invoice review hold refuses the whole submit**, line corrections
-  included. Alternative: allow saving corrections, refuse only the move to
-  reviewed/approved. *Recommended: as drafted* (simpler; reject still works).
+- **D. ~~Invoice review hold refuses the whole submit~~ — superseded
+  2026-11-09 by owner decision: in-review invoices complete normally.** An
+  invoice already in review when its vendor is retired can be submitted and
+  approved; its costs post. No hold, no guard on submit, approve or alias
+  learning. Only a new upload naming a retired vendor is refused.
 - **E. Catalog marker built client-side** from the all-vendors list.
   Alternative: a `vendor_retired` reason in the existing "Needs attention"
   filter — easier bulk reassignment, needs a join in product summary queries.
@@ -203,5 +205,4 @@ Clearing a vendor (`vendorId: null`) is never refused.
 1. The default flip in `listVendorsAction` (Decision A).
 2. Without the locking read, the success metric is open to a race. Test: retire
    inside an open transaction while a product write waits; the write must fail.
-3. Held invoices can pile up if a vendor with invoices in review is retired.
-   The banner names both remedies; nothing is auto-rejected.
+3. ~~Held invoices pile up~~ — removed 2026-11-09: nothing is held.
