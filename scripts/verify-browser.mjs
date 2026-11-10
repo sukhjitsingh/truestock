@@ -79,6 +79,12 @@ const PASSWORD = process.env.CHECK_PASSWORD;
 const restoreLog = [];
 const skipped = [];
 
+// Set by the open-item #15 dashboard check; read by the manager check and by
+// the cleanup pass. A figure no real count would carry, so a match is ours.
+const DASH_SENTINEL_VALUE = "7777.77";
+const DASH_SENTINEL_FORMATTED = "$7,777.77";
+let dashSentinelCountId = null;
+
 if (!EMAIL || !PASSWORD) {
   console.error(
     "CHECK_EMAIL and CHECK_PASSWORD must be set.\n" +
@@ -607,6 +613,37 @@ try {
       "the vendor edit form names its subject",
       vendorHeading.toLowerCase().includes(firstVendorName.toLowerCase()),
       `heading reads "${vendorHeading}"`,
+    );
+  }
+
+  // ---- open-item #15: the dashboard's closed-count VALUE, owner side ------
+  // A sentinel closed count (one fully-costed line, so the tile prints the
+  // figure rather than a coverage dash) is seeded straight into the database
+  // with closed_at = now, so it is the org's "last closed count". The owner's
+  // DOM must show its id and its dollar figure — the positive control without
+  // which the manager's "no value" check below could pass on a tile that
+  // simply failed to render. Removed in the cleanup pass at the bottom.
+  const [[dashUserRow]] = await sql.query("SELECT id FROM user WHERE email = ?", [EMAIL]);
+  const [[dashProduct]] = await sql.query("SELECT id FROM product WHERE organization_id = ? AND active = 1 ORDER BY id LIMIT 1", [runOrgId]);
+  const [[dashLocation]] = await sql.query("SELECT id FROM location WHERE organization_id = ? ORDER BY id LIMIT 1", [runOrgId]);
+  const [dashCountInsert] = await sql.execute(
+    "INSERT INTO `count` (organization_id, type, status, closed_at, opened_by, closed_by, total_value) VALUES (?, 'spot', 'closed', NOW(), ?, ?, ?)",
+    [runOrgId, dashUserRow.id, dashUserRow.id, DASH_SENTINEL_VALUE],
+  );
+  dashSentinelCountId = dashCountInsert.insertId;
+  await sql.execute(
+    "INSERT INTO count_line (organization_id, count_id, product_id, location_id, sealed_each_qty, unit_cost_at_count, counted_by) VALUES (?, ?, ?, ?, 1, ?, ?)",
+    [runOrgId, dashSentinelCountId, dashProduct.id, dashLocation.id, DASH_SENTINEL_VALUE, dashUserRow.id],
+  );
+  await page.goto(`${BASE}/office`, { waitUntil: "networkidle" });
+  {
+    const tile = (await page.locator("main").innerText()).replace(/\s+/g, " ");
+    record(
+      "owner's dashboard shows the last closed count's id and dollar value",
+      tile.includes(`Count #${dashSentinelCountId}`) && tile.includes(DASH_SENTINEL_FORMATTED),
+      tile.includes(DASH_SENTINEL_FORMATTED)
+        ? `Count #${dashSentinelCountId} and ${DASH_SENTINEL_FORMATTED} present`
+        : `${DASH_SENTINEL_FORMATTED} MISSING from the Last closed count tile`,
     );
   }
 
@@ -1415,6 +1452,30 @@ try {
           `cost inputs=${costInputs} cost headers=${costHeader}`,
         );
 
+        // Open-item #15: the dashboard's Last closed count tile. The owner
+        // pass above proved the figure renders; here the tile must still be
+        // there for a manager (positive control) with the figure absent from
+        // both the visible text and the served HTML.
+        if (dashSentinelCountId != null) {
+          await rolePage.goto(`${BASE}/office`, { waitUntil: "networkidle" });
+          const dashHtml = await rolePage.content();
+          const dashText = (await rolePage.locator("main").innerText()).replace(/\s+/g, " ");
+          const tilePresent = dashText.includes(`Count #${dashSentinelCountId}`);
+          record(
+            "a manager's dashboard still shows the last closed count (positive control)",
+            tilePresent,
+            tilePresent ? "Count tile present" : "tile MISSING — the next check would pass vacuously",
+          );
+          const leaked = dashHtml.includes("7,777.77") || dashHtml.includes("7777.77");
+          record(
+            "a manager's dashboard has no closed-count dollar value anywhere in the DOM",
+            !leaked,
+            leaked ? "VALUE FOUND in manager DOM" : "absent, as required",
+          );
+          // The checks below read the catalog page this block navigated away from.
+          await rolePage.goto(`${BASE}/office/catalog`, { waitUntil: "networkidle" });
+        }
+
         // The Phase 2 completion criterion stated explicitly, as its own
         // check: the TanStack table's manager column array never contains
         // the cost column at all (columnVisibility is forbidden precisely
@@ -1892,6 +1953,13 @@ try {
     removedLocations === createdLocationIds.size,
     `${removedLocations} of ${createdLocationIds.size} recorded rows`,
   );
+
+  // The open-item #15 sentinel closed count and its one line — fixture teardown.
+  if (dashSentinelCountId != null) {
+    await sql.execute("DELETE FROM count_line WHERE count_id = ? AND organization_id = ?", [dashSentinelCountId, runOrgId]);
+    const [removedCount] = await sql.execute("DELETE FROM `count` WHERE id = ? AND organization_id = ?", [dashSentinelCountId, runOrgId]);
+    record("throwaway dashboard-value closed count removed", removedCount.affectedRows === 1, `count #${dashSentinelCountId}`);
+  }
 
   // The Slice 1 fixture invoice — deleted here by the harness (not by any
   // app code; invoices have no delete affordance and shouldn't) so repeated

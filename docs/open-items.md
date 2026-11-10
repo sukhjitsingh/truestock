@@ -615,7 +615,7 @@ and the last-closed-count tile searched inside `listCountsAction({ limit: 50 })`
 been closed yet" against a database full of them. Both were correct against the
 97-product seed and would have stayed *plausible* while becoming wrong.
 
-## 15. The dashboard value branch lacks a positive browser assertion
+## 15. ~~The dashboard value branch lacks a positive browser assertion~~ — CLOSED 2026-11-09
 
 **Trigger: the next browser-harness pass that touches `/office`.**
 
@@ -629,6 +629,16 @@ Close this by seeding two closed counts, asserting the owner's value/delta, and
 keeping the existing manager negative control. A visual visit without a named
 positive assertion is not enough; the branch could fail to render and the
 cost-leak check would still pass.
+
+**CLOSED 2026-11-09.** `scripts/verify-browser.mjs` now seeds one sentinel closed count
+(total `7777.77`, one fully-costed line, `closed_at = NOW()`, removed in the cleanup pass) and
+asserts three named lines: the owner's `/office` shows `Count #N` and `$7,777.77`; a manager's
+`/office` still shows `Count #N` (positive control); a manager's DOM contains neither
+`7,777.77` nor `7777.77`. Browser result against a production build: 100/100 PASS. Mutation
+check: removing the `canSeeCost` guard in `getLastClosedCount` turned the manager line red
+("VALUE FOUND in manager DOM", 99 PASS / 1 FAIL); restored and green again. One seeded count,
+not two: the tile has no vs-previous delta (it was removed with `countSummaryAction`), so there
+is no comparison to assert.
 
 ## 16. ~~A scanned barcode cannot be attached to an existing product~~ — CLOSED 2026-07-30
 
