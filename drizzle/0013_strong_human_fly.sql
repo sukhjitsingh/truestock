@@ -1,0 +1,1 @@
+ALTER TABLE `vendor` ADD `active` boolean DEFAULT true NOT NULL;

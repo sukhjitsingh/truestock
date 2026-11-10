@@ -18,6 +18,22 @@ export class NotFoundError extends DomainError {
   }
 }
 
+/**
+ * Invariant 6 on the write path: a retired vendor (`vendor.active = false`)
+ * cannot be newly assigned to a product or named on a new invoice. The message
+ * names the vendor so the person knows what to do next; callers only reach
+ * this after proving the vendor belongs to their org (assertVendorActive), so
+ * naming it leaks nothing.
+ */
+export class VendorRetiredError extends DomainError {
+  constructor(vendorName: string) {
+    super(
+      "VENDOR_RETIRED",
+      `${vendorName} is retired. Choose another vendor, or reactivate it on the Vendors screen.`,
+    );
+  }
+}
+
 /** CLAUDE.md invariant 1: closed counts are immutable. */
 export class ClosedCountError extends DomainError {
   constructor() {

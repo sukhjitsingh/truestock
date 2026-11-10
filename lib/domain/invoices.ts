@@ -50,6 +50,7 @@ import {
 } from "@/lib/storage/invoice-files";
 import { lockJobForUpload, updateJobStatusTx } from "@/lib/domain/extraction";
 import { extractionJob } from "@/db/schema";
+import { assertVendorActive } from "@/lib/domain/vendor-active";
 import { isDuplicateKeyOnIndex, withLockRetry } from "@/lib/domain/db-errors";
 
 export type InvoiceStatus = (typeof invoiceStatusEnum)[number];
@@ -167,17 +168,6 @@ export function toInvoiceRow(row: typeof invoice.$inferSelect): InvoiceRow {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
-}
-
-async function assertVendorOwned(tx: Tx, organizationId: number, vendorId: number): Promise<void> {
-  const [owned] = await tx
-    .select({ id: vendor.id })
-    .from(vendor)
-    .where(and(eq(vendor.id, vendorId), eq(vendor.organizationId, organizationId)))
-    .limit(1);
-  if (!owned) {
-    throw new NotFoundError("Vendor");
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -440,8 +430,10 @@ export async function createInvoiceForUpload(
     return { outcome: "duplicate", duplicate: existing };
   }
   const created = await db.transaction(async (tx) => {
+    // Invariant 6: a retired vendor cannot gain a new invoice. Also proves the
+    // vendor is this org's (cross-tenant -> NotFound).
     if (input.vendorId != null) {
-      await assertVendorOwned(tx, actor.organizationId, input.vendorId);
+      await assertVendorActive(tx, actor.organizationId, input.vendorId);
     }
 
     const [inserted] = await tx
