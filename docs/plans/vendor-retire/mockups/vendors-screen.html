@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup — Vendors screen with Retire</title>
+<style>
+  :root { --bg:#0e1116; --card:#171b22; --fg:#f2f4f7; --muted:#9aa4b2; --border:#2a313c;
+          --accent:#f5a524; --neg:#ff6b6b; --neg-bg:#3a1d1f; --ok:#4ade80; --ok-bg:#16301f; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.45 system-ui, sans-serif; padding:24px 16px; }
+  main { max-width:960px; margin:0 auto; }
+  h1 { font-size:28px; margin:0 0 4px; }
+  .note { color:var(--muted); font-size:13px; border-left:3px solid var(--accent); padding-left:10px; margin:28px 0 8px; }
+  .bar { display:flex; justify-content:space-between; align-items:center; margin:16px 0; gap:12px; flex-wrap:wrap; }
+  .muted { color:var(--muted); }
+  table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--border); border-radius:8px; }
+  caption { text-align:left; color:var(--muted); font-size:13px; padding:8px 0; }
+  th, td { padding:12px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }
+  th { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  td.r, th.r { text-align:right; }
+  .name { font-weight:600; }
+  .retired .name, .retired td { color:var(--muted); }
+  .badge { display:inline-block; border-radius:999px; padding:2px 10px; font-size:12px; font-weight:700; text-transform:uppercase; }
+  .ok { background:var(--ok-bg); color:var(--ok); } .neg { background:var(--neg-bg); color:var(--neg); }
+  button { font:inherit; min-height:44px; padding:0 16px; border-radius:6px; border:1px solid var(--border); background:transparent; color:var(--fg); cursor:pointer; }
+  button.primary { background:var(--accent); color:#111; border-color:var(--accent); font-weight:700; }
+  button.destructive { background:var(--neg); color:#111; border-color:var(--neg); font-weight:700; }
+  .actions { display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; }
+  .alert { background:var(--neg-bg); color:var(--neg); border-radius:6px; padding:8px 12px; font-size:14px; }
+  .warn { color:var(--accent); font-size:14px; text-align:right; margin-top:6px; }
+  .form { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:20px; margin-top:12px; }
+  input { font:inherit; background:var(--bg); color:var(--fg); border:1px solid var(--neg); border-radius:6px; padding:10px; width:100%; max-width:360px; }
+  label { display:block; font-weight:600; margin-bottom:6px; }
+  .scroll { overflow-x:auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Vendors</h1>
+  <div class="bar">
+    <span class="muted">4 active, 1 retired.</span>
+    <button class="primary">Create vendor</button>
+  </div>
+
+  <p class="note">Row 2: the manager tapped <b>Retire</b> once. The row is armed and says what is affected. A second tap confirms. There is no modal, matching the locations screen.</p>
+  <div class="scroll">
+  <table>
+    <caption>Vendors, 4 active, 1 retired</caption>
+    <thead><tr><th>Vendor</th><th>Contact</th><th>Order method</th><th>Lead time</th><th>Status</th><th class="r">Actions</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="name">Breakthru Beverage</td><td class="muted">Dana · 555-0142</td><td class="muted">Email</td><td class="muted">3d</td>
+        <td><span class="badge ok">Active</span></td>
+        <td class="r"><div class="actions"><button>Edit</button><button>Retire</button></div></td>
+      </tr>
+      <tr>
+        <td class="name">Southern Glazer's</td><td class="muted">Rep portal</td><td class="muted">Portal</td><td class="muted">2d</td>
+        <td><span class="badge ok">Active</span></td>
+        <td class="r">
+          <div class="actions"><button>Edit</button><button>Cancel</button><button class="destructive">Confirm retire?</button></div>
+          <div class="warn">12 products still use this vendor. They will need a new one.</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="name">Coors Distributing</td><td class="muted">—</td><td class="muted">Phone</td><td class="muted">5d</td>
+        <td><span class="badge ok">Active</span></td>
+        <td class="r"><div class="actions"><button>Edit</button><button>Retire</button></div></td>
+      </tr>
+      <tr class="retired">
+        <td class="name">Old Town Wine Co.</td><td>—</td><td>Email</td><td>7d</td>
+        <td><span class="badge neg">Retired</span></td>
+        <td class="r"><div class="actions"><button>Reactivate</button></div></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p class="note">Name stays taken. Creating a vendor called "Old Town Wine Co." is refused, and the message points to Reactivate.</p>
+  <div class="form">
+    <label for="n">Vendor name</label>
+    <input id="n" value="Old Town Wine Co.">
+    <p class="alert" role="alert">A retired vendor already uses this name. Reactivate it instead.</p>
+    <button class="primary">Create vendor</button>
+  </div>
+</main>
+</body>
+</html>

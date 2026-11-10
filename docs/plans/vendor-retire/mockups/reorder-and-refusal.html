@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup — Reorder block and save refusal</title>
+<style>
+  :root { --bg:#0e1116; --card:#171b22; --fg:#f2f4f7; --muted:#9aa4b2; --border:#2a313c;
+          --accent:#f5a524; --neg:#ff6b6b; --neg-bg:#3a1d1f; --warn-bg:#33270f; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.45 system-ui, sans-serif; padding:24px 16px; }
+  main { max-width:960px; margin:0 auto; }
+  h1 { font-size:28px; margin:0 0 16px; } h2 { font-size:20px; margin:0 0 8px; }
+  .note { color:var(--muted); font-size:13px; border-left:3px solid var(--accent); padding-left:10px; margin:28px 0 8px; }
+  .block { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:16px; }
+  .block.flag { border-color:var(--accent); background:var(--warn-bg); }
+  .muted { color:var(--muted); }
+  table { width:100%; border-collapse:collapse; margin-top:8px; }
+  th, td { padding:10px; border-bottom:1px solid var(--border); text-align:left; }
+  th { font-size:12px; text-transform:uppercase; color:var(--muted); } .r { text-align:right; }
+  button { font:inherit; min-height:44px; padding:0 16px; border-radius:6px; border:1px solid var(--border); background:transparent; color:var(--fg); }
+  button.primary { background:var(--accent); color:#111; border-color:var(--accent); font-weight:700; }
+  .alert { background:var(--neg-bg); color:var(--neg); border-radius:6px; padding:10px 12px; font-size:14px; }
+  select { font:inherit; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:10px; min-height:44px; }
+  .scroll { overflow-x:auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Reorder</h1>
+
+  <p class="note">Products still pointing at a retired vendor are not ordered from it. They get their own flagged block at the top until someone reassigns them.</p>
+  <section class="block flag">
+    <h2>Retired vendor: choose a new one</h2>
+    <p class="muted">These products are assigned to <b>Southern Glazer's</b>, which is retired. Select them in the catalog and assign a new vendor.</p>
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Product</th><th>Retired vendor</th><th class="r">On hand</th><th class="r">Par</th><th class="r">Order</th></tr></thead>
+      <tbody>
+        <tr><td>Tito's Handmade Vodka · 1.75 L</td><td class="muted">Southern Glazer's</td><td class="r">2</td><td class="r">6</td><td class="r">4</td></tr>
+        <tr><td>Jameson · 750 ml</td><td class="muted">Southern Glazer's</td><td class="r">1</td><td class="r">4</td><td class="r">3</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p style="margin:12px 0 0"><button>Open in catalog</button></p>
+  </section>
+
+  <section class="block">
+    <h2>Breakthru Beverage</h2>
+    <p class="muted">Email · 3-day lead time</p>
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Product</th><th class="r">On hand</th><th class="r">Par</th><th class="r">Order</th></tr></thead>
+      <tbody><tr><td>Bacardi Superior · 750 ml</td><td class="r">3</td><td class="r">8</td><td class="r">5</td></tr></tbody>
+    </table>
+    </div>
+  </section>
+
+  <p class="note">A product form opened <i>before</i> the vendor was retired still lists it. Saving that choice is refused, and the form stays open with the message below.</p>
+  <section class="block">
+    <h2>Edit Tito's Handmade Vodka · 1.75 L</h2>
+    <label for="v" style="display:block;font-weight:600;margin:8px 0 6px">Vendor</label>
+    <select id="v"><option>Southern Glazer's</option><option>Breakthru Beverage</option></select>
+    <p class="alert" role="alert">Southern Glazer's is retired. Choose another vendor, or reactivate it on the Vendors screen.</p>
+    <button class="primary">Save</button>
+  </section>
+</main>
+</body>
+</html>

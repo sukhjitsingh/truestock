@@ -1,0 +1,122 @@
+# Gate 1 — Product: retire a vendor
+
+No databases, schemas, endpoints or file names in this document. That is Gate 2.
+
+---
+
+## Problem
+
+**From the 2026-11-08 QA:** vendors can be created and edited, but there is no
+way to say "we don't buy from them any more." A supplier the bar has dropped:
+
+- stays in every place a vendor is chosen — the product form, the "assign
+  vendor to selected products" bar, and invoice review;
+- keeps its own block on the reorder list for every product still pointing at
+  it, so the order sheet tells the manager to call a supplier the bar no longer
+  uses;
+- cannot be deleted, and must not be — past invoices, remembered invoice line
+  names and old reorder lists all name it, and deleting it would orphan that
+  history.
+
+The quiet failure to prevent is the same one the rest of the app guards
+against: a manager picks the dropped supplier from a list out of habit, a
+product's reorder line goes to the wrong place, and nothing looks wrong until
+an order never arrives. Hiding the vendor from the lists is not enough on its
+own — a screen opened before the vendor was retired still offers it, and that
+choice must be refused when it is saved, not silently accepted.
+
+**Owner decision (2026-11-09):** a retired vendor's name stays taken. Nobody can
+create a new vendor with the same name, so history always points at one
+supplier.
+
+---
+
+## Success metric
+
+**One number:**
+
+> **Zero products, invoice lines or reorder lines assigned to a retired vendor
+> after it was retired** — except what was already assigned before, which is
+> kept and shown as needing a new vendor.
+
+Measured by: a check run against the database after the feature ships (and in
+an automated test that runs on every change): any assignment to a retired
+vendor dated after its retirement is a failure. The automated test also proves
+that a screen opened *before* retirement cannot save the retired vendor.
+
+**Supporting checks, each pass/fail:**
+
+- **Two taps to retire, from the vendors screen.** Retire → Confirm, the same
+  pattern locations use. No modal.
+- **The confirm says what is affected.** "12 products still use this vendor —
+  they will need a new one." The manager knows before confirming.
+- **Nothing disappears from history.** Past invoices, audit packets and closed
+  counts still show the vendor's name.
+- **Coming back is one tap.** A retired vendor shows a Reactivate button. This
+  is required by the decision above: without it, a supplier the bar returns to
+  could never be entered again, because its name is taken.
+
+---
+
+## Announcement
+
+> **You can now retire a vendor.** When the bar stops buying from a supplier,
+> tap Retire on the vendors screen and confirm. It drops out of every vendor
+> list — the product form, bulk assign and invoice review — and Truestock
+> refuses to assign anything new to it, even from a screen that was already
+> open. Products that still point at it show up on the reorder list under
+> **"Retired vendor — choose a new one"**, so nothing is ordered from the wrong
+> place. Its history stays intact: old invoices and audit packets still name
+> it, and its name stays reserved, so if you ever go back to that supplier,
+> tap Reactivate.
+
+---
+
+## Behaviour, in plain terms
+
+1. **Who can retire:** owner and manager — the same people who can create and
+   edit vendors today.
+2. **What retiring does:** marks the vendor retired. Nothing is deleted.
+3. **Lists:** a retired vendor is left out of every place a vendor is chosen.
+   On the vendors screen it stays visible with a **Retired** badge and a
+   **Reactivate** button, and the header reads "4 active, 1 retired".
+4. **Saving a retired vendor is refused**, with a message that names it:
+   *"Southern Glazer's is retired. Choose another vendor, or reactivate it on
+   the Vendors screen."* This covers assigning it to one product, to many at
+   once, and confirming it as the vendor of an invoice.
+5. **Products already assigned keep the link** (the history is real) but are
+   flagged: the reorder list groups them under "Retired vendor — choose a new
+   one", and the catalog shows the vendor name with a Retired marker. The
+   manager reassigns them with the existing bulk-assign bar.
+6. **Invoices:** past invoices from a retired vendor stay readable, approved
+   and in audit packets. A *new* invoice whose supplier is a retired vendor is
+   held at review with the message above, rather than posting costs against
+   it.
+7. **Name stays taken:** creating or renaming a vendor to a retired vendor's
+   name is refused with *"A retired vendor already uses this name — reactivate
+   it instead."*
+8. **Reactivate:** one tap on the vendors screen. The vendor returns to every
+   list. Products that were still pointing at it stop being flagged.
+
+---
+
+## Questions for the owner (answer at this gate)
+
+1. **Retire while products still use it — allow, or refuse?** This draft
+   **allows** it and flags those products (point 5), because refusing would
+   force reassigning every product before the supplier can be dropped. The
+   alternative is to refuse until no product points at it, the way a location
+   with lines on an open count can't be retired.
+2. **Reactivate — include it?** This draft includes it, because the name stays
+   taken. Without it, the only way back to a supplier is a support fix.
+
+---
+
+## Screens
+
+- `mockups/vendors-screen.html` — the vendors list: an active row, a row with
+  Retire armed showing the "12 products" warning, a retired row with
+  Reactivate, and the refusal for a taken name.
+- `mockups/reorder-and-refusal.html` — the reorder list's "Retired vendor —
+  choose a new one" block, and the refusal shown when a screen opened before
+  retirement tries to save the retired vendor.
