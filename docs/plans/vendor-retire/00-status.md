@@ -1,7 +1,7 @@
 # Status: retire a vendor (open item #49)
 
 - Gate 1 — Product: APPROVED 2026-11-09
-- Gate 2 — Architecture: in progress
+- Gate 2 — Architecture: drafted 2026-11-09, awaiting approval (`02-architecture.md`)
 - Gate 3 — Program Design: pending
 - Gate 4 — Slice plan: pending
 
