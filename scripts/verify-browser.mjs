@@ -849,7 +849,25 @@ try {
     });
     record(`every icon-only control has an accessible name — ${label}`, bad.length === 0, bad.join(" | ") || "none found");
   }
-  await assertNoUnlabelledIconControls("/office/catalog");
+  // Run on every office route, not just the catalog (open item #29): each
+  // check below navigates first, so the answer is about that screen.
+  const OFFICE_A11Y_ROUTES = [
+    // `mustReach` is a pattern the focus walk has to hit, so a screen that stops
+    // being covered fails rather than quietly passing. "Dashboard" is the first
+    // rail link, which every office screen shares; the per-screen entry is a
+    // control that only that screen has.
+    { path: "/office", mustReach: /Dashboard/ },
+    { path: "/office/counts", mustReach: /Counts/ },
+    { path: "/office/catalog", mustReach: /Search catalog/ },
+    { path: "/office/vendors", mustReach: /Vendors/ },
+    { path: "/office/locations", mustReach: /Locations/ },
+    { path: "/office/users", mustReach: /Users/ },
+    { path: "/office/reorder", mustReach: /Reorder/ },
+  ];
+  for (const { path: routePath } of OFFICE_A11Y_ROUTES) {
+    await page.goto(`${BASE}${routePath}`, { waitUntil: "networkidle" });
+    await assertNoUnlabelledIconControls(routePath);
+  }
 
   // ---- no heading-level skips -----------------------------------------------
   async function assertNoHeadingSkips(label) {
@@ -862,7 +880,10 @@ try {
     }
     record(`no heading-level skips — ${label}`, !skip, `levels=[${levels.join(",")}]`);
   }
-  await assertNoHeadingSkips("/office/catalog");
+  for (const { path: routePath } of OFFICE_A11Y_ROUTES) {
+    await page.goto(`${BASE}${routePath}`, { waitUntil: "networkidle" });
+    await assertNoHeadingSkips(routePath);
+  }
 
   // ---- every focusable element has a visible focus treatment ---------------
   // design-system.md §7: "No component may set outline: none ... without
@@ -939,7 +960,9 @@ try {
           : `COVERAGE LOST — walked ${visited.length} stops without reaching ${mustReach}`,
     );
   }
-  await assertFocusVisible("/office/catalog", /Search catalog/);
+  for (const { path: routePath, mustReach } of OFFICE_A11Y_ROUTES) {
+    await assertFocusVisible(routePath, mustReach);
+  }
 
   // ---- account menu moves focus in on open, and gives it back on Escape ----
   // design-system.md §9's popover contract. A menu that opens without taking
