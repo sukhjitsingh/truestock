@@ -52,9 +52,11 @@ that a screen opened *before* retirement cannot save the retired vendor.
   they will need a new one." The manager knows before confirming.
 - **Nothing disappears from history.** Past invoices, audit packets and closed
   counts still show the vendor's name.
-- **Coming back is one tap.** A retired vendor shows a Reactivate button. This
-  is required by the decision above: without it, a supplier the bar returns to
-  could never be entered again, because its name is taken.
+- **Coming back is deliberate.** A retired vendor shows a Reactivate button that
+  asks for confirmation (Reactivate → Confirm reactivate?) and says what will
+  change before it does anything. Reactivate is required by the decision
+  above: without it, a supplier the bar returns to could never be entered
+  again, because its name is taken.
 
 ---
 
@@ -95,8 +97,12 @@ that a screen opened *before* retirement cannot save the retired vendor.
 7. **Name stays taken:** creating or renaming a vendor to a retired vendor's
    name is refused with *"A retired vendor already uses this name — reactivate
    it instead."*
-8. **Reactivate:** one tap on the vendors screen. The vendor returns to every
-   list. Products that were still pointing at it stop being flagged.
+8. **Reactivate, with a confirmation** (owner request 2026-11-09). Same two-tap
+   pattern as Retire, no modal: the first tap arms the row and states the
+   consequence — *"Reactivate Old Town Wine Co.? It will appear in every vendor
+   list again, and 3 products assigned to it will stop being flagged."* — with
+   Cancel beside **Confirm reactivate?**. Only the second tap reactivates. The
+   vendor then returns to every list and its products stop being flagged.
 
 ---
 
@@ -106,6 +112,8 @@ that a screen opened *before* retirement cannot save the retired vendor.
    keep the link and are flagged (point 5), rather than the retire being
    refused until every product is reassigned.
 2. **Reactivate is included.** Required because the name stays taken.
+3. **Reactivate asks for confirmation** before it acts — two taps, stating the
+   consequence, the same no-modal pattern as Retire (point 8).
 
 ---
 
@@ -113,7 +121,8 @@ that a screen opened *before* retirement cannot save the retired vendor.
 
 - `mockups/vendors-screen.html` — the vendors list: an active row, a row with
   Retire armed showing the "12 products" warning, a retired row with
-  Reactivate, and the refusal for a taken name.
+  Reactivate, a retired row with Reactivate armed showing its confirmation,
+  and the refusal for a taken name.
 - `mockups/reorder-and-refusal.html` — the reorder list's "Retired vendor —
   choose a new one" block, and the refusal shown when a screen opened before
   retirement tries to save the retired vendor.

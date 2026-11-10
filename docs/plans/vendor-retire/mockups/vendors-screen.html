@@ -38,14 +38,14 @@
 <main>
   <h1>Vendors</h1>
   <div class="bar">
-    <span class="muted">4 active, 1 retired.</span>
+    <span class="muted">3 active, 2 retired.</span>
     <button class="primary">Create vendor</button>
   </div>
 
   <p class="note">Row 2: the manager tapped <b>Retire</b> once. The row is armed and says what is affected. A second tap confirms. There is no modal, matching the locations screen.</p>
   <div class="scroll">
   <table>
-    <caption>Vendors, 4 active, 1 retired</caption>
+    <caption>Vendors, 3 active, 2 retired</caption>
     <thead><tr><th>Vendor</th><th>Contact</th><th>Order method</th><th>Lead time</th><th>Status</th><th class="r">Actions</th></tr></thead>
     <tbody>
       <tr>
@@ -71,10 +71,19 @@
         <td><span class="badge neg">Retired</span></td>
         <td class="r"><div class="actions"><button>Reactivate</button></div></td>
       </tr>
+      <tr class="retired">
+        <td class="name">Harbor Spirits</td><td>—</td><td>Phone</td><td>4d</td>
+        <td><span class="badge neg">Retired</span></td>
+        <td class="r">
+          <div class="actions"><button>Cancel</button><button class="primary">Confirm reactivate?</button></div>
+          <div class="warn">Reactivate Harbor Spirits? It will appear in every vendor list again, and 3 products assigned to it will stop being flagged.</div>
+        </td>
+      </tr>
     </tbody>
   </table>
   </div>
 
+  <p class="note">Last row: the manager tapped <b>Reactivate</b> once. Nothing has changed yet. The row asks for confirmation and says what will happen. The vendor is reactivated only on the second tap.</p>
   <p class="note">Name stays taken. Creating a vendor called "Old Town Wine Co." is refused, and the message points to Reactivate.</p>
   <div class="form">
     <label for="n">Vendor name</label>
