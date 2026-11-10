@@ -1312,6 +1312,16 @@ in a browser (same missing-accounts blocker as #50), so any real defect these
 extended checks find is still unseen. What remains is the counting screens
 (`/count`, the scan page), which need a phone and belong with item #20.
 
+**2026-11-09 — office routes PASS in a browser.** `verify-browser.mjs` against
+a production build on `truestock_e2e`, signed in as owner: 93/93 checks, no CSP
+or console errors. All three assertions passed on all seven office routes
+(`assertFocusVisible` 28–30 tab stops, none bare, `mustReach` met; heading
+levels `[1]`, `/office/reorder` `[1,2]`; no unnamed icon buttons), plus the
+account-menu focus-in and Escape-return checks. No defect found. The manager and
+staff browser role checks were not run (no credentials passed) and are NOT
+VERIFIED, not passes. **Item stays open only for the counting screens** (with
+#20, on a phone).
+
 ---
 
 ## 30. ~~Three of seven table surfaces never moved onto the shared primitives~~ — CLOSED 2026-11-09
@@ -2245,6 +2255,26 @@ in this session: no e2e or verify-browser accounts).**
   (with its barcodes and any count lines). A row already leaked by an earlier
   run must still be removed once by hand; not touched here. Proof is owed: run
   verify-browser then `count-flow` against `truestock_e2e`.
+
+**2026-11-09 browser proof (production build, `truestock_e2e`).** 46a, 46b and
+46d are now proven in a desktop browser with a phone viewport; the item stays
+OPEN for the retry-timer bullet and the phone proof (#48).
+
+- *46a, 46b — two new tests in `e2e/specs/count-flow.e2e.ts`:* "a write held
+  pending shows the not-synced warning near Finish section" and "Submit count is
+  disabled on the session page while a write is pending, and enables once it
+  drains". Both block only the count POSTs, like the three queue tests.
+  Mutation-checked: `finishSectionWarning` returning null turns the first red;
+  dropping `blocked !== null` from Submit's `disabled` turns the second red.
+  Restored, rebuilt, green.
+- *46d:* `verify-browser` (93/93; its teardown removed its own Jameson row)
+  followed directly by `count-flow` (9/9): no strict-mode duplicate-Jameson
+  failure. One run, so it shows this run did not leak, not that no path can.
+  `truestock_e2e` holds a second Jameson, id 100 (1750 ml, `active = 0`,
+  created 2026-11-07, no count lines), from an older run. Being inactive, it
+  does not collide in the picker; left in place.
+- Still open: the retry timer lives in the scan screen only, and none of this
+  has run on a phone.
 
 ## 47. Eight invoice failures from the 2026-11-06 QA run
 

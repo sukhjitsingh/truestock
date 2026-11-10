@@ -11,6 +11,13 @@ When a feature ships, its one-line entry goes here (AGENTS.md, "Planning workflo
 
 ---
 
+- **2026-11-09** — **Count-queue guards and office accessibility proven in a
+  browser (open items #46, #29).** Two new mutation-checked `count-flow` e2e
+  specs prove the Finish-section warning and the disabled Submit while a count
+  write is pending (#46a/b). `verify-browser` (93/93) followed by `count-flow`
+  no longer trips on a leaked Jameson row (#46d). The accessibility floor passes
+  on all seven office routes (#29). #46 stays open for the retry timer and the
+  phone; #29 for the counting screens.
 - **2026-11-09** — **A vendor can be retired and reactivated (open item #49).**
   The owner can now stop buying from a supplier without deleting it. Migration
   0013 adds `vendor.active`. The write path refuses a retired vendor in four
