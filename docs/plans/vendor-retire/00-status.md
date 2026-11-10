@@ -2,7 +2,7 @@
 
 - Gate 1 — Product: APPROVED 2026-11-09
 - Gate 2 — Architecture: APPROVED 2026-11-09 (decisions A–F as drafted)
-- Gate 3 — Program Design: in progress
+- Gate 3 — Program Design: drafted 2026-11-09, awaiting approval (`03-program-design.md`)
 - Gate 4 — Slice plan: pending
 
 ## Slices
