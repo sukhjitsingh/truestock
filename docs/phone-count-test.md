@@ -153,6 +153,77 @@ ignored. It is a listener, not a controller.
 
 ---
 
+## Host-only phone rig — a branch build, no Docker, no certificate
+
+For testing **a branch or worktree** on the phone (not the Docker stack in
+section 0). `scripts/phone/rig.sh` serves this checkout's last
+`bun run build` on `127.0.0.1:3204` and carries it to the phone with
+`adb reverse`. The phone opens **`http://localhost:3204`**: localhost is a
+secure context, so the camera and IndexedDB work with no certificate; nothing
+listens on the LAN, so the macOS firewall never asks; and `BETTER_AUTH_URL` is
+exactly that origin, so sign-in works in production mode. First proven
+2026-11-10 (Pixel 10 Pro XL, Chrome 156, wireless debugging): the login page
+hydrated as a POST form, `isSecureContext` true, IndexedDB present.
+
+```bash
+bun run build && git checkout -- AGENTS.md   # the build rewrites AGENTS.md
+bun run phone:rig up          # server + tunnels; opens the login page on the phone
+bun run phone:rig status
+bun run phone:rig down        # stop the server, remove the tunnels
+```
+
+- **The database is whatever `.env.local` names** (`ENV_FILE=` to change it);
+  `up` prints it. Sign in on the phone yourself with an account in that
+  database.
+- **Wireless debugging changes port** whenever the phone's Wi-Fi drops or the
+  screen has been off a while; the device then shows `offline`. `up` restarts
+  adb and reconnects through mDNS. If it still finds nothing, open Developer
+  options → Wireless debugging on the phone (that re-advertises it) and run
+  `up` again.
+- The tunnel *is* wireless debugging, so **turning the phone's Wi-Fi off cuts
+  the app too** — that is a real offline test, but adb needs `up` again after.
+
+### #29 — accessibility on the counting screens
+
+With the phone signed in and showing a counting screen:
+
+```bash
+bun run phone:a11y -- --origin http://localhost:3204
+```
+
+It attaches to the DevTools forward the rig made (`PHONE_CDP`, default
+`http://127.0.0.1:9333`). It reads the screen the phone is already on — it
+navigates only if given `--path /x`, and never clicks or types — and walks
+focus with Tab (stopping if a password field takes focus), then reports:
+a visible focus ring on every stop, heading levels that skip, icon-only buttons
+with no accessible name, and tap targets under 44 px (WARN, not FAIL). Exit 1
+on any FAIL; a screenshot lands in `.phone-sessions/`. Run it once per screen:
+`/count`, the section picker, the scan/leg screen, the quantity editor, the
+fill (tenths) editor, and the session page with Submit.
+
+### #46 — the pending-write drills
+
+Each drill is a count in progress, with writes made while the server cannot
+take them. **Watch for**, on the leg screen, the sync chip showing pending
+writes and the "not synced" warning beside **Finish section** (46a); on the
+session page `/count/<id>`, **Submit count disabled** while anything is pending
+(46b), enabling once it drains.
+
+1. **Server unreachable, phone online** (the F3 shape — retries, not the
+   `online` event, must drain it). `bun run phone:rig server-down`; on the
+   phone enter two or three quantities; check the chip, the Finish warning and
+   the disabled Submit; `bun run phone:rig server-up`; within ~15 s the queue
+   drains, Submit enables, and the lines are in the database with no
+   duplicates.
+2. **Real offline.** Phone Wi-Fi off (mobile data off too — a cellular
+   fallback is "online"); enter quantities; Wi-Fi on; the queue drains on
+   reconnect. Then re-run `bun run phone:rig up` — adb needs a new port.
+3. **Leave and come back.** With writes pending, go to `/count/<id>`: Submit
+   must stay disabled until the drain. (The retry timer lives on the scan
+   screen only — whether the session page waits forever is what this checks.)
+
+---
+
 ## 1. Preflight — on the phone, before walking anywhere
 
 Open **`/count/preflight`** and read it. This is the step that turns "walk to

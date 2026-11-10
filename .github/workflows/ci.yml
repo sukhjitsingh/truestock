@@ -273,10 +273,17 @@ jobs:
           kill -0 "$(cat "$RUNNER_TEMP/server.pid")"
           curl -fsS -o /dev/null http://127.0.0.1:3101/login
 
-      - name: Playwright smoke and roles specs (mobile + desktop)
+      - name: Playwright smoke, roles, vendors-retire and count-flow specs
         # GitHub sets CI=true, which makes global setup FAIL (not skip) if any
         # role cannot sign in — a pipeline cannot go green on skipped specs.
-        run: node node_modules/playwright/cli.js test smoke roles vendors-retire
+        #
+        # count-flow (2026-11-10) is the count write path end to end: search,
+        # enter, save, read back from the database, plus the offline-queue
+        # ordering, the Finish-section warning and the pending-write Submit
+        # gate (open item #46). It runs in the mobile project only and resets
+        # every count before and after itself, which is safe on this
+        # throwaway database.
+        run: node node_modules/playwright/cli.js test smoke roles vendors-retire count-flow
 
       - name: Server log
         if: failure()

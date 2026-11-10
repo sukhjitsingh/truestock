@@ -33,6 +33,8 @@
     "test:docker": "docker compose exec -T -e DATABASE_URL=mysql://truestock:truestock@db:3306/truestock_test app bun test --timeout 30000",
     "verify:browser": "node --env-file=.env.local scripts/verify-browser.mjs",
     "phone:observe": "node scripts/phone/observe.mjs",
+    "phone:a11y": "node scripts/phone/a11y.mjs",
+    "phone:rig": "bash scripts/phone/rig.sh",
     "e2e": "playwright test",
     "e2e:headed": "playwright test --headed",
     "e2e:ui": "playwright test --ui",

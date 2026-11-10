@@ -2272,9 +2272,15 @@ OPEN for the retry-timer bullet and the phone proof (#48).
   failure. One run, so it shows this run did not leak, not that no path can.
   `truestock_e2e` holds a second Jameson, id 100 (1750 ml, `active = 0`,
   created 2026-11-07, no count lines), from an older run. Being inactive, it
-  does not collide in the picker; left in place.
+  did not collide in the picker. **Deleted 2026-11-10** at the owner's request,
+  with its one barcode row (id 8) in a single transaction — it had no cost
+  history, invoice lines, count lines, aliases or pars. `truestock_e2e` now
+  holds one Jameson (id 18, 750 ml, active).
+- 2026-11-10: `count-flow` now runs in CI (`e2e-smoke` job), so 46a/46b are
+  gated on every PR, not only proven once.
 - Still open: the retry timer lives in the scan screen only, and none of this
-  has run on a phone.
+  has run on a phone. The phone rig and the drills are ready in
+  `docs/phone-count-test.md` → "Host-only phone rig".
 
 ## 47. Eight invoice failures from the 2026-11-06 QA run
 
