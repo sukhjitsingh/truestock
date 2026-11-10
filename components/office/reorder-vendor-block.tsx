@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import Link from "next/link";
 import { Check, Copy, Printer } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   TableContainer,
   Table,
@@ -34,11 +35,19 @@ export function ReorderVendorBlock({
   items,
   asOfCountId,
   asOfClosedAt,
+  flagged = false,
 }: {
   vendorName: string;
   items: ReorderItem[];
   asOfCountId: number;
   asOfClosedAt: string | null;
+  /**
+   * The vendor is retired. These products still need stocking, but nothing can
+   * be ordered from a retired vendor: the block says so and offers no Copy or
+   * Print, so a stale order is never texted out. The manager picks a new
+   * vendor on each product.
+   */
+  flagged?: boolean;
 }) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -100,7 +109,15 @@ export function ReorderVendorBlock({
   }
 
   return (
-    <section ref={sectionRef} aria-labelledby={headingId} className="flex flex-col gap-3">
+    <section
+      ref={sectionRef}
+      aria-labelledby={headingId}
+      className={
+        flagged
+          ? "flex flex-col gap-3 rounded-xl border-2 border-warning p-3"
+          : "flex flex-col gap-3"
+      }
+    >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <h2 id={headingId} className="text-label uppercase text-muted-foreground font-semibold">
@@ -109,41 +126,60 @@ export function ReorderVendorBlock({
           <span className="inline-flex items-center rounded-full bg-secondary/80 px-2 py-0.5 text-caption font-semibold text-secondary-foreground border border-border/60">
             {items.length} {items.length === 1 ? "item" : "items"}
           </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {copyState === "error" ? (
-            <span className="text-caption text-negative" role="alert">
-              Couldn&rsquo;t copy — clipboard isn&rsquo;t available here.
+          {flagged ? (
+            <span className="inline-flex items-center rounded-full bg-warning-bg px-2 py-0.5 text-caption font-semibold text-warning">
+              Retired vendor — choose a new one
             </span>
           ) : null}
-          <Button
-            type="button"
-            variant="outline"
-            size="tap"
-            onClick={handleCopy}
-            aria-label={`Copy ${vendorName} order to clipboard`}
-            className="font-semibold shadow-xs"
-          >
-            {copyState === "copied" ? (
-              <Check className="size-4 text-success" aria-hidden="true" />
-            ) : (
-              <Copy className="size-4 text-accent" aria-hidden="true" />
-            )}
-            {copyState === "copied" ? "Copied" : "Copy order"}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="tap"
-            onClick={handlePrint}
-            aria-label={`Print ${vendorName} order`}
-            className="font-semibold shadow-xs"
-          >
-            <Printer className="size-4 text-muted-foreground" aria-hidden="true" />
-            Print
-          </Button>
         </div>
+        {flagged ? (
+          <Link
+            href="/office/catalog"
+            className={buttonVariants({ variant: "outline", size: "tap" })}
+          >
+            Open in catalog
+          </Link>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            {copyState === "error" ? (
+              <span className="text-caption text-negative" role="alert">
+                Couldn&rsquo;t copy — clipboard isn&rsquo;t available here.
+              </span>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="tap"
+              onClick={handleCopy}
+              aria-label={`Copy ${vendorName} order to clipboard`}
+              className="font-semibold shadow-xs"
+            >
+              {copyState === "copied" ? (
+                <Check className="size-4 text-success" aria-hidden="true" />
+              ) : (
+                <Copy className="size-4 text-accent" aria-hidden="true" />
+              )}
+              {copyState === "copied" ? "Copied" : "Copy order"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="tap"
+              onClick={handlePrint}
+              aria-label={`Print ${vendorName} order`}
+              className="font-semibold shadow-xs"
+            >
+              <Printer className="size-4 text-muted-foreground" aria-hidden="true" />
+              Print
+            </Button>
+          </div>
+        )}
       </div>
+      {flagged ? (
+        <p className="text-row-subtitle font-semibold text-foreground" role="note">
+          {vendorName} is retired. These products need a new vendor before they can be ordered.
+        </p>
+      ) : null}
       <TableContainer className="glass-card">
         <Table className="min-w-[34rem]">
           <TableCaption>{vendorName} reorder, {items.length} items</TableCaption>

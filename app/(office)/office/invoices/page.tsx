@@ -1,4 +1,4 @@
-import { listVendorsAction } from "@/app/actions/catalog";
+import { listAllVendorsAction } from "@/app/actions/catalog";
 import { listInvoicesForOwnerAction, listInvoicesRedactedAction } from "@/app/actions/invoices";
 import { InvoiceUploadForm } from "@/components/office/invoice-upload-form";
 import { PageHeader } from "@/components/office/page-header";
@@ -70,8 +70,8 @@ export const metadata = { title: "Invoices · Truestock" };
  * Vendor NAMES aren't on `InvoiceRow`/`InvoiceRowRedacted` at all — both
  * only carry `vendorId`. Rather than touch `lib/domain/invoices.ts` (out of
  * scope for this slice, per the frontend brief) to add a join, this page
- * fetches `listVendorsAction()` alongside the invoice list and builds the
- * id -> name lookup here. `listVendorsAction` is already owner+manager,
+ * fetches `listAllVendorsAction()` alongside the invoice list and builds the
+ * id -> name lookup here. `listAllVendorsAction` is already owner+manager,
  * no-cost-data (see its own doc comment in app/actions/catalog.ts), so this
  * adds no new role surface.
  */
@@ -81,7 +81,7 @@ export default async function InvoicesPage() {
 
   const [invoicesResult, vendorsResult] = await Promise.all([
     isOwner ? listInvoicesForOwnerAction() : listInvoicesRedactedAction(),
-    listVendorsAction(),
+    listAllVendorsAction(),
   ]);
 
   const invoices = invoicesResult.ok ? invoicesResult.data : [];
@@ -117,7 +117,7 @@ export default async function InvoicesPage() {
       />
 
       <div className="mt-6 rounded-xl border border-border/80 bg-card/85 backdrop-blur-md p-6 shadow-xs">
-        <InvoiceUploadForm vendors={vendors} />
+        <InvoiceUploadForm vendors={vendors.filter((v) => v.active)} />
       </div>
 
       {!invoicesResult.ok ? (

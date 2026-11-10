@@ -233,7 +233,10 @@ export function InvoiceReviewForm({
   products,
   outcome = null,
   canSeeCost,
+  vendorRetired = null,
 }: {
+  /** Non-null when the invoice's vendor is retired: shows a note, disables nothing. */
+  vendorRetired?: { name: string } | null;
   /** From the server page (`canSeeCost(role)`). The posting panel carries unit
    * costs and is owner-only (invariant 8); the report action refuses anyone
    * else regardless of this prop. */
@@ -555,6 +558,17 @@ export function InvoiceReviewForm({
           ) : null}
           {retryRefusal?.place === "panel" ? <InvoiceDuplicateNotice view={retryRefusal.view} /> : null}
         </div>
+      ) : null}
+
+      {/* Informational only (owner decision 4): nothing is disabled. Submit and
+          Approve work exactly as for an active vendor. */}
+      {vendorRetired ? (
+        <p
+          className="mb-4 rounded-md border border-warning/40 bg-warning-bg px-3 py-2 text-body text-warning"
+          role="status"
+        >
+          {`${vendorRetired.name} is retired. You can still submit and approve this invoice; new invoices from it can’t be uploaded.`}
+        </p>
       ) : null}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">

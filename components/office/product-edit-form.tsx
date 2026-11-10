@@ -8,6 +8,7 @@ import { bottleSizesFor, isPresetSizeMl } from "@/lib/bottle-sizes";
 import { isCountedByCase } from "@/lib/pack-level";
 import { subcategoryOptions } from "@/lib/subcategories";
 import { formatCostForInput } from "@/lib/utils";
+import { vendorIdPatch, vendorOptionsFor } from "@/lib/vendor-options";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/field";
 
@@ -153,7 +154,9 @@ export function ProductEditForm({
        * deliberate way to say "none".
        */
       caseSize: caseSize.trim() === "" ? null : Number(caseSize),
-      vendorId: vendorId === "" ? null : Number(vendorId),
+      // Only when changed: a retired vendor the product already has must not be
+      // re-sent on an unrelated save, or the server would refuse it.
+      ...vendorIdPatch(product.vendorId, vendorId),
       // Blank clears the par rather than meaning "leave it alone" — the field
       // is always rendered with its current value, so a blank box is a
       // deliberate erasure, not an omission. The server distinguishes the two
@@ -334,9 +337,9 @@ export function ProductEditForm({
         <Field label="Vendor" htmlFor="vendor" error={fieldErrors.vendorId}>
           <Select id="vendor" value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
             <option value="">No vendor</option>
-            {vendors.map((v) => (
+            {vendorOptionsFor(vendors, product.vendorId).map((v) => (
               <option key={v.id} value={v.id}>
-                {v.name}
+                {v.label}
               </option>
             ))}
           </Select>

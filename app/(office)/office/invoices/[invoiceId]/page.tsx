@@ -7,7 +7,7 @@ import {
   getInvoiceExtractionOutcomeAction,
 } from "@/app/actions/invoices";
 import {
-  listVendorsAction,
+  listAllVendorsAction,
   searchProductsAction,
   getProductsByIdsAction,
 } from "@/app/actions/catalog";
@@ -59,7 +59,7 @@ export default async function InvoiceReviewPage({
   const notReady = invoice.status === "uploaded" || invoice.status === "processing";
 
   const [vendorsResult, reviewData] = await Promise.all([
-    listVendorsAction(),
+    listAllVendorsAction(),
     notReady
       ? Promise.resolve(null)
       : Promise.all([
@@ -72,10 +72,10 @@ export default async function InvoiceReviewPage({
   ]);
 
   const vendors = vendorsResult.ok ? vendorsResult.data : [];
+  const vendorRow = invoice.vendorId != null ? vendors.find((v) => v.id === invoice.vendorId) : undefined;
   const vendorName =
-    invoice.vendorId != null
-      ? (vendors.find((vendor) => vendor.id === invoice.vendorId)?.name ?? `Vendor #${invoice.vendorId}`)
-      : null;
+    invoice.vendorId != null ? (vendorRow?.name ?? `Vendor #${invoice.vendorId}`) : null;
+  const vendorRetired = vendorRow && !vendorRow.active ? { name: vendorRow.name } : null;
 
   const linesResult = reviewData ? reviewData[0] : null;
   const productsResult = reviewData ? reviewData[1] : null;
@@ -145,6 +145,7 @@ export default async function InvoiceReviewPage({
           lines={linesResult.data}
           products={products}
           canSeeCost={canSeeCost(viewer.role)}
+          vendorRetired={vendorRetired}
           outcome={outcomeResult?.ok ? outcomeResult.data : null}
         />
       )}
