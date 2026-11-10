@@ -2377,7 +2377,7 @@ it is a migration.
 
 ---
 
-## 50. The office side menu has no visible keyboard focus — **FIX LANDED 2026-11-09, open until verify-browser reports PASS**
+## 50. The office side menu has no visible keyboard focus — **CLOSED 2026-11-09 (browser PASS)**
 
 **Trigger: the next change to `components/office/office-rail.tsx`, or the
 accessibility pass in #29 — whichever comes first.**
@@ -2406,6 +2406,15 @@ harness samples. **Caveat on the evidence:** that diagnosis and the flip to
 PASS were not observed — the fix was made in a worktree whose dev database has
 none of the `verify-browser` accounts, so the browser run is still owed. Re-open
 if `verify-browser` still reports the rail links as bare.
+
+**Browser PASS observed 2026-11-09** against a production build of
+`fix/qa-open-items` (`next start` on :3201, dev database): `assertFocusVisible`
+passes on all seven office routes — `/office` 29 tab stops, `/office/counts`
+28, `/office/catalog` 30, `/office/vendors` 28, `/office/locations` 29,
+`/office/users` 29, `/office/reorder` 28 — none bare. Run it against a
+production build: under `next dev` the dev overlay's `<nextjs-portal>` is a tab
+stop with no outline and fails the check on six routes, which says nothing
+about the app.
 
 ## 51. The local databases use a NO PAD collation that CI and the compose comment say they don't
 
