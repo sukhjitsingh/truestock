@@ -16,14 +16,23 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:tes
 import { and, eq } from "drizzle-orm";
 import { db, closePool } from "@/db";
 import { invoice, product, productPar, productCostHistory, vendor, vendorAlias, invoiceLine } from "@/db/schema";
-import { assignVendorToProducts, createProduct, listVendors, updateProduct } from "@/lib/domain/catalog";
+import {
+  assignVendorToProducts,
+  createProduct,
+  createVendor,
+  deactivateVendor,
+  listVendors,
+  reactivateVendor,
+  updateProduct,
+  updateVendor,
+} from "@/lib/domain/catalog";
 import { createInvoiceForUpload, listInvoicesForOwner, updateInvoiceStatus } from "@/lib/domain/invoices";
 import { approveInvoice } from "@/lib/domain/invoice-approval";
 import { submitInvoiceReview } from "@/lib/domain/invoice-lines";
 import { previewAuditPacket } from "@/lib/domain/audit-packets";
 import { reorderList } from "@/lib/domain/reports";
 import { assertVendorActive } from "@/lib/domain/vendor-active";
-import { NotFoundError, VendorRetiredError } from "@/lib/domain/errors";
+import { ConflictError, NotFoundError, VendorRetiredError } from "@/lib/domain/errors";
 import { openCount, incrementCountLine, submitCount, reviewCount, closeCount } from "@/lib/domain/counts";
 import {
   migrateTestDatabase,
@@ -507,5 +516,119 @@ describe("history stays readable", () => {
     await retire(fx.vendorId);
     const rows = await listInvoicesForOwner(fx.owner, { vendorId: fx.vendorId });
     expect(rows.map((r) => r.id)).toContain(fx.invoiceId);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slice 2 — deactivateVendor / reactivateVendor and the name-reuse branch
+// ---------------------------------------------------------------------------
+
+async function vendorActive(id: number): Promise<boolean> {
+  const [row] = await db.select({ active: vendor.active }).from(vendor).where(eq(vendor.id, id));
+  return row.active;
+}
+
+describe("deactivateVendor / reactivateVendor", () => {
+  test("sets active=false and returns the count of ACTIVE products only", async () => {
+    await db.update(product).set({ vendorId: fx.vendorId }).where(eq(product.id, fx.pricedProductId));
+    await db.update(product).set({ vendorId: fx.vendorId }).where(eq(product.id, fx.secondProductId));
+    await db
+      .update(product)
+      .set({ vendorId: fx.vendorId, active: false })
+      .where(eq(product.id, fx.unpricedProductId));
+
+    const res = await deactivateVendor(fx.owner, fx.vendorId);
+    expect(res).toEqual({ vendorId: fx.vendorId, productCount: 2 });
+    expect(await vendorActive(fx.vendorId)).toBe(false);
+  });
+
+  test("retiring keeps products linked", async () => {
+    await db.update(product).set({ vendorId: fx.vendorId }).where(eq(product.id, fx.pricedProductId));
+    await deactivateVendor(fx.owner, fx.vendorId);
+    expect((await productRow(fx.pricedProductId)).vendorId).toBe(fx.vendorId);
+  });
+
+  test("both are idempotent: a second call succeeds and the row is unchanged", async () => {
+    await db.update(product).set({ vendorId: fx.vendorId }).where(eq(product.id, fx.pricedProductId));
+    const first = await deactivateVendor(fx.manager, fx.vendorId);
+    const second = await deactivateVendor(fx.manager, fx.vendorId);
+    expect(second).toEqual(first);
+    expect(await vendorActive(fx.vendorId)).toBe(false);
+
+    const r1 = await reactivateVendor(fx.manager, fx.vendorId);
+    const r2 = await reactivateVendor(fx.manager, fx.vendorId);
+    expect(r2).toEqual(r1);
+    expect(r1.productCount).toBe(1);
+    expect(await vendorActive(fx.vendorId)).toBe(true);
+  });
+
+  test("another tenant's or a nonexistent vendor id is NotFound and the row is untouched", async () => {
+    await expect(deactivateVendor(fx.otherOwner, fx.vendorId)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(deactivateVendor(fx.owner, fx.otherVendorId)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(deactivateVendor(fx.owner, 99999999)).rejects.toBeInstanceOf(NotFoundError);
+    expect(await vendorActive(fx.vendorId)).toBe(true);
+    expect(await vendorActive(fx.otherVendorId)).toBe(true);
+
+    await retire(fx.otherVendorId);
+    await expect(reactivateVendor(fx.owner, fx.otherVendorId)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(reactivateVendor(fx.owner, 99999999)).rejects.toBeInstanceOf(NotFoundError);
+    expect(await vendorActive(fx.otherVendorId)).toBe(false);
+  });
+
+  test("reactivate returns the vendor to listVendors and the guard accepts it again", async () => {
+    await deactivateVendor(fx.owner, fx.vendorId);
+    expect((await listVendors(fx.owner)).map((v) => v.id)).not.toContain(fx.vendorId);
+    await db.transaction(async (tx) => {
+      await expect(assertVendorActive(tx, fx.organizationId, fx.vendorId)).rejects.toBeInstanceOf(
+        VendorRetiredError,
+      );
+    });
+
+    await reactivateVendor(fx.owner, fx.vendorId);
+    expect((await listVendors(fx.owner)).map((v) => v.id)).toContain(fx.vendorId);
+    await db.transaction(async (tx) => {
+      const ok = await assertVendorActive(tx, fx.organizationId, fx.vendorId);
+      expect(ok.id).toBe(fx.vendorId);
+    });
+  });
+});
+
+describe("name reuse after retirement", () => {
+  const RETIRED_MSG = "A retired vendor already uses this name — reactivate it instead.";
+
+  test("createVendor with a retired vendor's name is VENDOR_NAME_RETIRED", async () => {
+    await retire(fx.vendorId);
+    const attempt = createVendor(fx.owner, { name: "Test Distributor" });
+    await expect(attempt).rejects.toMatchObject({ code: "VENDOR_NAME_RETIRED", message: RETIRED_MSG });
+    await expect(attempt).rejects.not.toBeInstanceOf(ConflictError);
+  });
+
+  test("updateVendor renaming to a retired vendor's name is VENDOR_NAME_RETIRED, rename not applied", async () => {
+    await retire(fx.vendorId);
+    const other = await createVendor(fx.owner, { name: "Other Co" });
+    await expect(updateVendor(fx.owner, { id: other.id, name: "Test Distributor" })).rejects.toMatchObject({
+      code: "VENDOR_NAME_RETIRED",
+      message: RETIRED_MSG,
+    });
+    const [row] = await db.select().from(vendor).where(eq(vendor.id, other.id));
+    expect(row.name).toBe("Other Co");
+  });
+
+  test("an ACTIVE duplicate keeps the existing ConflictError message", async () => {
+    await expect(createVendor(fx.owner, { name: "Test Distributor" })).rejects.toBeInstanceOf(ConflictError);
+    await expect(createVendor(fx.owner, { name: "Test Distributor" })).rejects.toThrow(
+      'A vendor named "Test Distributor" already exists. Edit that vendor instead of adding a second one.',
+    );
+    const other = await createVendor(fx.owner, { name: "Other Co" });
+    await expect(updateVendor(fx.owner, { id: other.id, name: "Test Distributor" })).rejects.toBeInstanceOf(
+      ConflictError,
+    );
+  });
+
+  test("another tenant's retired vendor with the same name is not a collision", async () => {
+    await retire(fx.otherVendorId);
+    const [o] = await db.select({ name: vendor.name }).from(vendor).where(eq(vendor.id, fx.otherVendorId));
+    const created = await createVendor(fx.owner, { name: o.name });
+    expect(created.active).toBe(true);
   });
 });

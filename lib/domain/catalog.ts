@@ -1291,6 +1291,35 @@ function vendorNameTaken(name: string): string {
 }
 
 /**
+ * The unique key kept a name taken. If the row that holds it is a RETIRED
+ * vendor, say so (the person's way out is Reactivate, not "edit that vendor"
+ * — it isn't in their lists); an active duplicate keeps the original message.
+ * Org-scoped; `name` is compared with the column's collation, the same one the
+ * unique index used.
+ */
+async function nameCollisionError(
+  runner: Runner,
+  organizationId: number,
+  name: string,
+  excludingVendorId?: number,
+): Promise<DomainError> {
+  const conditions = [eq(vendor.organizationId, organizationId), eq(vendor.name, name)];
+  if (excludingVendorId !== undefined) conditions.push(ne(vendor.id, excludingVendorId));
+  const [row] = await runner
+    .select({ active: vendor.active })
+    .from(vendor)
+    .where(and(...conditions))
+    .limit(1);
+  if (row && !row.active) {
+    return new DomainError(
+      "VENDOR_NAME_RETIRED",
+      "A retired vendor already uses this name — reactivate it instead.",
+    );
+  }
+  return new ConflictError(vendorNameTaken(name));
+}
+
+/**
  * Create a new vendor. Simple insert; no ownership check needed since the id
  * is server-generated.
  */
@@ -1310,7 +1339,9 @@ export async function createVendor(actor: Actor, input: VendorCreateInput): Prom
   } catch (err) {
     // `vendor_organization_name_unique` — one vendor per name per tenant,
     // compared without case or trailing spaces (the column's collation).
-    if (isDuplicateKeyError(err)) throw new ConflictError(vendorNameTaken(input.name));
+    if (isDuplicateKeyError(err)) {
+      throw await nameCollisionError(db, actor.organizationId, input.name);
+    }
     throw err;
   }
 
@@ -1356,7 +1387,9 @@ export async function updateVendor(actor: Actor, input: VendorUpdateInput): Prom
             and(eq(vendor.id, input.id), eq(vendor.organizationId, actor.organizationId)),
           );
       } catch (err) {
-        if (isDuplicateKeyError(err)) throw new ConflictError(vendorNameTaken(input.name ?? ""));
+        if (isDuplicateKeyError(err)) {
+          throw await nameCollisionError(tx, actor.organizationId, input.name ?? "", input.id);
+        }
         throw err;
       }
     }
@@ -1381,6 +1414,63 @@ export async function updateVendor(actor: Actor, input: VendorUpdateInput): Prom
     throw new NotFoundError("Vendor");
   }
   return { ...result, productCount: Number(result.productCount) };
+}
+
+/** ACTIVE products on this vendor, org-scoped (the number the confirm text shows). */
+async function countActiveProductsOnVendor(
+  runner: Runner,
+  organizationId: number,
+  vendorId: number,
+): Promise<number> {
+  const [row] = await runner
+    .select({ n: countRows() })
+    .from(product)
+    .where(
+      and(
+        eq(product.organizationId, organizationId),
+        eq(product.vendorId, vendorId),
+        eq(product.active, true),
+      ),
+    );
+  return Number(row?.n ?? 0);
+}
+
+async function setVendorActive(
+  actor: Actor,
+  vendorId: number,
+  active: boolean,
+): Promise<{ vendorId: number; productCount: number }> {
+  return db.transaction(async (tx) => {
+    // Invariant 9: cross-tenant / missing id is NotFound before any write.
+    await assertVendorOwned(tx, actor.organizationId, vendorId);
+    // Idempotent: writing the value it already has is a no-op, not an error.
+    await tx
+      .update(vendor)
+      .set({ active })
+      .where(and(eq(vendor.id, vendorId), eq(vendor.organizationId, actor.organizationId)));
+    const productCount = await countActiveProductsOnVendor(tx, actor.organizationId, vendorId);
+    return { vendorId, productCount };
+  });
+}
+
+/**
+ * Retire a vendor (invariant 6: never a DELETE). Products stay linked; the
+ * guard in vendor-active.ts refuses NEW attachments. Owner/manager only
+ * (enforced in the action).
+ */
+export async function deactivateVendor(
+  actor: Actor,
+  vendorId: number,
+): Promise<{ vendorId: number; productCount: number }> {
+  return setVendorActive(actor, vendorId, false);
+}
+
+/** Bring a retired vendor back. Idempotent; owner/manager only (in the action). */
+export async function reactivateVendor(
+  actor: Actor,
+  vendorId: number,
+): Promise<{ vendorId: number; productCount: number }> {
+  return setVendorActive(actor, vendorId, true);
 }
 
 /**

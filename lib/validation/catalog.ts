@@ -300,3 +300,9 @@ export const locationDeactivateSchema = z.object({
   locationId: z.number().int().positive(),
 });
 export type LocationDeactivateInput = z.infer<typeof locationDeactivateSchema>;
+
+/** Retire / reactivate a vendor (#49). `active` flips only, never a DELETE (invariant 6). */
+export const vendorIdSchema = z.object({
+  vendorId: z.number().int().positive(),
+});
+export type VendorIdInput = z.infer<typeof vendorIdSchema>;
