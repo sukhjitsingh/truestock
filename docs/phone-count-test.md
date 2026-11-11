@@ -192,6 +192,13 @@ run on the laptop. It is a separate run from the desktop and emulated-mobile
 ones: `bun run e2e:desktop` and `bun run e2e:mobile` never touch the phone, and
 `e2e:phone` never launches a local browser for the tests.
 
+**Where each run belongs.** CI (`e2e-smoke`) runs the desktop and emulated
+mobile projects in full on every PR; that is the gate. The phone run is for
+**development and the QA phase only**: run it before a release that touches
+the counting screens, and after a change the emulator cannot judge (keyboard,
+camera, touch, real Chrome on Android). It is never in CI, and
+`bun run e2e:phone` refuses to start when `CI` is set.
+
 The suite needs the **e2e database and the e2e accounts**, so the server must
 be a second rig on another port, with the e2e env file (the one
 `E2E_ENV_FILE` points at: a `DATABASE_URL` for a `_e2e` database plus the

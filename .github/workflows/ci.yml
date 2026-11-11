@@ -137,8 +137,10 @@ jobs:
   # that renders, returns 200, and never hydrates (the static-CSP break of
   # 2026-07-28; AGENTS.md: "A 200 is not evidence that a page works"). This
   # job serves the PRODUCTION build and drives it in Chromium with the
-  # Playwright smoke spec: the login form hydrates as a POST form, every office
-  # page hydrates with no console or CSP errors, signed-out access redirects.
+  # full Playwright suite in two runs, desktop and emulated mobile. The smoke
+  # spec is the core of it: the login form hydrates as a POST form, every
+  # office page hydrates with no console or CSP errors, signed-out access
+  # redirects.
   #
   # Mutation-checked 2026-11-08: with the nonce removed from script-src in
   # lib/csp.ts, global setup fails with `"form" never hydrated` and the job
@@ -273,35 +275,43 @@ jobs:
           kill -0 "$(cat "$RUNNER_TEMP/server.pid")"
           curl -fsS -o /dev/null http://127.0.0.1:3101/login
 
-      - name: Playwright desktop (smoke, roles, vendors-retire)
+      - name: Playwright desktop (every desktop spec)
         # GitHub sets CI=true, which makes global setup FAIL (not skip) if any
         # role cannot sign in — a pipeline cannot go green on skipped specs.
+        # The whole `desktop` project, no spec list (2026-11-10): a new spec is
+        # gated the day it lands instead of waiting for someone to add it here.
+        # Which specs run where is decided once, by testIgnore in
+        # playwright.config.ts (office-catalog and vendors-retire are desktop
+        # only; the counting specs are mobile only).
         # Desktop and mobile are separate runs (as they are locally:
         # `bun run e2e:desktop` / `e2e:mobile`); each repeats global setup's
-        # three sign-ins, well inside the rate limit. vendors-retire is
-        # desktop-only (a desk surface).
+        # three sign-ins, well inside the rate limit.
         # Each run writes its own HTML report folder (the env var beats the
         # config's outputFolder), so the second run cannot overwrite the first's
         # evidence; the upload step below takes both.
+        # The third project, `phone` (a real Android phone over CDP), never runs
+        # here: it exists only when E2E_PHONE_CDP is set, which this job never
+        # does, and `bun run e2e:phone` refuses to start under CI. It is a
+        # development and QA run (docs/phone-count-test.md).
         id: e2e_desktop
         env:
           PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/desktop
-        run: node node_modules/playwright/cli.js test --project=desktop smoke roles vendors-retire
+        run: node node_modules/playwright/cli.js test --project=desktop
 
-      - name: Playwright mobile (smoke, roles, count-flow)
+      - name: Playwright mobile (every mobile spec, emulated Pixel 7)
         # Runs whenever the desktop step ran, pass or fail, so a desktop failure
         # never hides the mobile result (and a server that never started skips
         # both).
         if: ${{ !cancelled() && (steps.e2e_desktop.outcome == 'success' || steps.e2e_desktop.outcome == 'failure') }}
-        # count-flow (2026-11-10) is the count write path end to end: search,
-        # enter, save, read back from the database, plus the offline-queue
-        # ordering, the Finish-section warning and the pending-write Submit
-        # gate (open item #46). It runs in the mobile project only and resets
-        # every count before and after itself, which is safe on this
-        # throwaway database.
+        # The whole `mobile` project: smoke, roles, count-flow (the count write
+        # path end to end, the offline-queue ordering, the Finish-section
+        # warning and the pending-write Submit gate, open item #46) and
+        # phone-round2 (the three 2026-10-25 phone-test regressions). The
+        # counting specs reset every count before and after themselves, which
+        # is safe on this throwaway database.
         env:
           PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/mobile
-        run: node node_modules/playwright/cli.js test --project=mobile smoke roles count-flow
+        run: node node_modules/playwright/cli.js test --project=mobile
 
       - name: Server log
         if: failure()

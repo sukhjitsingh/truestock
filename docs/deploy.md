@@ -229,7 +229,9 @@ hPanel (§2.4). These are exclusively for the pipeline.
 
 - `.github/workflows/ci.yml` — every PR and every push to `main`: `verify`
   (`bun install`, typecheck, lint, test, the migrations-immutable check, `next
-  build`) and `e2e-smoke` (the Playwright smoke spec against a production build).
+  build`) and `e2e-smoke` (every Playwright spec against a production build, in two runs:
+  the `desktop` project, then the emulated `mobile` project; the real-phone
+  `phone` project is never run in CI).
 - `.github/workflows/branch-policy.yml` — on every PR: refuses any source branch
   but `qa-release` or `hotfix/*` into `main`, and anything but a work branch or a
   `main` back-merge into `qa-release`. See `docs/branching.md`.

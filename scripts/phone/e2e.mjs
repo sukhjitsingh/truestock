@@ -7,7 +7,18 @@
 // test then dies on its 60 s timeout (seen 2026-11-10: 19 of 19, screenshots
 // timing out too). So check over adb first and stop with one clear line.
 // Skipped when adb is not on PATH (E2E_PHONE_CDP may point somewhere else).
+//
+// Never in CI: the phone run is for development and QA only (a person's phone,
+// unlocked, on the desk). CI gates on the desktop and emulated-mobile projects.
 import { spawnSync } from "node:child_process";
+
+if (process.env.CI) {
+  console.error(
+    "e2e:phone: refusing to run under CI. The real-phone run is for development and QA only; " +
+      "CI runs `--project=desktop` and `--project=mobile` (docs/phone-count-test.md).",
+  );
+  process.exit(2);
+}
 
 const adbArgs = process.env.ADB_SERIAL ? ["-s", process.env.ADB_SERIAL] : [];
 const power = spawnSync("adb", [...adbArgs, "shell", "dumpsys", "power"], { encoding: "utf8" });

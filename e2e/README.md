@@ -15,10 +15,17 @@ them), then:
 E2E_ENV_FILE=/path/outside/the/repo/e2e.env bun run e2e          # desktop + mobile, one run
 E2E_ENV_FILE=... bun run e2e:desktop                             # desktop only
 E2E_ENV_FILE=... bun run e2e:mobile                              # emulated Pixel 7 in local Chromium
-E2E_ENV_FILE=... bun run e2e:phone                               # REAL phone over CDP (below)
+E2E_ENV_FILE=... bun run e2e:phone                               # REAL phone over CDP (below); dev/QA only, never CI
 E2E_ENV_FILE=... bun run e2e:desktop -- office-catalog           # one spec
 bun run e2e:report                                               # open the last HTML report
 ```
+
+**CI** (`.github/workflows/ci.yml`, job `e2e-smoke`) runs the same two commands
+the developer does, as two steps: the whole `desktop` project, then the whole
+`mobile` project. There is no spec list in CI; a new spec runs there as soon as
+it lands, in whichever projects `playwright.config.ts` allows it. The `phone`
+project is a development and QA run only: CI never sets `E2E_PHONE_CDP`, and
+`bun run e2e:phone` refuses to start when `CI` is set.
 
 `bun run e2e` is `playwright test` (the 1.49.1 runner bundled in `playwright`;
 `@playwright/test` is not a dependency). Without `bun`, use
@@ -150,6 +157,9 @@ tests).
 | `count-flow` | mobile, phone | start, pick a section, search, enter quantity, save: one line, one ledger row; same bottle again increments (invariants 3 and 5); SET states its consequence; tenths location takes Half |
 | `phone-round2` | mobile, phone | the three phone-test fixes. Proven to fail when the code is reverted: no stale hub after Back (production build), enroll form says why Save is off. Pins the contract with **no proven teeth**: Save stays disabled once tapped, the in-app Back links (see `docs/open-items.md` item 41) |
 | `office-catalog` | desktop | TanStack table paging and sorting; owner inline cost edit reaches the database and survives reload; known-defect probe |
+| `vendors-retire` | desktop | retire and reactivate a vendor in two taps (#49); a retired vendor's name is refused with the reactivate message; the invoice-upload picker omits it |
+
+CI runs every spec in its desktop and mobile projects; `phone` is run by hand (dev/QA).
 
 Ground truth for count specs is the database, never the same screen under test:
 an optimistic card on screen proves nothing about invariants 3 and 5.
