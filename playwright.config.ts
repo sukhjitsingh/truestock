@@ -49,7 +49,7 @@ export default defineConfig({
       // The product is a phone app; this is the viewport it is built for.
       name: "mobile",
       // The back-office catalog table is a desk surface (see its spec header).
-      testIgnore: ["**/office-catalog.e2e.ts"],
+      testIgnore: ["**/office-catalog.e2e.ts", "**/vendors-retire.e2e.ts"],
       use: {
         ...devices["Pixel 7"],
         viewport: { width: 390, height: 844 },
@@ -69,5 +69,21 @@ export default defineConfig({
       testIgnore: ["**/count-flow.e2e.ts", "**/phone-round2.e2e.ts"],
       use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 800 }, ...(channel ? { channel } : {}) },
     },
+    // A REAL Android phone's Chrome over CDP, defined only when E2E_PHONE_CDP is
+    // set so plain runs and CI never need a device (docs/phone-count-test.md,
+    // "Playwright on the phone"). The `browser` fixture in e2e/support/fixtures.ts
+    // does the connecting. `viewport: null` is required: Android refuses
+    // Browser.setWindowBounds, so any context with a viewport fails. No device
+    // descriptor, scale factor or isMobile: the phone is the device. No hasTouch
+    // either: no spec calls .tap(), they click.
+    ...(process.env.E2E_PHONE_CDP?.trim()
+      ? [
+          {
+            name: "phone",
+            testIgnore: ["**/office-catalog.e2e.ts", "**/vendors-retire.e2e.ts"],
+            use: { viewport: null },
+          },
+        ]
+      : []),
   ],
 });

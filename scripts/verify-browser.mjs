@@ -79,6 +79,12 @@ const PASSWORD = process.env.CHECK_PASSWORD;
 const restoreLog = [];
 const skipped = [];
 
+// Set by the open-item #15 dashboard check; read by the manager check and by
+// the cleanup pass. A figure no real count would carry, so a match is ours.
+const DASH_SENTINEL_VALUE = "7777.77";
+const DASH_SENTINEL_FORMATTED = "$7,777.77";
+let dashSentinelCountId = null;
+
 if (!EMAIL || !PASSWORD) {
   console.error(
     "CHECK_EMAIL and CHECK_PASSWORD must be set.\n" +
@@ -610,6 +616,37 @@ try {
     );
   }
 
+  // ---- open-item #15: the dashboard's closed-count VALUE, owner side ------
+  // A sentinel closed count (one fully-costed line, so the tile prints the
+  // figure rather than a coverage dash) is seeded straight into the database
+  // with closed_at = now, so it is the org's "last closed count". The owner's
+  // DOM must show its id and its dollar figure — the positive control without
+  // which the manager's "no value" check below could pass on a tile that
+  // simply failed to render. Removed in the cleanup pass at the bottom.
+  const [[dashUserRow]] = await sql.query("SELECT id FROM user WHERE email = ?", [EMAIL]);
+  const [[dashProduct]] = await sql.query("SELECT id FROM product WHERE organization_id = ? AND active = 1 ORDER BY id LIMIT 1", [runOrgId]);
+  const [[dashLocation]] = await sql.query("SELECT id FROM location WHERE organization_id = ? ORDER BY id LIMIT 1", [runOrgId]);
+  const [dashCountInsert] = await sql.execute(
+    "INSERT INTO `count` (organization_id, type, status, closed_at, opened_by, closed_by, total_value) VALUES (?, 'spot', 'closed', NOW(), ?, ?, ?)",
+    [runOrgId, dashUserRow.id, dashUserRow.id, DASH_SENTINEL_VALUE],
+  );
+  dashSentinelCountId = dashCountInsert.insertId;
+  await sql.execute(
+    "INSERT INTO count_line (organization_id, count_id, product_id, location_id, sealed_each_qty, unit_cost_at_count, counted_by) VALUES (?, ?, ?, ?, 1, ?, ?)",
+    [runOrgId, dashSentinelCountId, dashProduct.id, dashLocation.id, DASH_SENTINEL_VALUE, dashUserRow.id],
+  );
+  await page.goto(`${BASE}/office`, { waitUntil: "networkidle" });
+  {
+    const tile = (await page.locator("main").innerText()).replace(/\s+/g, " ");
+    record(
+      "owner's dashboard shows the last closed count's id and dollar value",
+      tile.includes(`Count #${dashSentinelCountId}`) && tile.includes(DASH_SENTINEL_FORMATTED),
+      tile.includes(DASH_SENTINEL_FORMATTED)
+        ? `Count #${dashSentinelCountId} and ${DASH_SENTINEL_FORMATTED} present`
+        : `${DASH_SENTINEL_FORMATTED} MISSING from the Last closed count tile`,
+    );
+  }
+
   // ---- slice 5: the dashboard counts in the database, not in a page ------
   const [[{ activeProducts }]] = await sql.query("SELECT COUNT(*) AS activeProducts FROM product WHERE active = 1");
   await page.goto(`${BASE}/office`, { waitUntil: "networkidle" });
@@ -849,7 +886,25 @@ try {
     });
     record(`every icon-only control has an accessible name — ${label}`, bad.length === 0, bad.join(" | ") || "none found");
   }
-  await assertNoUnlabelledIconControls("/office/catalog");
+  // Run on every office route, not just the catalog (open item #29): each
+  // check below navigates first, so the answer is about that screen.
+  const OFFICE_A11Y_ROUTES = [
+    // `mustReach` is a pattern the focus walk has to hit, so a screen that stops
+    // being covered fails rather than quietly passing. "Dashboard" is the first
+    // rail link, which every office screen shares; the per-screen entry is a
+    // control that only that screen has.
+    { path: "/office", mustReach: /Dashboard/ },
+    { path: "/office/counts", mustReach: /Counts/ },
+    { path: "/office/catalog", mustReach: /Search catalog/ },
+    { path: "/office/vendors", mustReach: /Vendors/ },
+    { path: "/office/locations", mustReach: /Locations/ },
+    { path: "/office/users", mustReach: /Users/ },
+    { path: "/office/reorder", mustReach: /Reorder/ },
+  ];
+  for (const { path: routePath } of OFFICE_A11Y_ROUTES) {
+    await page.goto(`${BASE}${routePath}`, { waitUntil: "networkidle" });
+    await assertNoUnlabelledIconControls(routePath);
+  }
 
   // ---- no heading-level skips -----------------------------------------------
   async function assertNoHeadingSkips(label) {
@@ -862,7 +917,10 @@ try {
     }
     record(`no heading-level skips — ${label}`, !skip, `levels=[${levels.join(",")}]`);
   }
-  await assertNoHeadingSkips("/office/catalog");
+  for (const { path: routePath } of OFFICE_A11Y_ROUTES) {
+    await page.goto(`${BASE}${routePath}`, { waitUntil: "networkidle" });
+    await assertNoHeadingSkips(routePath);
+  }
 
   // ---- every focusable element has a visible focus treatment ---------------
   // design-system.md §7: "No component may set outline: none ... without
@@ -939,7 +997,9 @@ try {
           : `COVERAGE LOST — walked ${visited.length} stops without reaching ${mustReach}`,
     );
   }
-  await assertFocusVisible("/office/catalog", /Search catalog/);
+  for (const { path: routePath, mustReach } of OFFICE_A11Y_ROUTES) {
+    await assertFocusVisible(routePath, mustReach);
+  }
 
   // ---- account menu moves focus in on open, and gives it back on Escape ----
   // design-system.md §9's popover contract. A menu that opens without taking
@@ -1392,6 +1452,30 @@ try {
           `cost inputs=${costInputs} cost headers=${costHeader}`,
         );
 
+        // Open-item #15: the dashboard's Last closed count tile. The owner
+        // pass above proved the figure renders; here the tile must still be
+        // there for a manager (positive control) with the figure absent from
+        // both the visible text and the served HTML.
+        if (dashSentinelCountId != null) {
+          await rolePage.goto(`${BASE}/office`, { waitUntil: "networkidle" });
+          const dashHtml = await rolePage.content();
+          const dashText = (await rolePage.locator("main").innerText()).replace(/\s+/g, " ");
+          const tilePresent = dashText.includes(`Count #${dashSentinelCountId}`);
+          record(
+            "a manager's dashboard still shows the last closed count (positive control)",
+            tilePresent,
+            tilePresent ? "Count tile present" : "tile MISSING — the next check would pass vacuously",
+          );
+          const leaked = dashHtml.includes("7,777.77") || dashHtml.includes("7777.77");
+          record(
+            "a manager's dashboard has no closed-count dollar value anywhere in the DOM",
+            !leaked,
+            leaked ? "VALUE FOUND in manager DOM" : "absent, as required",
+          );
+          // The checks below read the catalog page this block navigated away from.
+          await rolePage.goto(`${BASE}/office/catalog`, { waitUntil: "networkidle" });
+        }
+
         // The Phase 2 completion criterion stated explicitly, as its own
         // check: the TanStack table's manager column array never contains
         // the cost column at all (columnVisibility is forbidden precisely
@@ -1511,6 +1595,7 @@ try {
   let ownerOrgId = null;
   const fixtureBarcodeIds = [];
   const createdProductIds = [];
+  let productIdWatermark = null;
   const camBrowser = await chromium.launch({
     channel: "chrome",
     args: [
@@ -1524,6 +1609,13 @@ try {
     // into. Removed below — a fixture, not the app deleting a count.
     const [[signedInUser]] = await sql.execute("SELECT id, organization_id FROM `user` WHERE email = ?", [EMAIL]);
     ownerOrgId = signedInUser.organization_id;
+    // Every product this section creates through the app (the "different size"
+    // Jameson) is found at teardown by id > this watermark, not by a list the
+    // test body has to remember to push to. The list missed the row whenever
+    // the section threw or timed out between the save and the lookup, leaving
+    // a stray Jameson 1.75 L that failed e2e count-flow on a strict-mode match.
+    const [[mark]] = await sql.execute("SELECT COALESCE(MAX(id), 0) AS maxId FROM product");
+    productIdWatermark = Number(mark.maxId);
     const [ins] = await sql.execute(
       "INSERT INTO `count` (organization_id, type, status, opened_by, notes) VALUES (?, 'spot', 'in_progress', ?, 'verify-browser fake camera')",
       [signedInUser.organization_id, signedInUser.id],
@@ -1794,7 +1886,16 @@ try {
     // teardown, the same way the throwaway locations are — the app itself
     // never hard-deletes a product (invariant 6). Nothing references it: no
     // count line was written.
-    for (const id of createdProductIds) {
+    if (ownerOrgId != null && productIdWatermark != null) {
+      const [made] = await sql.execute(
+        "SELECT id FROM product WHERE organization_id = ? AND id > ?",
+        [ownerOrgId, productIdWatermark],
+      );
+      for (const row of made) createdProductIds.push(row.id);
+    }
+    for (const id of new Set(createdProductIds)) {
+      await sql.execute("DELETE FROM count_line_write WHERE count_line_id IN (SELECT id FROM count_line WHERE product_id = ?)", [id]);
+      await sql.execute("DELETE FROM count_line WHERE product_id = ?", [id]);
       await sql.execute("DELETE FROM product_barcode WHERE product_id = ?", [id]);
       await sql.execute("DELETE FROM product WHERE id = ?", [id]);
     }
@@ -1852,6 +1953,13 @@ try {
     removedLocations === createdLocationIds.size,
     `${removedLocations} of ${createdLocationIds.size} recorded rows`,
   );
+
+  // The open-item #15 sentinel closed count and its one line — fixture teardown.
+  if (dashSentinelCountId != null) {
+    await sql.execute("DELETE FROM count_line WHERE count_id = ? AND organization_id = ?", [dashSentinelCountId, runOrgId]);
+    const [removedCount] = await sql.execute("DELETE FROM `count` WHERE id = ? AND organization_id = ?", [dashSentinelCountId, runOrgId]);
+    record("throwaway dashboard-value closed count removed", removedCount.affectedRows === 1, `count #${dashSentinelCountId}`);
+  }
 
   // The Slice 1 fixture invoice — deleted here by the harness (not by any
   // app code; invoices have no delete affordance and shouldn't) so repeated

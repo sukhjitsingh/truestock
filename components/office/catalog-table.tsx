@@ -83,6 +83,7 @@ export function CatalogTable({
   canSeeCost,
   canEditCost,
   vendors,
+  allVendors,
   userRole,
 }: {
   products: ProductSummary[];
@@ -93,7 +94,10 @@ export function CatalogTable({
    * cost cell renders as an editable input or read-only Money (Gate 3
    * "changed props"). Case-size edit ability reuses `canManage` below. */
   canEditCost: boolean;
+  /** Active only: feeds the bulk-assign picker. */
   vendors: VendorSummary[];
+  /** Active and retired: names the Vendor column. */
+  allVendors: VendorSummary[];
   userRole: "owner" | "manager" | "staff";
 }) {
   const router = useRouter();
@@ -379,6 +383,7 @@ export function CatalogTable({
   // Memoized for the same reason `filteredRows` is: `useReactTable` compares
   // `columns` by reference too, and rebuilding it every render throws away and
   // reconstructs the entire column and row model on each pass.
+  const vendorById = useMemo(() => new Map(allVendors.map((v) => [v.id, v])), [allVendors]);
   const columns = useMemo<ColumnDef<ProductSummary>[]>(() => {
     const cols: ColumnDef<ProductSummary>[] = [];
 
@@ -455,6 +460,30 @@ export function CatalogTable({
           ) : null}
         </div>
       ),
+    });
+
+    cols.push({
+      id: "vendor",
+      accessorFn: (row) => vendorById.get(row.vendorId ?? -1)?.name ?? "",
+      header: "Vendor",
+      cell: ({ row }) => {
+        const v = vendorById.get(row.original.vendorId ?? -1);
+        if (!v) return <NullValue reason="not-entered" />;
+        // Retired: greyed name plus a marker, so the manager can see which
+        // products still need a new vendor. The product stays fully usable.
+        return v.active ? (
+          <span className="block max-w-[10rem] truncate text-row-subtitle text-foreground" title={v.name}>
+            {v.name}
+          </span>
+        ) : (
+          <div>
+            <span className="block max-w-[10rem] truncate text-row-subtitle text-muted-foreground" title={v.name}>
+              {v.name}
+            </span>
+            <StatusPill tone="warning">Retired</StatusPill>
+          </div>
+        );
+      },
     });
 
     cols.push({
@@ -562,6 +591,7 @@ export function CatalogTable({
     canManage,
     canSeeCost,
     canEditCost,
+    vendorById,
     selectedIds,
     visibleIds,
     selectAllVisible,

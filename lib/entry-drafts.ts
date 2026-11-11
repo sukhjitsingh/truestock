@@ -154,3 +154,16 @@ export function canSubmitCount(
       "to clear, then submit.",
   };
 }
+
+/**
+ * The inline warning shown on "Finish section" while count-line writes are
+ * still queued on this device (open item #46). Null when nothing is pending.
+ * It is a sentence on screen, never a modal: a confirmation dialog on a control
+ * used all count gets tapped through blind. It states the number so the counter
+ * knows before moving on — the queue only drains while the scan screen is open.
+ */
+export function finishSectionWarning(pending: number): string | null {
+  if (pending <= 0) return null;
+  const subject = pending === 1 ? "1 save hasn't" : `${pending} saves haven't`;
+  return `${subject} synced yet. Stay on this screen until the indicator shows Synced.`;
+}

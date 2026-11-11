@@ -11,6 +11,21 @@ When a feature ships, its one-line entry goes here (AGENTS.md, "Planning workflo
 
 ---
 
+- **2026-11-09** — **Count-queue guards and office accessibility proven in a
+  browser (open items #46, #29).** Two new mutation-checked `count-flow` e2e
+  specs prove the Finish-section warning and the disabled Submit while a count
+  write is pending (#46a/b). `verify-browser` (93/93) followed by `count-flow`
+  no longer trips on a leaked Jameson row (#46d). The accessibility floor passes
+  on all seven office routes (#29). #46 stays open for the retry timer and the
+  phone; #29 for the counting screens.
+- **2026-11-09** — **A vendor can be retired and reactivated (open item #49).**
+  The owner can now stop buying from a supplier without deleting it. Migration
+  0013 adds `vendor.active`. The write path refuses a retired vendor in four
+  places, and every vendor picker hides it. Products already on that vendor stay
+  usable and show it marked Retired. Invoices already in review still complete.
+  Built through the 4-gate plan `docs/plans/vendor-retire/`, in commits ec540cd,
+  77c513e, 8cce43c and 3c120f0 plus the e2e and close-out commit. The new
+  `vendors-retire` e2e spec now runs in CI.
 - **2026-11-08** — **User-QA fixes for vendors, catalog, count and reorder.** A
   user-level QA of `main` (61 checks across the four features) found seven
   issues; fixed and re-run at 66 of 67 (the one not run is vendor retire, now

@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireOfficeUser } from "@/lib/current-user";
-import { getProductWithStockAction, listVendorsAction } from "@/app/actions/catalog";
+import { getProductWithStockAction, listAllVendorsAction } from "@/app/actions/catalog";
 import { PageHeader } from "@/components/office/page-header";
 import { ProductEditForm } from "@/components/office/product-edit-form";
 
@@ -27,7 +27,7 @@ export default async function ProductEditPage({
   // once the catalog grew (QA 2026-11-08).
   const [found, vendors] = await Promise.all([
     getProductWithStockAction({ productId }),
-    listVendorsAction(),
+    listAllVendorsAction(),
   ]);
   if (!found.ok) notFound();
   const product = found.data;
@@ -44,7 +44,9 @@ export default async function ProductEditPage({
 
       <ProductEditForm
         product={product}
-        vendors={vendors.ok ? vendors.data : []}
+        // Active vendors plus this product's own vendor if retired; no other
+        // retired vendor reaches the client.
+        vendors={vendors.ok ? vendors.data.filter((v) => v.active || v.id === product.vendorId) : []}
         canEditCost={user.role === "owner"}
       />
     </div>

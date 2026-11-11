@@ -9,12 +9,13 @@
  * fetches the column, so there is no code path where it could accidentally
  * end up in a response to them.
  */
-import { and, eq, inArray, isNull, like, ne, or, count as countRows, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNull, like, ne, or, count as countRows, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { product, productBarcode, productPar, vendor, location, count, countLine } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
 import { canSeeCost, canManageCost } from "@/lib/authz";
 import { ConflictError, DomainError, NotFoundError } from "@/lib/domain/errors";
+import { assertVendorActive } from "@/lib/domain/vendor-active";
 import { isDuplicateKeyError } from "@/lib/domain/db-errors";
 import { getOnHandSnapshot } from "@/lib/domain/on-hand";
 import { isCountedByCase } from "@/lib/pack-level";
@@ -657,8 +658,9 @@ export async function createProduct(
   const created = await db.transaction(async (tx) => {
     // Inside the transaction so the vendor can't be reassigned between the
     // check and the insert.
+    // Invariant 6: refuse a retired vendor (also proves ownership).
     if (input.vendorId != null) {
-      await assertVendorOwned(tx, actor.organizationId, input.vendorId);
+      await assertVendorActive(tx, actor.organizationId, input.vendorId);
     }
 
     let inserted: { id: number };
@@ -804,6 +806,14 @@ export async function updateProduct(
   // dropping the par (or the reverse) would be a half-applied edit that the
   // form reports as success.
   await db.transaction(async (tx) => {
+    // Invariant 6: the retired-vendor guard runs FIRST, above the product
+    // lookup. `null` clears the vendor and is always allowed, so only a
+    // non-null id is checked; an update that leaves vendorId out never
+    // reaches it (a product already on a retired vendor stays editable).
+    if (patch.vendorId != null) {
+      await assertVendorActive(tx, actor.organizationId, patch.vendorId);
+    }
+
     // Existence and ownership, proven once and up front, before anything is
     // written (invariant 9 — a cross-tenant id is answered as NotFound).
     //
@@ -816,12 +826,6 @@ export async function updateProduct(
     // make "save the form having only touched the par" an ordinary action,
     // and it would have failed with an error naming the wrong thing.
     await assertProductOwned(tx, actor.organizationId, productId);
-
-    // `null` is a legitimate value here — it clears the vendor — so only a
-    // non-null id needs proving. See assertVendorOwned.
-    if (patch.vendorId != null) {
-      await assertVendorOwned(tx, actor.organizationId, patch.vendorId);
-    }
 
     if (Object.keys(patch).length > 0) {
       try {
@@ -1237,24 +1241,82 @@ export interface VendorSummary {
   contact: string | null;
   orderMethod: string | null;
   leadTimeDays: number | null;
+  active: boolean;
+  /** ACTIVE products whose vendor_id is this vendor. */
+  productCount: number;
 }
 
-export async function listVendors(actor: Actor): Promise<VendorSummary[]> {
-  return db
+const vendorSummaryColumns = {
+  id: vendor.id,
+  name: vendor.name,
+  contact: vendor.contact,
+  orderMethod: vendor.orderMethod,
+  leadTimeDays: vendor.leadTimeDays,
+  active: vendor.active,
+  // Hand-qualified on purpose: in a single-table select drizzle renders
+  // `${vendor.id}` WITHOUT its table prefix, which inside the subquery would
+  // silently bind to the inner table's `id` (count 0, no error).
+  productCount: sql<number>`(
+    SELECT COUNT(*) FROM \`product\` AS p
+    WHERE p.\`vendor_id\` = \`vendor\`.\`id\`
+      AND p.\`organization_id\` = \`vendor\`.\`organization_id\`
+      AND p.\`active\` = true
+  )`,
+};
+
+/**
+ * Active vendors by default; `includeInactive` adds retired ones (for screens
+ * that must name or restore them). `productCount` is a correlated subquery
+ * over active products, org-scoped on both sides.
+ */
+export async function listVendors(
+  actor: Actor,
+  opts: { includeInactive?: boolean } = {},
+): Promise<VendorSummary[]> {
+  const conditions = [eq(vendor.organizationId, actor.organizationId)];
+  if (!opts.includeInactive) conditions.push(eq(vendor.active, true));
+  const rows = await db
     .select({
-      id: vendor.id,
-      name: vendor.name,
-      contact: vendor.contact,
-      orderMethod: vendor.orderMethod,
-      leadTimeDays: vendor.leadTimeDays,
+      ...vendorSummaryColumns,
     })
     .from(vendor)
-    .where(eq(vendor.organizationId, actor.organizationId))
+    .where(and(...conditions))
     .orderBy(vendor.name);
+  // COUNT(*) can come back as a string/bigint from mysql2.
+  return rows.map((r) => ({ ...r, productCount: Number(r.productCount) }));
 }
 
 function vendorNameTaken(name: string): string {
   return `A vendor named "${name.trim()}" already exists. Edit that vendor instead of adding a second one.`;
+}
+
+/**
+ * The unique key kept a name taken. If the row that holds it is a RETIRED
+ * vendor, say so (the person's way out is Reactivate, not "edit that vendor"
+ * — it isn't in their lists); an active duplicate keeps the original message.
+ * Org-scoped; `name` is compared with the column's collation, the same one the
+ * unique index used.
+ */
+async function nameCollisionError(
+  runner: Runner,
+  organizationId: number,
+  name: string,
+  excludingVendorId?: number,
+): Promise<DomainError> {
+  const conditions = [eq(vendor.organizationId, organizationId), eq(vendor.name, name)];
+  if (excludingVendorId !== undefined) conditions.push(ne(vendor.id, excludingVendorId));
+  const [row] = await runner
+    .select({ active: vendor.active })
+    .from(vendor)
+    .where(and(...conditions))
+    .limit(1);
+  if (row && !row.active) {
+    return new DomainError(
+      "VENDOR_NAME_RETIRED",
+      "A retired vendor already uses this name — reactivate it instead.",
+    );
+  }
+  return new ConflictError(vendorNameTaken(name));
 }
 
 /**
@@ -1277,17 +1339,15 @@ export async function createVendor(actor: Actor, input: VendorCreateInput): Prom
   } catch (err) {
     // `vendor_organization_name_unique` — one vendor per name per tenant,
     // compared without case or trailing spaces (the column's collation).
-    if (isDuplicateKeyError(err)) throw new ConflictError(vendorNameTaken(input.name));
+    if (isDuplicateKeyError(err)) {
+      throw await nameCollisionError(db, actor.organizationId, input.name);
+    }
     throw err;
   }
 
   const rows = await db
     .select({
-      id: vendor.id,
-      name: vendor.name,
-      contact: vendor.contact,
-      orderMethod: vendor.orderMethod,
-      leadTimeDays: vendor.leadTimeDays,
+      ...vendorSummaryColumns,
     })
     .from(vendor)
     .where(eq(vendor.id, inserted.id))
@@ -1297,7 +1357,7 @@ export async function createVendor(actor: Actor, input: VendorCreateInput): Prom
   if (!result) {
     throw new NotFoundError("Vendor");
   }
-  return result;
+  return { ...result, productCount: Number(result.productCount) };
 }
 
 /**
@@ -1327,7 +1387,9 @@ export async function updateVendor(actor: Actor, input: VendorUpdateInput): Prom
             and(eq(vendor.id, input.id), eq(vendor.organizationId, actor.organizationId)),
           );
       } catch (err) {
-        if (isDuplicateKeyError(err)) throw new ConflictError(vendorNameTaken(input.name ?? ""));
+        if (isDuplicateKeyError(err)) {
+          throw await nameCollisionError(tx, actor.organizationId, input.name ?? "", input.id);
+        }
         throw err;
       }
     }
@@ -1336,11 +1398,7 @@ export async function updateVendor(actor: Actor, input: VendorUpdateInput): Prom
   // Re-fetch and return the updated row.
   const rows = await db
     .select({
-      id: vendor.id,
-      name: vendor.name,
-      contact: vendor.contact,
-      orderMethod: vendor.orderMethod,
-      leadTimeDays: vendor.leadTimeDays,
+      ...vendorSummaryColumns,
     })
     .from(vendor)
     .where(
@@ -1355,7 +1413,64 @@ export async function updateVendor(actor: Actor, input: VendorUpdateInput): Prom
   if (!result) {
     throw new NotFoundError("Vendor");
   }
-  return result;
+  return { ...result, productCount: Number(result.productCount) };
+}
+
+/** ACTIVE products on this vendor, org-scoped (the number the confirm text shows). */
+async function countActiveProductsOnVendor(
+  runner: Runner,
+  organizationId: number,
+  vendorId: number,
+): Promise<number> {
+  const [row] = await runner
+    .select({ n: countRows() })
+    .from(product)
+    .where(
+      and(
+        eq(product.organizationId, organizationId),
+        eq(product.vendorId, vendorId),
+        eq(product.active, true),
+      ),
+    );
+  return Number(row?.n ?? 0);
+}
+
+async function setVendorActive(
+  actor: Actor,
+  vendorId: number,
+  active: boolean,
+): Promise<{ vendorId: number; productCount: number }> {
+  return db.transaction(async (tx) => {
+    // Invariant 9: cross-tenant / missing id is NotFound before any write.
+    await assertVendorOwned(tx, actor.organizationId, vendorId);
+    // Idempotent: writing the value it already has is a no-op, not an error.
+    await tx
+      .update(vendor)
+      .set({ active })
+      .where(and(eq(vendor.id, vendorId), eq(vendor.organizationId, actor.organizationId)));
+    const productCount = await countActiveProductsOnVendor(tx, actor.organizationId, vendorId);
+    return { vendorId, productCount };
+  });
+}
+
+/**
+ * Retire a vendor (invariant 6: never a DELETE). Products stay linked; the
+ * guard in vendor-active.ts refuses NEW attachments. Owner/manager only
+ * (enforced in the action).
+ */
+export async function deactivateVendor(
+  actor: Actor,
+  vendorId: number,
+): Promise<{ vendorId: number; productCount: number }> {
+  return setVendorActive(actor, vendorId, false);
+}
+
+/** Bring a retired vendor back. Idempotent; owner/manager only (in the action). */
+export async function reactivateVendor(
+  actor: Actor,
+  vendorId: number,
+): Promise<{ vendorId: number; productCount: number }> {
+  return setVendorActive(actor, vendorId, true);
 }
 
 /**
@@ -1385,6 +1500,12 @@ export async function assignVendorToProducts(
   input: AssignVendorToProductsInput,
 ): Promise<void> {
   await db.transaction(async (tx) => {
+    // Invariant 6: retired-vendor guard first, above the product-ownership
+    // select. A null vendor (clearing) needs no check.
+    if (input.vendorId != null) {
+      await assertVendorActive(tx, actor.organizationId, input.vendorId);
+    }
+
     // Deduplicate the product ids once, up front. This set is used for both
     // the query and the count comparison, so the two can never disagree.
     const uniqueProductIds = Array.from(new Set(input.productIds));
@@ -1407,11 +1528,6 @@ export async function assignVendorToProducts(
       // Return NotFound, not a partial count, so the answer doesn't confirm
       // which ids are real.
       throw new NotFoundError("Product");
-    }
-
-    // Vendor ownership check (only if not null — a null vendor needs no check).
-    if (input.vendorId != null) {
-      await assertVendorOwned(tx, actor.organizationId, input.vendorId);
     }
 
     // All checks passed — apply the vendor to all products.

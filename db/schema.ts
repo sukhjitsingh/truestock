@@ -330,6 +330,10 @@ export const vendor = mysqlTable(
     contact: varchar("contact", { length: 255 }),
     orderMethod: varchar("order_method", { length: 255 }),
     leadTimeDays: int("lead_time_days"),
+    // Invariant 6: a vendor is never hard-deleted, only retired. Same shape as
+    // `location.active`. A retired vendor's name stays taken
+    // (`vendor_organization_name_unique` is deliberately unfiltered).
+    active: boolean("active").notNull().default(true),
     ...auditColumns,
   },
   (table) => [

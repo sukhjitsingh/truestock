@@ -30,14 +30,21 @@ export default async function ReorderPage() {
   const { asOfCountId, asOfClosedAt, items, productsWithPar } = result.data;
   const asOfClosedAtLabel = asOfClosedAt == null ? null : formatDate(asOfClosedAt);
 
-  // Group by vendor. `reorderList` already sorts so same-vendor items are
-  // adjacent, so this is a walk, not a re-sort.
-  const groups: { vendor: string; items: typeof items }[] = [];
+  // Group by vendor ID, not name. `reorderList` already sorts so same-vendor
+  // items are adjacent and retired vendors come first, so this is a walk, not
+  // a re-sort. A retired vendor's group is flagged: nothing can be ordered from it.
+  const groups: { key: string; vendor: string; flagged: boolean; items: typeof items }[] = [];
   for (const item of items) {
-    const vendor = item.vendorName ?? "No vendor set";
+    const key = item.vendorId == null ? "none" : String(item.vendorId);
     const last = groups[groups.length - 1];
-    if (last && last.vendor === vendor) last.items.push(item);
-    else groups.push({ vendor, items: [item] });
+    if (last && last.key === key) last.items.push(item);
+    else
+      groups.push({
+        key,
+        vendor: item.vendorName ?? "No vendor set",
+        flagged: !item.vendorActive,
+        items: [item],
+      });
   }
 
   return (
@@ -99,8 +106,9 @@ export default async function ReorderPage() {
         <div className="mt-8 flex flex-col gap-section-gap">
           {groups.map((group) => (
             <ReorderVendorBlock
-              key={group.vendor}
+              key={group.key}
               vendorName={group.vendor}
+              flagged={group.flagged}
               items={group.items}
               asOfCountId={asOfCountId}
               asOfClosedAt={asOfClosedAtLabel}

@@ -615,7 +615,7 @@ and the last-closed-count tile searched inside `listCountsAction({ limit: 50 })`
 been closed yet" against a database full of them. Both were correct against the
 97-product seed and would have stayed *plausible* while becoming wrong.
 
-## 15. The dashboard value branch lacks a positive browser assertion
+## 15. ~~The dashboard value branch lacks a positive browser assertion~~ — CLOSED 2026-11-09
 
 **Trigger: the next browser-harness pass that touches `/office`.**
 
@@ -629,6 +629,16 @@ Close this by seeding two closed counts, asserting the owner's value/delta, and
 keeping the existing manager negative control. A visual visit without a named
 positive assertion is not enough; the branch could fail to render and the
 cost-leak check would still pass.
+
+**CLOSED 2026-11-09.** `scripts/verify-browser.mjs` now seeds one sentinel closed count
+(total `7777.77`, one fully-costed line, `closed_at = NOW()`, removed in the cleanup pass) and
+asserts three named lines: the owner's `/office` shows `Count #N` and `$7,777.77`; a manager's
+`/office` still shows `Count #N` (positive control); a manager's DOM contains neither
+`7,777.77` nor `7777.77`. Browser result against a production build: 100/100 PASS. Mutation
+check: removing the `canSeeCost` guard in `getLastClosedCount` turned the manager line red
+("VALUE FOUND in manager DOM", 99 PASS / 1 FAIL); restored and green again. One seeded count,
+not two: the tile has no vs-previous delta (it was removed with `countSummaryAction`), so there
+is no comparison to assert.
 
 ## 16. ~~A scanned barcode cannot be attached to an existing product~~ — CLOSED 2026-07-30
 
@@ -1293,9 +1303,28 @@ a loop, not new machinery. Always pass `mustReach` — a coverage count with no
 named element is the exact shape of the false pass above. The counting screens
 need a phone and belong with item #20.
 
+**2026-11-09 — office routes now covered.** The three assertions loop over
+`/office`, `/office/counts`, `/office/catalog`, `/office/vendors`,
+`/office/locations`, `/office/users` and `/office/reorder`, each with a
+`mustReach` pattern (the rail link for the screen; weaker than a control only
+that screen has — tighten when a screen is next touched). Not yet run to green
+in a browser (same missing-accounts blocker as #50), so any real defect these
+extended checks find is still unseen. What remains is the counting screens
+(`/count`, the scan page), which need a phone and belong with item #20.
+
+**2026-11-09 — office routes PASS in a browser.** `verify-browser.mjs` against
+a production build on `truestock_e2e`, signed in as owner: 93/93 checks, no CSP
+or console errors. All three assertions passed on all seven office routes
+(`assertFocusVisible` 28–30 tab stops, none bare, `mustReach` met; heading
+levels `[1]`, `/office/reorder` `[1,2]`; no unnamed icon buttons), plus the
+account-menu focus-in and Escape-return checks. No defect found. The manager and
+staff browser role checks were not run (no credentials passed) and are NOT
+VERIFIED, not passes. **Item stays open only for the counting screens** (with
+#20, on a phone).
+
 ---
 
-## 30. Three of seven table surfaces never moved onto the shared primitives
+## 30. ~~Three of seven table surfaces never moved onto the shared primitives~~ — CLOSED 2026-11-09
 
 **Trigger: the next time `vendors-list.tsx`, `locations-table.tsx` or
 `users-list.tsx` is opened for any reason. Not worth a dedicated pass.**
@@ -1320,6 +1349,14 @@ None of this is a hazard, and none of it is a data-correctness risk — it is a
 migration that reached four of seven surfaces. Recorded so it is not mistaken for
 a decision. The whole-row-click hazard, which *was* a hazard, is gone everywhere:
 no `<tr>` in the codebase carries an `onClick` (item #27, closed 2026-08-12).
+
+**CLOSED 2026-11-09.** All three surfaces now use `components/ui/table.tsx`: `users-list.tsx`,
+`locations-table.tsx` and `vendors-list.tsx` each render a `TableCaption` ("Users, N users",
+etc.) and every header is a `TableHead`, which emits `scope="col"` unconditionally. The vendors
+null cells use `<NullValue reason="not-entered">`. The code landed in `aa0c876` / `5046e31`; this
+note records the verification, not a new change. Verified 2026-11-09 against a production build:
+the full `scripts/verify-browser.mjs` run passes 100/100, including the users, locations and
+vendors screens. The locations Retire control was left untouched.
 
 ---
 
@@ -2192,6 +2229,67 @@ tested on `main`.
   `count-flow` fails with a strict-mode error if it runs afterwards. That looks
   like an app failure and is not one.
 
+**2026-11-09 code pass (item stays OPEN; no browser or phone run was possible
+in this session: no e2e or verify-browser accounts).**
+
+- *Finish section warning (46a).* `components/count/count-leg.tsx` shows an
+  inline `role="status"` line above the bottom bar, "N saves haven't synced
+  yet...", while the queue is non-empty. No modal. Text from
+  `finishSectionWarning` in `lib/entry-drafts.ts`; proved by the
+  `finishSectionWarning` tests in `tests/entry-drafts.test.ts` (fail with the
+  `pending <= 0` guard removed). The rendering itself is unproven on a phone.
+- *Count session page (46b).* `components/count/session-actions.tsx` now polls
+  the IndexedDB queue (3 s, plus focus and online) and, at draft/in_progress,
+  disables Submit with the `canSubmitCount` message shown as a status line. The
+  click-time check stays as the backstop. Fails open if IndexedDB is unreadable
+  (unchanged). Because the queue only drains on the scan screen, the text says
+  to tap Keep counting. Unproven in a browser.
+- *`canSubmitCount` tests (46c).* The function already had five tests in
+  `tests/entry-drafts.test.ts` (0, negative, 1, many, message). Mutation check:
+  with the guard removed three of them fail; with the new warning helper also
+  mutated, 5 fail in total. Restored afterwards.
+- *verify-browser leak (46d).* `scripts/verify-browser.mjs` took the stray
+  `Jameson` id from a list only pushed to after the post-save lookup, so any
+  throw or timeout in between leaked the row. Teardown now deletes every
+  product in the org with an id above a watermark taken before the section
+  (with its barcodes and any count lines). A row already leaked by an earlier
+  run must still be removed once by hand; not touched here. Proof is owed: run
+  verify-browser then `count-flow` against `truestock_e2e`.
+
+**2026-11-09 browser proof (production build, `truestock_e2e`).** 46a, 46b and
+46d are now proven in a desktop browser with a phone viewport; the item stays
+OPEN for the retry-timer bullet and the phone proof (#48).
+
+- *46a, 46b — two new tests in `e2e/specs/count-flow.e2e.ts`:* "a write held
+  pending shows the not-synced warning near Finish section" and "Submit count is
+  disabled on the session page while a write is pending, and enables once it
+  drains". Both block only the count POSTs, like the three queue tests.
+  Mutation-checked: `finishSectionWarning` returning null turns the first red;
+  dropping `blocked !== null` from Submit's `disabled` turns the second red.
+  Restored, rebuilt, green.
+- *46d:* `verify-browser` (93/93; its teardown removed its own Jameson row)
+  followed directly by `count-flow` (9/9): no strict-mode duplicate-Jameson
+  failure. One run, so it shows this run did not leak, not that no path can.
+  `truestock_e2e` holds a second Jameson, id 100 (1750 ml, `active = 0`,
+  created 2026-11-07, no count lines), from an older run. Being inactive, it
+  did not collide in the picker. **Deleted 2026-11-10** at the owner's request,
+  with its one barcode row (id 8) in a single transaction — it had no cost
+  history, invoice lines, count lines, aliases or pars. `truestock_e2e` now
+  holds one Jameson (id 18, 750 ml, active).
+- 2026-11-10: `count-flow` now runs in CI (`e2e-smoke` job), so 46a/46b are
+  gated on every PR, not only proven once.
+- 2026-11-10, later: the Playwright specs now run on the real phone
+  (`bun run e2e:phone`, Pixel 10 Pro XL, Chrome 156): **39/39**, including all
+  9 of `count-flow`. So the 46a Finish-section warning, the 46b Submit gate and
+  the queue draining by retry (no `online` event) are proven in real Android
+  Chrome. They are not proven against a real network loss: there, "offline" is
+  Playwright's `setOffline` and route interception inside the browser, while
+  the phone's Wi-Fi and mobile data stay up.
+- Still open: the retry timer lives in the scan screen only, and the
+  hand-driven drills (server down, the phone's own Wi-Fi off with mobile data
+  on, leave and come back) have not been run. They are ready in
+  `docs/phone-count-test.md` → "Host-only phone rig".
+
 ## 47. Eight invoice failures from the 2026-11-06 QA run
 
 **Trigger:** next work on `feat/phase-2.5-invoice-automation`, and before any
@@ -2316,7 +2414,7 @@ findings. Then enter data through real invoices (add the 1 L product rows first,
 
 ---
 
-## 49. A vendor cannot be retired
+## 49. A vendor cannot be retired — **CLOSED 2026-11-09 (browser PASS)**
 
 **Trigger: the first time the owner stops buying from a supplier, or before
 Phase 3 go-live — whichever comes first.**
@@ -2339,9 +2437,26 @@ refusal. Decide before building whether a retired vendor's name stays taken
 `(organization_id, name)` makes that the default. Needs an `active` column, so
 it is a migration.
 
+**Closed 2026-11-09** through the 4-gate plan in `docs/plans/vendor-retire/`.
+Migration 0013 adds `vendor.active`. `assertVendorActive`
+(`lib/domain/vendor-active.ts`) refuses a retired vendor first in
+`createProduct`, `updateProduct`, `assignVendorToProducts` and
+`createInvoiceForUpload`. Owner decisions: the name stays taken (creating it
+again says to reactivate instead); retiring is allowed while products use it,
+and those products stay fully usable with the vendor greyed and marked
+Retired; Reactivate is a two-tap control; invoices already in review still
+submit and approve and post costs, with an informational note only.
+Pickers list active vendors only; the reorder list puts a retired vendor's
+block first and asks for a new vendor.
+
+Proof:
+- `tests/vendor-retire*.test.ts` (DB-backed and mutation-checked).
+- `e2e/specs/vendors-retire.e2e.ts`, 4/4, now in CI's e2e run.
+- `scripts/verify-vendor-retire.mjs`, 27/27 against a production build.
+
 ---
 
-## 50. The office side menu has no visible keyboard focus
+## 50. The office side menu has no visible keyboard focus — **CLOSED 2026-11-09 (browser PASS)**
 
 **Trigger: the next change to `components/office/office-rail.tsx`, or the
 accessibility pass in #29 — whichever comes first.**
@@ -2358,3 +2473,52 @@ The fix is a `focus-visible:` ring on the rail's link class matching the
 `Button` primitive's. Close it when `verify-browser` reports that assertion as
 PASS — and per #29, extend the same assertion to the other office routes in the
 same change.
+
+**Closed 2026-11-09.** `office-rail.tsx`'s shared item class now carries an
+explicit `focus-visible:outline-2 outline-offset-2 outline-ring` (the design
+system ring, #60a5fa in dark mode), covering the toggle, every link and the
+Count link. The links also drop `transition-all` for `transition-colors`: the
+global `a:focus-visible` outline already existed, and the likely reason
+`assertFocusVisible` read the links as bare is that `transition-all` animates
+`outline-width` up from 0, so the ring is still 0px on the first frame the
+harness samples. **Caveat on the evidence:** that diagnosis and the flip to
+PASS were not observed — the fix was made in a worktree whose dev database has
+none of the `verify-browser` accounts, so the browser run is still owed. Re-open
+if `verify-browser` still reports the rail links as bare.
+
+**Browser PASS observed 2026-11-09** against a production build of
+`fix/qa-open-items` (`next start` on :3201, dev database): `assertFocusVisible`
+passes on all seven office routes — `/office` 29 tab stops, `/office/counts`
+28, `/office/catalog` 30, `/office/vendors` 28, `/office/locations` 29,
+`/office/users` 29, `/office/reorder` 28 — none bare. Run it against a
+production build: under `next dev` the dev overlay's `<nextjs-portal>` is a tab
+stop with no outline and fails the check on six routes, which says nothing
+about the app.
+
+## 51. The local databases use a NO PAD collation that CI and the compose comment say they don't
+
+**Found 2026-11-09.** `docker-compose.yml` starts MariaDB with
+`--collation-server=utf8mb4_0900_ai_ci`, and its comment says MariaDB 11.x
+treats that as an alias for `utf8mb4_uca1400_ai_ci`. On 11.8.8 it is not:
+`SELECT 'a' = 'a ' COLLATE utf8mb4_0900_ai_ci` is `0` (NO PAD, as in MySQL),
+while the same comparison under `utf8mb4_uca1400_ai_ci` is `1` (PAD SPACE).
+`truestock`, `truestock_test` and `truestock_e2e` were all created with the
+0900 collation, so every unique name index there treats a trailing space as a
+different name. CI's MariaDB service sets no collation, gets the PAD SPACE
+default, and passes.
+
+**Symptom:** `tests/vendor-write-path.test.ts` › "a name differing only in
+capitals or trailing spaces counts as the same vendor" fails locally at line
+133 (`"Republic National   "` is accepted as a second vendor) and passes in CI.
+User input is not exposed today: every name schema in `lib/validation/catalog.ts`
+trims both ends before the domain sees it. The exposure is a direct domain
+caller, and the bigger risk is production: if the Hostinger database is created
+with the 0900 collation, its string comparisons differ from CI's.
+
+**Fix (owner decision, touches the Docker setup):** either set the compose
+server collation to `utf8mb4_uca1400_ai_ci` and fix the comment, or pin CI to
+the 0900 name so both match. Existing local databases keep their collation
+until they are recreated or `ALTER DATABASE`/`ALTER TABLE … CONVERT TO` is run.
+Decide the production collation as part of `docs/go-live.md`.
+**Trigger:** before the first deploy, or the next time the local stack is
+rebuilt.

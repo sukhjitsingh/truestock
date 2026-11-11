@@ -266,3 +266,58 @@ test("a write made while the queue is blocked waits behind it", async ({ page, d
   expect((await db.countLines(countId))[0].sealedEachQty).toBe(4);
   expect(await eachDeltas(db, countId)).toEqual([3, 2, -1]);
 });
+
+// Open item #46a. Mutation check: make finishSectionWarning return null and the
+// status line never renders.
+test("a write held pending shows the not-synced warning near Finish section", async ({ page, problems }) => {
+  problems.allow(/ERR_CONNECTION_FAILED|Failed to fetch/);
+  await startCount(page);
+  await pickLocation(page, "Storeroom");
+  await addEaches(page, "Jameson", "Jameson", 3);
+  await expect(page.getByRole("status").filter({ hasText: "synced yet. Stay on this screen" })).toHaveCount(0);
+
+  await blockCountWrites(page);
+  await addEaches(page, "Jameson", "Jameson", 2);
+  await expect(syncChip(page)).toHaveText("1 pending");
+
+  const warning = page.getByRole("status").filter({ hasText: "synced yet. Stay on this screen" });
+  await expect(warning).toBeVisible();
+  await expect(warning).toContainText("1 save hasn't synced yet");
+  await expect(page.getByRole("button", { name: /Finish section/ })).toBeVisible();
+
+  await unblockCountWrites(page);
+  await expect(syncChip(page)).toHaveText("Synced", { timeout: 25_000 });
+  await expect(warning).toBeHidden();
+});
+
+// Open item #46b. Mutation check: drop `blocked !== null` from the Submit
+// disabled condition and Submit is enabled with a write queued.
+test("Submit count is disabled on the session page while a write is pending, and enables once it drains", async ({
+  page,
+  db,
+  problems,
+}) => {
+  problems.allow(/ERR_CONNECTION_FAILED|Failed to fetch/);
+  const countId = await startCount(page);
+  await pickLocation(page, "Storeroom");
+  await addEaches(page, "Jameson", "Jameson", 3);
+
+  await blockCountWrites(page);
+  await addEaches(page, "Jameson", "Jameson", 2);
+  await expect(syncChip(page)).toHaveText("1 pending");
+
+  await page.goto(`/count/${countId}`);
+  await expect(page.getByRole("button", { name: "Submit count" })).toBeDisabled();
+  await expect(page.getByText("1 save hasn't synced yet. Tap Keep counting")).toBeVisible();
+
+  // The queue drains only on the scan screen: unblock, go back, let it flush.
+  await unblockCountWrites(page);
+  await page.getByRole("button", { name: "Keep counting" }).click();
+  await pickLocation(page, "Storeroom");
+  await expect(syncChip(page)).toHaveText("Synced", { timeout: 25_000 });
+  expect((await db.countLines(countId))[0].sealedEachQty).toBe(5);
+
+  await page.goto(`/count/${countId}`);
+  await expect(page.getByRole("button", { name: "Submit count" })).toBeEnabled();
+  await expect(page.getByText(/synced yet\. Tap Keep counting/)).toHaveCount(0);
+});

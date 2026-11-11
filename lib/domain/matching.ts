@@ -22,7 +22,7 @@
  *   - `matchLinesToProducts` is called with `invoiceRow.vendorId`, read from
  *     `getInvoice(actor, invoiceId)` — a row already tenant-scoped by that
  *     read, and itself only ever set from an ownership-checked value at
- *     `createInvoiceForUpload` time (`lib/domain/invoices.ts:assertVendorOwned`).
+ *     `createInvoiceForUpload` time (`lib/domain/vendor-active.ts:assertVendorActive`).
  *   - `learnAliasesTx` (`lib/domain/invoice-lines.ts`) calls `upsertAliasTx`
  *     with `invoice.vendorId` (same provenance as above, re-selected in that
  *     function's own tenant-scoped query) and each line's `matchedProductId`,

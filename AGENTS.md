@@ -62,7 +62,7 @@ only a number; open bottles need a fill level. They are handled differently on p
 | Typecheck | `bun run typecheck` |
 | Lint | `bun run lint` (0 errors; existing warnings are known) |
 | Unit + DB tests | `bun run test` with `DATABASE_URL` pointing at a database whose name ends in `_test` (the suite truncates every table and refuses any other name); in Docker: `bun run test:docker` |
-| Browser (e2e) | `bun run e2e` against a running production build — see `e2e/README.md`; CI runs `smoke` and `roles` |
+| Browser (e2e) | `bun run e2e:desktop` and `bun run e2e:mobile` against a running production build — see `e2e/README.md`; CI runs both in full. `bun run e2e:phone` (a real Android phone) is a dev/QA run, never CI |
 | Build | `bun run build` |
 | Migrations | `bun run db:generate` (never hand-edit SQL) · `bun run check:migrations-immutable` |
 
@@ -259,8 +259,8 @@ lifetime. When a feature ships, add one line to `docs/history/state-log.md`.
 `.claude/hooks/guard-edits.mjs`: it **blocks** edits to applied migrations and a CSP in
 `next.config.ts`, and **warns** on a method-less `<form>` or `onClick` on a row. Pinned
 by `tests/edit-guards.test.ts`. CI (`.github/workflows/ci.yml`) runs typecheck, lint, the
-DB suite, the migration check, the build, and the Playwright smoke and roles specs against a
-production build; `workflow-lint.yml` runs actionlint on every workflow. Each PR gets an
+DB suite, the migration check, the build, and the whole Playwright suite against a
+production build, as two runs (desktop, emulated mobile; the real-phone project is dev/QA only); `workflow-lint.yml` runs actionlint on every workflow. Each PR gets an
 independent Claude review against `REVIEW.md` (informational — it never approves or
 blocks). **Deploys wait for the owner's approval** (`production` environment), and the
 release job refuses to run if that environment is unprotected (`docs/deploy.md` §3).

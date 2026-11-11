@@ -50,6 +50,7 @@ import {
 } from "@/lib/storage/invoice-files";
 import { lockJobForUpload, updateJobStatusTx } from "@/lib/domain/extraction";
 import { extractionJob } from "@/db/schema";
+import { assertVendorActive } from "@/lib/domain/vendor-active";
 import { isDuplicateKeyOnIndex, withLockRetry } from "@/lib/domain/db-errors";
 
 export type InvoiceStatus = (typeof invoiceStatusEnum)[number];
@@ -167,17 +168,6 @@ export function toInvoiceRow(row: typeof invoice.$inferSelect): InvoiceRow {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
-}
-
-async function assertVendorOwned(tx: Tx, organizationId: number, vendorId: number): Promise<void> {
-  const [owned] = await tx
-    .select({ id: vendor.id })
-    .from(vendor)
-    .where(and(eq(vendor.id, vendorId), eq(vendor.organizationId, organizationId)))
-    .limit(1);
-  if (!owned) {
-    throw new NotFoundError("Vendor");
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -435,13 +425,19 @@ export async function createInvoiceForUpload(
   actor: Actor,
   input: CreateInvoiceForUploadInput,
 ): Promise<CreateInvoiceForUploadResult> {
+  // The duplicate check runs before the vendor guard on purpose: it writes
+  // nothing and only reads the caller's own org, so answering "duplicate" for a
+  // retired or foreign vendorId changes no data and leaks nothing (vendor-retire
+  // Gate 3). Every path that writes still passes assertVendorActive first.
   const existing = await findLiveCopy(actor.organizationId, input.fileSha256);
   if (existing) {
     return { outcome: "duplicate", duplicate: existing };
   }
   const created = await db.transaction(async (tx) => {
+    // Invariant 6: a retired vendor cannot gain a new invoice. Also proves the
+    // vendor is this org's (cross-tenant -> NotFound).
     if (input.vendorId != null) {
-      await assertVendorOwned(tx, actor.organizationId, input.vendorId);
+      await assertVendorActive(tx, actor.organizationId, input.vendorId);
     }
 
     const [inserted] = await tx

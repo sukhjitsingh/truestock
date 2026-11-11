@@ -397,6 +397,8 @@ export interface ReorderItem {
   suggestedOrderQty: number;
   vendorId: number | null;
   vendorName: string | null;
+  /** false when the product's vendor is retired; true when vendorless. */
+  vendorActive: boolean;
 }
 
 export interface ReorderList {
@@ -472,10 +474,10 @@ export async function reorderList(actor: Actor): Promise<ReorderList> {
   const productById = new Map(products.map((p) => [p.id, p]));
 
   const vendors = await db
-    .select({ id: vendor.id, name: vendor.name })
+    .select({ id: vendor.id, name: vendor.name, active: vendor.active })
     .from(vendor)
     .where(eq(vendor.organizationId, actor.organizationId));
-  const vendorById = new Map(vendors.map((v) => [v.id, v.name]));
+  const vendorById = new Map(vendors.map((v) => [v.id, v]));
 
   const items: ReorderItem[] = [];
   for (const par of parRows) {
@@ -505,14 +507,18 @@ export async function reorderList(actor: Actor): Promise<ReorderList> {
       reorderPoint,
       suggestedOrderQty,
       vendorId: p.vendorId,
-      vendorName: p.vendorId != null ? (vendorById.get(p.vendorId) ?? null) : null,
+      vendorName: p.vendorId != null ? (vendorById.get(p.vendorId)?.name ?? null) : null,
+      vendorActive: p.vendorId != null ? (vendorById.get(p.vendorId)?.active ?? true) : true,
     });
   }
 
   // Group by vendor for display (spec §9.3: "grouped by vendor") — sort so
   // items with the same vendor are adjacent; the action layer / frontend can
   // bucket this list by `vendorId` directly.
+  // Retired-vendor items first: those lines cannot be ordered until the
+  // manager picks a new vendor, so they must not be buried.
   items.sort((a, b) => {
+    if (a.vendorActive !== b.vendorActive) return a.vendorActive ? 1 : -1;
     const av = a.vendorName ?? "";
     const bv = b.vendorName ?? "";
     if (av !== bv) return av.localeCompare(bv);

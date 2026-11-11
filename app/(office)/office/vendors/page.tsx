@@ -1,5 +1,5 @@
 import { requireOfficeUser } from "@/lib/current-user";
-import { listVendorsAction } from "@/app/actions/catalog";
+import { listAllVendorsAction } from "@/app/actions/catalog";
 import { PageHeader } from "@/components/office/page-header";
 import { VendorsList } from "@/components/office/vendors-list";
 
@@ -8,7 +8,7 @@ export const metadata = { title: "Vendors · Truestock" };
 /**
  * Vendors back-office screen.
  *
- * Lists all vendors for the organization, with the ability to create new ones.
+ * Lists all vendors (active and retired) for the organization, with the ability to create new ones.
  * The empty state is emphasized — vendors drive reorder grouping (spec §9.3),
  * and every reorder row groups under "No vendor set" until at least one vendor
  * exists. An empty state that merely says "None exist" misses the chance to
@@ -22,7 +22,7 @@ export const metadata = { title: "Vendors · Truestock" };
  */
 export default async function VendorsPage() {
   await requireOfficeUser();
-  const result = await listVendorsAction();
+  const result = await listAllVendorsAction();
 
   const vendors = result.ok ? result.data : [];
 

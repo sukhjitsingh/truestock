@@ -25,6 +25,7 @@ import {
   locationCreateSchema,
   locationUpdateSchema,
   locationDeactivateSchema,
+  vendorIdSchema,
 } from "@/lib/validation/catalog";
 
 /**
@@ -260,6 +261,39 @@ export async function listVendorsAction(): Promise<ActionResult<catalog.VendorSu
   return runAction(async () => {
     const actor = await requireRole("owner", "manager");
     return catalog.listVendors(actor);
+  });
+}
+
+/** Owner/manager only — the Vendors screen and name lookups; includes retired vendors. */
+export async function listAllVendorsAction(): Promise<ActionResult<catalog.VendorSummary[]>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    return catalog.listVendors(actor, { includeInactive: true });
+  });
+}
+
+/**
+ * Retire a vendor. Owner/manager only. Invariant 6: never a hard delete.
+ * Returns the count of ACTIVE products still linked, for the UI's message.
+ */
+export async function deactivateVendorAction(
+  input: unknown,
+): Promise<ActionResult<{ vendorId: number; productCount: number }>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = vendorIdSchema.parse(input);
+    return catalog.deactivateVendor(actor, parsed.vendorId);
+  });
+}
+
+/** Reactivate a retired vendor. Owner/manager only; idempotent. */
+export async function reactivateVendorAction(
+  input: unknown,
+): Promise<ActionResult<{ vendorId: number; productCount: number }>> {
+  return runAction(async () => {
+    const actor = await requireRole("owner", "manager");
+    const parsed = vendorIdSchema.parse(input);
+    return catalog.reactivateVendor(actor, parsed.vendorId);
   });
 }
 

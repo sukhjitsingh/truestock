@@ -1,5 +1,5 @@
 import { requireOfficeUser } from "@/lib/current-user";
-import { listCatalogProductsAction, listVendorsAction } from "@/app/actions/catalog";
+import { listCatalogProductsAction, listAllVendorsAction } from "@/app/actions/catalog";
 import { lastClosedCountAction } from "@/app/actions/reports";
 import { PageHeader } from "@/components/office/page-header";
 import { CatalogTable } from "@/components/office/catalog-table";
@@ -34,12 +34,15 @@ export default async function CatalogPage({
       activeOnly: true,
       includeOnHand: true,
     }),
-    listVendorsAction(),
+    listAllVendorsAction(),
     lastClosedCountAction(),
   ]);
 
   const products = productResult.ok ? productResult.data : [];
-  const vendors = vendorResult.ok ? vendorResult.data : [];
+  // One query, two views: the bulk-assign bar takes active vendors only; the
+  // Vendor column needs retired names too.
+  const allVendors = vendorResult.ok ? vendorResult.data : [];
+  const vendors = allVendors.filter((v) => v.active);
   const needsAttention = view === "attention";
   const shown = needsAttention ? products.filter((p) => p.incomplete.length > 0) : products;
   // On-hand figures below are a single shared snapshot — every row's stock
@@ -87,6 +90,7 @@ export default async function CatalogPage({
           canSeeCost={user.role === "owner"}
           canEditCost={user.role === "owner"}
           vendors={vendors}
+          allVendors={allVendors}
           userRole={user.role}
         />
       )}
