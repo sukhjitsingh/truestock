@@ -148,8 +148,9 @@ assert them in a test. → [lessons](docs/lessons.md#a-plausible-but-wrong-defau
 
 The seed is the three CSVs in `docs/catalog/`, deterministic extracts of
 `docs/handlebar-catalog.xlsx` (named before the Handlebar → Truestock rename), which was
-built from the owner's two prior spreadsheets. **97 products:** 62 spirits, 16 bottled beers, 9 draft kegs, 5 wines,
-2 liqueurs, 3 NA.
+built from the owner's two prior spreadsheets. **100 products:** 65 spirits, 16 bottled beers, 9 draft kegs, 5 wines,
+2 liqueurs, 3 NA. (The CSV leads the xlsx by three 1 L spirit rows — Black Velvet, Maker's
+Mark, Grey Goose, 1000 ml, open item #47; the xlsx was not regenerated and no script does so.)
 
 - **Costs come from supplier invoices**; valuation can't be tested until they are filled.
 - **`case_size` is for the 16 bottled beers only.** NULL on spirits, liqueurs, wine, NA

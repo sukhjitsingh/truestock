@@ -13,6 +13,8 @@
 import type { Page } from "playwright/test";
 import { expect, requireRole, test } from "../support/fixtures";
 import { authFile } from "../support/env";
+import type { ProductRow } from "../support/db";
+import { formatProductSize } from "../../lib/bottle-sizes";
 import { waitForHydration } from "../support/hydration";
 
 const PAGE_SIZE = 20;
@@ -97,12 +99,13 @@ test("the Product header sorts, flips aria-sort and reorders the rows", async ({
  * Narrows the table to one product (server-side search) so its cost cell is on
  * screen whatever page it would have been on, and returns that cell.
  */
-async function costCellFor(page: Page, name: string, total: number) {
+async function costCellFor(page: Page, product: ProductRow, total: number) {
+  const { name } = product;
   await page.getByLabel("Search catalog").fill(name);
   // The search is debounced and server-side; wait until the table has actually
   // shrunk, or the cell below could be the pre-search one about to be replaced.
   await expect(page.locator("caption")).not.toContainText(`Catalog, ${total} products`);
-  const cell = page.getByLabel(`Unit cost for ${name}`, { exact: true });
+  const cell = page.getByLabel(`Unit cost for ${name}, ${formatProductSize(product)}`, { exact: true });
   await expect(cell).toBeVisible();
   return cell;
 }
@@ -120,7 +123,7 @@ test("the owner edits a cost cell inline; the database reflects it; it is restor
   const total = await db.activeProductCount();
 
   try {
-    const cell = await costCellFor(page, target.name, total);
+    const cell = await costCellFor(page, target, total);
     await cell.fill(edited);
     await expect(page.getByText("Unsaved", { exact: true })).toBeVisible();
 
@@ -137,7 +140,7 @@ test("the owner edits a cost cell inline; the database reflects it; it is restor
     // And it survives a reload: the screen is showing the stored value, not local state.
     await page.reload();
     await waitForHydration(page, "button[aria-label='Next page']");
-    const reloaded = await costCellFor(page, target.name, total);
+    const reloaded = await costCellFor(page, target, total);
     await expect(reloaded).toHaveValue(edited);
   } finally {
     await db.setProductCost(target.id, original);
@@ -177,7 +180,7 @@ test("KNOWN DEFECT: the inline cost cell never shows its 'Saved' confirmation", 
   const edited = (Number(original) + 1).toFixed(2);
   const total = await db.activeProductCount();
   try {
-    const cell = await costCellFor(page, target.name, total);
+    const cell = await costCellFor(page, target, total);
     await cell.fill(edited);
     await cell.press("Enter");
     await expect

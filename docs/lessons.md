@@ -169,7 +169,7 @@ users, like products, are deactivated, never hard-deleted; history references th
 ## `case_size` is for bottled beer, not liquor
 
 **`case_size` applies to bottled beer, not liquor.** Liquor is counted as bottles —
-eaches and partial fills — so `case_size` stays NULL for all 62 spirits, the 2 liqueurs,
+eaches and partial fills — so `case_size` stays NULL for all 65 spirits, the 2 liqueurs,
 5 wines and 3 NA, and that is correct rather than missing data. Only the **16 bottled
 beers** are counted both ways and need a case size. Draft kegs don't either: a keg is one
 unit measured in tenths.

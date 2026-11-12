@@ -22,7 +22,7 @@
  *
  * Does NOT seed: User (auth is the backend agent's job), ProductPar,
  * ProductBarcode. products.csv's cost/par/upc columns are blank in the
- * source for all 97 rows, so those stay NULL — there is nothing to invent.
+ * source for all 100 rows, so those stay NULL — there is nothing to invent.
  * Valuation (Count.total_value, reorder math) cannot be meaningfully tested
  * until real costs and pars are entered through the app; the 9 draft kegs are
  * the one exception, seeded with their real wholesale cost from
@@ -178,7 +178,7 @@ async function seedVendors(organizationId: number) {
 }
 
 // ---------------------------------------------------------------------------
-// Products — docs/catalog/products.csv (97 rows)
+// Products — docs/catalog/products.csv (100 rows)
 // ---------------------------------------------------------------------------
 
 const KEG_WASTE_FACTOR = "0.100";

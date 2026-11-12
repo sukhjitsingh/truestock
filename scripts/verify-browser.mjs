@@ -718,14 +718,25 @@ try {
   // cell is mapped to every product in this org with that name; restoring an
   // unedited namesake to its own snapshot value is a no-op.
   const [costSnapshot] = await sql.query(
-    "SELECT id, name, current_unit_cost AS cost FROM product WHERE organization_id = ?",
+    "SELECT id, name, unit_type AS unitType, size_ml AS sizeMl, current_unit_cost AS cost FROM product WHERE organization_id = ?",
     [runOrgId],
   );
   for (let i = 0; i < EDITS; i++) {
     const cell = costCells.nth(i);
     const label = await cell.getAttribute("aria-label");
     const productName = (label ?? "").replace(/^Unit cost for /, "");
-    const products = costSnapshot.filter((p) => p.name === productName).map(({ id, cost }) => ({ id, cost }));
+    // The label is "<name>, <size>" (size from formatProductSize, a .ts module
+    // this plain-node script cannot import). Split off the size and match name
+    // AND size: "750 ml" / "1.75 L" parse to size_ml; a named keg size ("Sixtel
+    // keg") matches every keg of that name, and restoring an unedited
+    // namesake to its own snapshot value is a no-op.
+    const sizeMatch = /^(.*), ([^,]+)$/.exec(productName);
+    const [, labelName, labelSize] = sizeMatch ?? [];
+    const plain = /^([\d.]+) (ml|L)$/.exec(labelSize ?? "");
+    const labelMl = plain ? Math.round(Number(plain[1]) * (plain[2] === "L" ? 1000 : 1)) : null;
+    const products = costSnapshot
+      .filter((p) => p.name === labelName && (labelMl !== null ? p.unitType !== "keg" && Number(p.sizeMl) === labelMl : p.unitType === "keg"))
+      .map(({ id, cost }) => ({ id, cost }));
     // Refuse to edit what cannot be put back by id.
     if (products.length === 0) {
       throw new Error(`no product named "${productName}" in organization ${runOrgId}; refusing to edit a cost I cannot restore`);

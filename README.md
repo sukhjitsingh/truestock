@@ -70,7 +70,7 @@ container:
 ```bash
 bun run docker:up        # MariaDB + app, waits until genuinely ready
 bun run docker:migrate   # apply migrations
-bun run docker:seed      # load the 97-product catalog
+bun run docker:seed      # load the 100-product catalog
 ```
 
 Then create an account to sign in with — there is no public signup, and no dev
