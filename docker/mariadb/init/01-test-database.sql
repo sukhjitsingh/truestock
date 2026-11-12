@@ -8,7 +8,7 @@
 -- flags, so the only thing that differs is what gets destroyed.
 CREATE DATABASE IF NOT EXISTS `truestock_test`
   CHARACTER SET utf8mb4
-  COLLATE utf8mb4_0900_ai_ci;
+  COLLATE utf8mb4_uca1400_ai_ci;
 
 GRANT ALL PRIVILEGES ON `truestock_test`.* TO 'truestock'@'%';
 FLUSH PRIVILEGES;

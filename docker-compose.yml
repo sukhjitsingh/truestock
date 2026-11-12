@@ -36,13 +36,15 @@ services:
       # it at the server makes CREATE DATABASE correct by construction.
       # (Schema audit 2026-07-27, finding F3.)
       #
-      # utf8mb4_0900_ai_ci is a MySQL collation name, and it works here:
-      # MariaDB 11.x accepts it as an alias for utf8mb4_uca1400_ai_ci for
-      # MySQL compatibility. Verified on 11.8.8. Spelling it the MySQL way
-      # keeps one collation name across the schema audit, db/README.md and
-      # this file rather than introducing a second name for the same thing.
+      # utf8mb4_uca1400_ai_ci: MariaDB 11.8's own default, and PAD SPACE, so
+      # 'Acme' and 'Acme ' compare equal in every unique name index — the same
+      # as CI's MariaDB service, which sets no collation. Owner decision
+      # 2026-11-12 (open item #51). Do NOT spell it utf8mb4_0900_ai_ci: on
+      # 11.8.8 that MySQL name maps to the NO PAD variant
+      # (SELECT 'a' = 'a ' COLLATE utf8mb4_0900_ai_ci is 0), which made a
+      # trailing-space vendor name a second vendor locally and not in CI.
       - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_0900_ai_ci
+      - --collation-server=utf8mb4_uca1400_ai_ci
       # Every `timestamp` column in db/schema.ts uses defaultNow(). A container
       # on SYSTEM time zone and a shared host on something else produce quietly
       # different started_at values — the kind of difference that only surfaces
