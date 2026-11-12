@@ -2289,6 +2289,18 @@ OPEN for the retry-timer bullet and the phone proof (#48).
   hand-driven drills (server down, the phone's own Wi-Fi off with mobile data
   on, leave and come back) have not been run. They are ready in
   `docs/phone-count-test.md` → "Host-only phone rig".
+- **2026-11-12, outside QA report (not reproduced in this repo's sessions; not
+  a phone run).** With two writes held back the UI showed "2 pending" and the
+  database stayed empty; after reconnecting both saved in order (ledger
+  `[4, 2]`). With a real network drop the chip went pending → synced in 0.1 s,
+  the row landing in the database at the same moment. "Submit count" was
+  disabled with "1 save hasn't synced yet" (46b as designed); the
+  Finish-section line is advisory only and Finish still proceeds (46a is
+  deliberately a status line, not a gate — no modal). This is the first
+  report of a real network loss rather than `setOffline`, but on the QA's own
+  setup (MariaDB 10.11), not the owner's phone. **Item stays OPEN**: the phone drills above (Wi-Fi off with mobile
+  data on, app killed with writes queued) are owed before the first real count,
+  and only the owner can run them.
 
 ## 47. Eight invoice failures from the 2026-11-06 QA run
 
@@ -2368,6 +2380,15 @@ reviews read the code and ran nothing.
 - A sum or cross-check failure still flags every line.
 - The catalog holds these products at 750 ml or 355 ml while the invoice says 1 L,
   so costs posted with the size warning showing. Real use needs 1 L product rows.
+  **Done 2026-11-12 (owner: all three rows, dev + e2e + CSV).** Black Velvet,
+  Maker's Mark and Grey Goose at 1000 ml are in `docs/catalog/products.csv`
+  (100 products, 65 spirits) and were inserted into the dev and e2e databases.
+  Each copies brand, category and waste factor from its 750 ml sibling, with no
+  cost, vendor or case size; the first invoice costs them. The xlsx was not
+  regenerated. Adding them exposed a real defect: the catalog table named its
+  per-row controls by name alone, so the two Black Velvet rows had the same
+  accessible name ("Unit cost for Black Velvet"). The labels now carry the
+  size.
 
 **Decisions nobody explicitly made:**
 
@@ -2399,18 +2420,23 @@ and items #45, #46 and #47.
 | 45-minute cost-entry budget | Not started | Never timed. Costs are now expected to come from invoices. |
 | Run A: enrolment, 20 s enroll, open-vs-sealed | Partial | Two enrolments timed in passing (10 s, 5 s) on 2026-10-25. No full pass, and the split is unanswered. |
 | Run B: full count under 20 min | Not started | Longest real count: 3 lines in 2 m 43 s. |
-| Six-location walk and stray-bottle sheet | Not started | Count #3 touched 2 of 6 and closed with 4 unvisited (DB-4). |
+| Six-location walk and stray-bottle sheet | Not started | Count #3 touched 2 of 6 and closed with 4 unvisited (DB-4, now guarded in code: #52). |
 | Rapid-scan vs hand count | Not started | — |
 | Offline queue on the phone | Partial | Failed on 2026-11-06 (F2, F3). The fix is proven by e2e tests only (#46). |
-| Standalone `server.js` | Not started | Never started. Also a Phase 3 blocker. |
+| Standalone `server.js` | Done locally (2026-11-12) | The packaged zip ran with `node server.js` on macOS: e2e desktop and mobile all passing, `verify-browser` 93/93, `verify-ui-redesign` 74/0/0. Not proven: `pdf-inspector` from a Linux-built zip (a Mac zip carries only the darwin stub; the Linux binary works in the Linux container). `BETTER_AUTH_URL` must equal the serving origin or sign-in is 403. Go-live keeps the Hostinger half. |
 | Known barcode resolving on a device | Partial | Not recorded. Second scans, SET vs ADD and #45 are unverified. |
-| Phase 2.5 field metric and Vision | Not started | One real text invoice approved. Vision never run (#47). |
-| Redesigned UI on a phone (§6 bets) | Partial | On a phone twice, with no verdict on any bet. V1, A18, A19, A20, DB-1 and DB-4 to fix or accept. |
+| Phase 2.5 field metric and Vision | Not started | One real text invoice approved. Vision never run (#47). The 1 L product rows exist since 2026-11-12. |
+| Redesigned UI on a phone (§6 bets) | Partial | On a phone twice, with no verdict on any bet. V1, A18, A19 and DB-1 to fix or accept; A20 (Close) and DB-4 fixed in code 2026-11-12 (#52), phone check owed. |
 
 **Suggested order.** First the two things that would quietly corrupt the first
 real count: prove the #46 fix on the phone, and fix or accept the pre-count
 findings. Then enter data through real invoices (add the 1 L product rows first,
 #47), and run Vision with a real key. Then Run A, then Run B.
+
+**Update 2026-11-12.** Standalone done locally (row above). The database
+collation is decided and converted (#51). The close-over-empty-sections guard
+is in code (#52). The 1 L rows are in (#47). What this list still owes before
+the first real count: the #46 drills on the phone, and V1, A18, A19, DB-1.
 
 ---
 
@@ -2495,7 +2521,7 @@ production build: under `next dev` the dev overlay's `<nextjs-portal>` is a tab
 stop with no outline and fails the check on six routes, which says nothing
 about the app.
 
-## 51. The local databases use a NO PAD collation that CI and the compose comment say they don't
+## ~~51. The local databases use a NO PAD collation that CI and the compose comment say they don't~~ — **CLOSED 2026-11-12 (PAD SPACE everywhere)**
 
 **Found 2026-11-09.** `docker-compose.yml` starts MariaDB with
 `--collation-server=utf8mb4_0900_ai_ci`, and its comment says MariaDB 11.x
@@ -2522,3 +2548,60 @@ until they are recreated or `ALTER DATABASE`/`ALTER TABLE … CONVERT TO` is run
 Decide the production collation as part of `docs/go-live.md`.
 **Trigger:** before the first deploy, or the next time the local stack is
 rebuilt.
+
+**Resolution 2026-11-12 — owner decision: PAD SPACE everywhere,
+`utf8mb4_uca1400_ai_ci`.** The same collation CI already uses by default.
+- `docker-compose.yml` and `docker-compose.worktree-test.yml` set
+  `--collation-server=utf8mb4_uca1400_ai_ci`; the comment that called the
+  0900 name an alias is replaced with the measured fact. The three
+  `docker/mariadb/init/*.sql` files and `db/README.md` create databases with
+  the same collation, and the README adds the `'a' = 'a '` check.
+- The existing local databases were converted in place (no volume rebuild)
+  with `ALTER DATABASE … COLLATE utf8mb4_uca1400_ai_ci` plus
+  `ALTER TABLE … CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci`
+  on every table, foreign-key checks off for the run. A `mariadb-dump` of each
+  was taken first (kept outside the repo). After: all 21 tables and all 77
+  string columns in `truestock`, `truestock_e2e` and `truestock_test` report
+  `utf8mb4_uca1400_ai_ci`.
+- The running container keeps the old *server* default until it is
+  recreated (`docker compose up -d db`); that only affects databases created
+  afterwards without an explicit collation, and every init script names one.
+- Production: `docs/go-live.md` now has a checkbox that the Hostinger
+  database is created with this collation and passes the same check.
+
+## 52. A count can be closed over sections nobody counted (A20 / DB-4) — **FIXED IN CODE 2026-11-12; phone check owed**
+
+**Found 2026-10-25** (phone recording, `docs/phone-test-2026-10-25-findings.md`
+A20, DB-4) and again by an outside QA run on 2026-11-12: a count with 3 of 6
+sections never visited closed with no prompt. Count #3 closed with 4 of 6
+unvisited. A wrong distribution fails silently: the valuation is plausible and
+short.
+
+**Fix (owner decision 2026-11-12: warn, second tap; no modal).**
+- *Definition.* A section is an active location of the organization, the same
+  list the count hub's "N of M started" uses; empty means no `count_line` for
+  this count. No schema change, no "visited" tracking.
+- *Server.* `closeCount` (`lib/domain/counts.ts`) recomputes the empty sections
+  inside the close transaction and throws `EmptySectionsError` unless every
+  one is in `confirmedEmptyLocationIds`. Org-scoped, so a foreign id confirms
+  nothing; a retired location never blocks. `closeCountAction` returns
+  `{ closed: false, emptyLocations, sectionCount }` instead of an error.
+- *UI.* `components/count/session-actions.tsx`: Close count shows an inline
+  `role="alert"` panel, "⚠ N of M sections have no lines / <names> / Closing is
+  permanent.", with **Close anyway** and **Go back**; focus moves to Go back.
+  Close anyway resends exactly the ids shown, so a section emptied or added
+  meanwhile is re-checked by the server.
+
+**Proven.** `tests/count-close-empty-sections.test.ts` (8 DB tests) and two
+mobile tests in `e2e/specs/count-flow.e2e.ts` (panel lists the sections and the
+DB still says `reviewed`; Close anyway closes; Go back leaves it open).
+Mutation-checked: server refusal removed → 5 of 8 DB tests red; UI closing on
+the first tap → both e2e tests red. Three existing DB tests that close
+deliberately over empty sections now pass the confirmed ids explicitly
+(`reports-write-path`, `count-summary-roles`, `location-write-path`).
+
+**Not proven / still open.** The panel on a physical phone and in dark mode;
+its height with many empty sections on a small screen. Submit count has no
+empty-section check (only the pending-write gate, #46b) — by design the
+warning sits at Close, the irreversible step.
+**Trigger:** the phone pass before the six-location walk (#48).
