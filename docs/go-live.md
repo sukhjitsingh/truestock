@@ -59,6 +59,14 @@ Blocking items. Each one is either done or the deploy waits.
       `0011` came with the 2026-11-07 invoice QA fixes and have run in the test
       suites, but the clean-from-empty run has not been repeated for the full
       chain of twelve. None has run against production. `docs/deploy.md` §4 covers bootstrap order.
+- [ ] **The production database uses the PAD SPACE collation
+      `utf8mb4_uca1400_ai_ci`** — the one CI and the local stack use (open
+      item #51, owner decision 2026-11-12). Not `utf8mb4_0900_ai_ci`: on
+      MariaDB 11.8 that name is NO PAD, and a trailing-space name becomes a
+      second vendor/product/location. Check with
+      `SHOW CREATE DATABASE <name>;` and `SELECT 'a' = 'a ' COLLATE utf8mb4_uca1400_ai_ci;`
+      (must be `1`), and if Hostinger created it otherwise, `ALTER DATABASE`
+      before the first migration runs.
 - [ ] **Phase 2.9's data and field gate is signed off.** This is a prerequisite
       phase, not an optional launch follow-up: real catalog costs/case sizes/
       pars/vendors are populated, 20–25 real invoices meet or revise the
@@ -94,6 +102,16 @@ Blocking items. Each one is either done or the deploy waits.
       text-PDF extraction that proves the standalone trace contains
       `@firecrawl/pdf-inspector`'s native binary, so that a later failure is a
       hosting problem rather than an unknown.
+      **2026-11-12: proven locally except the native binary.** The packaged
+      zip ran with `node server.js` on macOS and passed the desktop and
+      mobile e2e suites and both browser harnesses. The trace copies only the
+      build machine's `pdf-inspector-<platform>` package, and the darwin one is
+      a stub, so the PDF half can only be proven from the **CI-built** (Linux)
+      zip. Left open until that zip's `node_modules/@firecrawl/` is listed and
+      one text PDF is extracted from it. Never deploy a Mac-built zip.
+- [ ] **`BETTER_AUTH_URL` is exactly the production origin** (`https://…`, no
+      trailing slash). Found 2026-11-12: when it named another origin, every
+      sign-in returned 403 while every page still rendered 200.
 
 - [x] **The `production` environment gates every release.** Added 2026-11-08
       (`docs/sdlc-playbook-map.md` Tier 2.3). **Done and proven 2026-11-08:**

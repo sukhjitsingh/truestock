@@ -15,7 +15,7 @@
  *      0.000 (AGENTS.md "Schema delta"). `KEG_WASTE_FACTOR` in db/seed.ts is
  *      module-private, so the test reads it out of the source, compares it with
  *      the spec value written here, and then RUNS the real seed in a subprocess
- *      and checks every one of the 97 stored rows against products.csv. A
+ *      and checks every one of the 100 stored rows against products.csv. A
  *      default and a catalog that drift apart are exactly the "plausible but
  *      wrong" failure the AGENTS.md banner warns about.
  *   3. THEORETICAL DEPLETION IS NOT BUILT YET (Phase 2 variance report), so its
@@ -79,7 +79,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  // The seed describe leaves 97 products behind; the next file resets anyway,
+  // The seed describe leaves 100 products behind; the next file resets anyway,
   // but this keeps the shared test database tidy.
   await resetDatabase();
   await closePool();
@@ -243,8 +243,8 @@ describe("seeded waste factors: kegs 0.100, everything else 0.000", () => {
     expect(other).toBe(SPEC_OTHER_WASTE);
   });
 
-  test("the catalog still has exactly 9 draft kegs and 97 products (what the counts below are measured against)", () => {
-    expect(csv).toHaveLength(97);
+  test("the catalog still has exactly 9 draft kegs and 100 products (what the counts below are measured against)", () => {
+    expect(csv).toHaveLength(100);
     expect(csv.filter((r) => r.unit_type.trim() === "keg")).toHaveLength(9);
   });
 
@@ -279,7 +279,7 @@ describe("seeded waste factors: kegs 0.100, everything else 0.000", () => {
         .from(product)
         .innerJoin(organization, eq(organization.id, product.organizationId))
         .where(eq(organization.slug, "truestock"));
-      expect(rows).toHaveLength(97);
+      expect(rows).toHaveLength(100);
 
       const byKey = new Map(rows.map((r) => [`${r.name}|${r.sizeMl}`, r]));
       let kegs = 0;

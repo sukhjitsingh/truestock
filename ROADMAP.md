@@ -94,7 +94,7 @@ to the app being *useful* rather than merely correct.
 Build: inline-editable cost and case-size columns in `catalog-table.tsx`, reusing
 the selection and bulk-bar machinery already there. Preferred over a CSV import —
 no new parser, no new silent failure mode, and case size is only 16 rows (bottled
-beer only; a NULL case size on the 62 spirits is correct, not missing).
+beer only; a NULL case size on the 65 spirits is correct, not missing).
 
 ### 1.3 Data entry — *moved to Phase 2.9 on 2026-08-13*
 

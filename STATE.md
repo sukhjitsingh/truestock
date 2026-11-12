@@ -285,6 +285,10 @@ only, not on a phone: a refused write should be dropped and named on screen.
   chosen but not added), A18 (the tab bar stays live during entry), A19 (Android
   Back), A20 (Submit and Close have no pre-flight check), DB-1 (`$0.00` shown as
   if it were a value) and DB-4 (a count can close with locations never visited).
+  **A20 (Close) and DB-4 are fixed in code 2026-11-12 (open item #52):** closing
+  over sections with no lines now needs a second, explicit tap and the server
+  re-checks. Submit was already held back while a save is unsynced. Both
+  close-guard tests pass on the real phone (`e2e:phone` 41/41, 2026-11-12).
 - **The counting app on a phone, AT SCALE.** Scan, tenths, sealed quantities,
   scan-to-enroll and the locked-location leg have each now run on a handset
   (2026-08-12) — so this entry is no longer "does it work" but "does it hold
@@ -392,6 +396,28 @@ only, not on a phone: a refused write should be dropped and named on screen.
   start`, and its own header comment says it is *not* the real production image.
   The CSP that run exercised is real and the 44/44 stands; the word "standalone"
   in that message does not. Nothing has yet executed `.next/standalone/server.js`.
+  **Proven locally 2026-11-12.** `scripts/package-standalone.sh` built the
+  deploy zip; it was unzipped into an empty directory and started with
+  `node server.js` (`NODE_ENV=production`, no `next start`, no Docker) on an
+  Intel Mac. It printed Ready with no warnings. The CSP carried a per-request
+  nonce and `/zxing/zxing_reader.wasm` served 200 `application/wasm`. Against
+  that server: Playwright desktop and emulated-mobile suites all passing,
+  `verify-browser` 93/93 and `verify-ui-redesign` 74/0/0.
+  Three things this did **not** prove, and one it found:
+  - **`@firecrawl/pdf-inspector` from the artifact.** The trace copies only the
+    build machine's platform package. A zip built on a Mac carries
+    `pdf-inspector-darwin-x64`, which is a stub, so no PDF extraction can run
+    from a Mac-built zip. The real Linux binary was exercised separately:
+    inside the Linux `truestock-app` container, `classifyPdf` returned
+    TextBased on a generated PDF and `extractPagesMarkdown` returned its text.
+    The deploy zip is built on `ubuntu-latest` (`deploy.yml`), so its trace
+    should hold `linux-x64-gnu`. Nobody has yet listed a CI-built zip or
+    extracted a PDF from one. **Never deploy a zip built on a Mac.**
+  - Linux itself: the standalone server ran on macOS, not on Hostinger's runtime.
+  - Hostinger's own build-on-server path.
+  - **Found: `BETTER_AUTH_URL` must equal the origin the browser uses.** With
+    it set to another origin every sign-in returned 403 while each page still
+    rendered. On Hostinger it must be the real `https://` origin.
 - **Concurrency.** The gap-lock deadlock and `withLockRetry` were reproduced by
   hand against MySQL — never against MariaDB, never as a test.
 - **Valuation at catalog scale.** The *mechanism* is proven as of 2026-08-12 —
@@ -596,13 +622,14 @@ suite proves the software contract, not the operating claims.
    first real count.** First, prove the #46 queue fix on the phone: two or more
    queued writes, a correction arriving in the right order, falling over to
    mobile data, and the flush after the app is killed. Second, fix or accept the
-   pre-count findings V1, A18, A20, DB-1 and DB-4. Then enter data through real
-   invoices (add the 1 L product rows first, #47). (Vision with a real key is
+   pre-count findings V1, A18, DB-1 (A20's Close half and DB-4 are fixed in
+   code and passing on the phone by e2e, #52). Then enter data through real invoices (the
+   1 L product rows were added 2026-11-12, #47). (Vision with a real key is
    deferred past go-live, 2026-11-08.)
    The status of each item is in ROADMAP.md, Phase 2.9.
-3. **Phase 3 — go-live.** Only after Phase 2.9. Start the real standalone
-   artifact with `node .next/standalone/server.js`, exercise `pdf-inspector`
-   from that artifact, run migrations `0000 → … → 0011` against production,
+3. **Phase 3 — go-live.** Only after Phase 2.9. Run the CI-built standalone
+   artifact on Hostinger (proven locally on macOS 2026-11-12), exercise
+   `pdf-inspector` from that Linux-built artifact, run migrations `0000 → … → 0011` against production,
    verify the real SendGrid path, choose whether local pilot invoices migrate or
    are discarded, establish offsite backup, schedule the session sweep, rehearse
    rollback, and run `docs/go-live.md` against the real origin. Open item #39's

@@ -83,6 +83,7 @@ import {
   ClosedCountError,
   CountNotWritableError,
   DomainError,
+  EmptySectionsError,
   InvalidCountTransitionError,
   NotFoundError,
 } from "@/lib/domain/errors";
@@ -1107,6 +1108,7 @@ export async function getCountTotals(actor: Actor, countId: number): Promise<Cou
 export async function closeCount(
   actor: Actor,
   countId: number,
+  options: { confirmedEmptyLocationIds?: number[] } = {},
 ): Promise<{
   count: CountSummaryRow;
   totals: ReturnType<typeof summarizeValuation> & { lineCount: number };
@@ -1124,6 +1126,27 @@ export async function closeCount(
       throw new InvalidCountTransitionError(
         `Count must be reviewed to be closed, but it is ${row.status}.`,
       );
+    }
+
+    // Sections = this org's active locations (the hub's "N of M started");
+    // empty = no count_line for this count. Recomputed here, inside the
+    // transaction, so a stale client can't close over a section that is empty.
+    const sections = await tx
+      .select({ id: location.id, name: location.name })
+      .from(location)
+      .where(and(eq(location.organizationId, actor.organizationId), eq(location.active, true)))
+      .orderBy(location.sortOrder, location.name);
+    const withLines = await tx
+      .selectDistinct({ locationId: countLine.locationId })
+      .from(countLine)
+      .where(
+        and(eq(countLine.countId, countId), eq(countLine.organizationId, actor.organizationId)),
+      );
+    const visited = new Set(withLines.map((r) => r.locationId));
+    const confirmed = new Set(options.confirmedEmptyLocationIds ?? []);
+    const empty = sections.filter((l) => !visited.has(l.id));
+    if (empty.some((l) => !confirmed.has(l.id))) {
+      throw new EmptySectionsError(empty, sections.length);
     }
 
     const totals = await computeCountTotals(tx, actor.organizationId, countId);

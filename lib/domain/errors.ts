@@ -71,6 +71,25 @@ export class InvalidCountTransitionError extends DomainError {
   }
 }
 
+/**
+ * Closing is permanent (invariant 1) and a section with no lines was probably
+ * never walked. `closeCount` refuses until every such section is named in
+ * `confirmedEmptyLocationIds`. Carries the CURRENT empty list so the UI can
+ * show or refresh its warning; the ids are the count's own org's (invariant 9).
+ */
+export class EmptySectionsError extends DomainError {
+  readonly emptyLocations: { id: number; name: string }[];
+  readonly sectionCount: number;
+  constructor(emptyLocations: { id: number; name: string }[], sectionCount: number) {
+    super(
+      "EMPTY_SECTIONS",
+      `${emptyLocations.length} of ${sectionCount} sections have no lines. Confirm to close anyway.`,
+    );
+    this.emptyLocations = emptyLocations;
+    this.sectionCount = sectionCount;
+  }
+}
+
 export class ConflictError extends DomainError {
   constructor(message: string) {
     super("CONFLICT", message);

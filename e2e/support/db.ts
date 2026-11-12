@@ -285,6 +285,24 @@ export async function locationByName(name: string): Promise<LocationRow> {
   return { id: Number(found[0].id), name: String(found[0].name), countMode: found[0].count_mode as LocationRow["countMode"] };
 }
 
+/** A count's lifecycle status straight from the database (ground truth, not the screen). */
+export async function countStatus(countId: number): Promise<string> {
+  const org = await getOrgId();
+  const [row] = await rows<RowDataPacket>("SELECT status FROM `count` WHERE organization_id = ? AND id = ?", [org, countId]);
+  if (!row) throw new Error(`e2e db: no count ${countId}`);
+  return String(row.status);
+}
+
+/** Names of the organization's ACTIVE locations (the count's sections), in hub order. */
+export async function activeLocationNames(): Promise<string[]> {
+  const org = await getOrgId();
+  const found = await rows<RowDataPacket>(
+    "SELECT name FROM location WHERE organization_id = ? AND active = 1 ORDER BY sort_order, name",
+    [org],
+  );
+  return found.map((r) => String(r.name));
+}
+
 /** How many ACTIVE products the organization has — what the catalog table's "of N" should say. */
 export async function activeProductCount(): Promise<number> {
   const org = await getOrgId();
@@ -374,6 +392,8 @@ export const dbApi = {
   activeProductCount,
   setProductCost,
   locationByName,
+  countStatus,
+  activeLocationNames,
   barcodeExists,
   invoiceIds,
   vendorByName,

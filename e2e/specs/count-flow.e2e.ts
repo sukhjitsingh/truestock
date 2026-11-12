@@ -23,6 +23,7 @@ import type { Page } from "playwright/test";
 import { expect, requireRole, test } from "../support/fixtures";
 import type { Db } from "../support/db";
 import { authFile } from "../support/env";
+import { waitForLocatorHydration } from "../support/hydration";
 import {
   addEaches,
   eachesField,
@@ -320,4 +321,64 @@ test("Submit count is disabled on the session page while a write is pending, and
   await page.goto(`/count/${countId}`);
   await expect(page.getByRole("button", { name: "Submit count" })).toBeEnabled();
   await expect(page.getByText(/synced yet\. Tap Keep counting/)).toHaveCount(0);
+});
+
+// QA finding A20 / DB-4. Closing a count is permanent (invariant 1), so a close over
+// sections nobody visited is warn-and-allow: the first tap shows the empty sections
+// and writes nothing; "Close anyway" closes; "Go back" leaves it reviewed.
+//
+// Mutation check: make the Close count button confirm every empty section on
+// the first tap (or drop the server refusal) and that tap closes the count:
+// the "still reviewed" assertion below is red.
+async function reachReviewedWithOneSectionCounted(page: Page, db: Db): Promise<{ countId: number; empty: string[] }> {
+  const countId = await startCount(page);
+  await pickLocation(page, "Storeroom");
+  await addEaches(page, "Jameson", "Jameson", 3);
+
+  await page.goto(`/count/${countId}`);
+  const submit = page.getByRole("button", { name: "Submit count" });
+  await waitForLocatorHydration(submit);
+  await expect(submit).toBeEnabled();
+  await submit.click();
+  const review = page.getByRole("button", { name: "Mark reviewed" });
+  await expect(review).toBeVisible();
+  await review.click();
+  await expect(page.getByRole("button", { name: /^Close count/ })).toBeVisible();
+  expect(await db.countStatus(countId)).toBe("reviewed");
+
+  const empty = (await db.activeLocationNames()).filter((n) => n !== "Storeroom");
+  expect(empty.length, "the seeded org has several sections besides Storeroom").toBeGreaterThan(1);
+  return { countId, empty };
+}
+
+test("Close count over unvisited sections warns first: nothing closes until Close anyway", async ({ page, db }) => {
+  const { countId, empty } = await reachReviewedWithOneSectionCounted(page, db);
+  const total = empty.length + 1;
+
+  await page.getByRole("button", { name: /^Close count/ }).click();
+
+  const panel = page.getByTestId("empty-sections-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText(`${empty.length} of ${total} sections have no lines`);
+  await expect(panel).toContainText(empty.join(" · "));
+  await expect(panel).toContainText("Closing is permanent.");
+  await expect(panel).toHaveAttribute("role", "alert");
+  // The safe action holds focus, and nothing was written.
+  await expect(page.getByRole("button", { name: "Go back" })).toBeFocused();
+  expect(await db.countStatus(countId)).toBe("reviewed");
+
+  await page.getByRole("button", { name: "Close anyway" }).click();
+  await expect.poll(() => db.countStatus(countId), "Close anyway closes the count").toBe("closed");
+});
+
+test("Go back from the empty-sections warning leaves the count reviewed", async ({ page, db }) => {
+  const { countId } = await reachReviewedWithOneSectionCounted(page, db);
+
+  await page.getByRole("button", { name: /^Close count/ }).click();
+  await expect(page.getByTestId("empty-sections-panel")).toBeVisible();
+  await page.getByRole("button", { name: "Go back" }).click();
+
+  await expect(page.getByTestId("empty-sections-panel")).toBeHidden();
+  await expect(page.getByRole("button", { name: /^Close count/ })).toBeVisible();
+  expect(await db.countStatus(countId)).toBe("reviewed");
 });

@@ -108,7 +108,7 @@ signs in once per role.
 
 - A production-mode container (nonce CSP, real hydration) on `localhost:3101`,
   backed by MariaDB on `127.0.0.1:3307`, database `truestock_e2e`, seeded with the
-  catalog (97 products) and one owner, manager and staff account.
+  catalog (100 products) and one owner, manager and staff account.
 - The Docker rig, not `next dev`: dev reloads the page when the network drops and
   skips the CSP, so it would test a different app.
 - Chromium only (the phone project is Chrome on Android), `workers: 1`, no retries. Specs share one database and

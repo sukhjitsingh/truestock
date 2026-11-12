@@ -214,11 +214,11 @@ describe("the seed catalog", () => {
 
   const products = readProducts();
 
-  test("reads all 97 seeded products", () => {
+  test("reads all 100 seeded products", () => {
     // If this number moves, the assertion below is covering a different
     // catalog than the one CLAUDE.md describes and should be re-read, not
     // re-numbered.
-    expect(products.length).toBe(97);
+    expect(products.length).toBe(100);
   });
 
   test("every seeded size is a preset for its own category and unit type", () => {
@@ -259,6 +259,7 @@ describe("the seed catalog", () => {
       "Beer/keg/58674",
       "Liqueur/bottle/750",
       "NA/bottle/355",
+      "Spirits/bottle/1000",
       "Spirits/bottle/750",
       "Wine/bottle/750",
     ]);

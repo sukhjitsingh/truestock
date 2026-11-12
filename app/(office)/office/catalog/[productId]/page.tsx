@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireOfficeUser } from "@/lib/current-user";
 import { getProductWithStockAction, listAllVendorsAction } from "@/app/actions/catalog";
+import { formatProductSize } from "@/lib/bottle-sizes";
 import { PageHeader } from "@/components/office/page-header";
 import { ProductEditForm } from "@/components/office/product-edit-form";
 
@@ -35,7 +36,7 @@ export default async function ProductEditPage({
 
   return (
     <div className="max-w-2xl">
-      <PageHeader title={product.name} breadcrumb={{ label: "← Catalog", href: "/office/catalog" }} />
+      <PageHeader title={`${product.name}, ${formatProductSize(product)}`} breadcrumb={{ label: "← Catalog", href: "/office/catalog" }} />
       {created === "1" ? (
         <p className="mt-4 rounded-md bg-success-bg px-3 py-2 text-caption text-success" role="status">
           Product added. Set its par level below so it shows up on the reorder list.

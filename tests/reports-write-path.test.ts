@@ -12,7 +12,7 @@ import { db, closePool } from "@/db";
 import { count } from "@/db/schema";
 import { getLastClosedCount } from "@/lib/domain/reports";
 import { openCount, incrementCountLine, submitCount, reviewCount, closeCount } from "@/lib/domain/counts";
-import { migrateTestDatabase, resetDatabase, createFixtures, newClientLineId, type Fixtures } from "./helpers/test-db";
+import { allLocationIds, migrateTestDatabase, resetDatabase, createFixtures, newClientLineId, type Fixtures } from "./helpers/test-db";
 
 let fx: Fixtures;
 
@@ -52,8 +52,8 @@ describe("getLastClosedCount", () => {
     // Close B first, then A — so A is the LAST one closed despite being the
     // FIRST one started. Pin the timestamps explicitly so the assertion
     // below can't pass by accident of real-clock ordering.
-    await closeCount(fx.owner, b.id);
-    await closeCount(fx.owner, a.id);
+    await closeCount(fx.owner, b.id, { confirmedEmptyLocationIds: await allLocationIds(fx.owner) });
+    await closeCount(fx.owner, a.id, { confirmedEmptyLocationIds: await allLocationIds(fx.owner) });
     await setClosedAt(b.id, new Date(Date.now() - 60_000));
     await setClosedAt(a.id, new Date());
 
@@ -81,7 +81,7 @@ describe("getLastClosedCount", () => {
       newPartialFills: [],
     });
     await advanceToReviewed(c.id);
-    await closeCount(fx.owner, c.id);
+    await closeCount(fx.owner, c.id, { confirmedEmptyLocationIds: await allLocationIds(fx.owner) });
 
     const ownerResult = await getLastClosedCount(fx.owner);
     expect(ownerResult).not.toBeNull();
@@ -96,7 +96,9 @@ describe("getLastClosedCount", () => {
   test("a second tenant's closed count never appears", async () => {
     const theirs = await openCount(fx.otherOwner, { type: "full" });
     await advanceToReviewed(theirs.id, fx.otherOwner);
-    await closeCount(fx.otherOwner, theirs.id);
+    await closeCount(fx.otherOwner, theirs.id, {
+      confirmedEmptyLocationIds: await allLocationIds(fx.otherOwner),
+    });
 
     // The negative control: without `theirs` existing, a test asserting
     // `null` here would pass whether or not the query is tenant-scoped.

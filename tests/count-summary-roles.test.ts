@@ -37,6 +37,7 @@ import {
   reviewCount,
   closeCount,
 } from "@/lib/domain/counts";
+import { allLocationIds } from "./helpers/test-db";
 import { createLocation, updateProduct } from "@/lib/domain/catalog";
 import { NotFoundError } from "@/lib/domain/errors";
 import {
@@ -96,7 +97,7 @@ async function countWith(specs: LineSpec[], opener: Fixtures["owner"] = fx.owner
 async function closeIt(countId: number, actor: Fixtures["owner"] = fx.owner) {
   await submitCount(actor, countId);
   await reviewCount(actor, countId);
-  await closeCount(actor, countId);
+  await closeCount(actor, countId, { confirmedEmptyLocationIds: await allLocationIds(actor) });
 }
 
 /** Pin timestamps directly so ordering never depends on real wall-clock gaps. */

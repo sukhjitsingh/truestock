@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   submitCountAction,
@@ -94,6 +94,19 @@ export function SessionActions({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const queued = usePendingWrites(countId);
+  // Sections with no lines, as the server last reported them. Non-null = the
+  // warn-and-allow panel is armed; nothing has been closed.
+  const [emptySections, setEmptySections] = useState<
+    { id: number; name: string }[] | null
+  >(null);
+  const [sectionCount, setSectionCount] = useState(0);
+  const goBackRef = useRef<HTMLButtonElement>(null);
+  const armed = emptySections !== null;
+  useEffect(() => {
+    // Focus the safe action, so a stray second tap dismisses rather than closes.
+    // A disabled button can't take focus, so wait out the transition too.
+    if (armed && !pending) goBackRef.current?.focus();
+  }, [armed, pending]);
 
   if (status === "closed") {
     return null;
@@ -191,6 +204,72 @@ export function SessionActions({
     );
   }
 
+  function close(confirmed: number[]) {
+    setError(null);
+    startTransition(async () => {
+      const result = await closeCountAction({ countId, confirmedEmptyLocationIds: confirmed });
+      if (!result.ok) {
+        setError(result.error?.message ?? "Something went wrong.");
+        return;
+      }
+      if (!result.data.closed) {
+        // Refused, nothing written. Show (or refresh) the list of empty sections.
+        setEmptySections(result.data.emptyLocations);
+        setSectionCount(result.data.sectionCount);
+        return;
+      }
+      setEmptySections(null);
+      router.refresh();
+    });
+  }
+
+  if (emptySections !== null) {
+    return (
+      <>
+        {error ? (
+          <div className="fixed inset-x-0 bottom-[calc(var(--spacing-action-bar)+9rem)] z-40 px-bar-pad">
+            <p className="rounded-md bg-negative-bg px-3 py-2 text-caption text-negative" role="alert">
+              {error}
+            </p>
+          </div>
+        ) : null}
+        <ActionBar className="flex-col">
+          <div role="alert" data-testid="empty-sections-panel" className="rounded-md bg-warning-bg px-3 py-2 text-warning">
+            <p className="text-row-title font-semibold">
+              ⚠ {emptySections.length} of {sectionCount} sections have no lines
+            </p>
+            <p className="text-row-subtitle">{emptySections.map((l) => l.name).join(" · ")}</p>
+            <p className="text-row-subtitle font-semibold">Closing is permanent.</p>
+          </div>
+          <div className="flex gap-3">
+            <Button
+              variant="outline"
+              size="primary"
+              className="flex-1"
+              disabled={pending}
+              onClick={() => close(emptySections.map((l) => l.id))}
+            >
+              {pending ? "Closing…" : "Close anyway"}
+            </Button>
+            <Button
+              ref={goBackRef}
+              variant="primary"
+              size="primary"
+              className="flex-1"
+              disabled={pending}
+              onClick={() => {
+                setEmptySections(null);
+                setError(null);
+              }}
+            >
+              Go back
+            </Button>
+          </div>
+        </ActionBar>
+      </>
+    );
+  }
+
   // reviewed → close. `totalValue` is undefined for a manager, which makes
   // this a single-line button rather than a two-line one with a blank
   // second row (design-system.md §8.3).
@@ -202,7 +281,7 @@ export function SessionActions({
         value={totalValue}
         coverage={coverage}
         disabled={pending}
-        onClick={() => run(() => closeCountAction({ countId }))}
+        onClick={() => close([])}
       />
     </Bar>
   );

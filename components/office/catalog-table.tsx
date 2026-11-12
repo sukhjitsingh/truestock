@@ -39,6 +39,15 @@ import { unitCostSchema } from "@/lib/validation/catalog";
 import { isCountedByCase } from "@/lib/pack-level";
 import { formatProductSize } from "@/lib/bottle-sizes";
 
+/**
+ * The accessible-name subject of a row: name AND size ("Black Velvet, 750 ml").
+ * The catalog legitimately holds two products with one name and different
+ * sizes, so a name alone gives two controls the same accessible name.
+ */
+function productLabel(p: { name: string; unitType: string; sizeMl: number }): string {
+  return `${p.name}, ${formatProductSize(p)}`;
+}
+
 const REASON_LABEL: Record<ProductIncompleteReason, string> = {
   needs_producer: "Needs producer",
   needs_case_size: "Needs case size",
@@ -404,7 +413,7 @@ export function CatalogTable({
             type="checkbox"
             checked={selectedIds.has(row.original.id)}
             onChange={() => toggleProduct(row.original.id)}
-            aria-label={`Select ${row.original.name}`}
+            aria-label={`Select ${productLabel(row.original)}`}
             className="h-4 w-4 cursor-pointer"
           />
         ),
@@ -526,7 +535,7 @@ export function CatalogTable({
                 // DECIMAL(10,4) arrives as "144.0000" — see formatCostForInput.
                 value={formatCostForInput(product.currentUnitCost)}
                 placeholder="Enter cost"
-                ariaLabel={`Unit cost for ${product.name}`}
+                ariaLabel={`Unit cost for ${productLabel(product)}`}
                 onSaved={patchRow}
               />
             );
@@ -554,7 +563,7 @@ export function CatalogTable({
                 field="caseSize"
                 value={product.caseSize == null ? "" : String(product.caseSize)}
                 placeholder="Case size"
-                ariaLabel={`Case size for ${product.name}`}
+                ariaLabel={`Case size for ${productLabel(product)}`}
                 onSaved={patchRow}
               />
             );
@@ -562,7 +571,7 @@ export function CatalogTable({
           return (
             <span
               className="inline-flex"
-              aria-label={`Case size is not applicable for ${product.name} — not counted by the case`}
+              aria-label={`Case size is not applicable for ${productLabel(product)} — not counted by the case`}
             >
               <NullValue reason="not-applicable" />
             </span>
@@ -577,7 +586,7 @@ export function CatalogTable({
         cell: ({ row }) => (
           <Link
             href={`/office/catalog/${row.original.id}`}
-            aria-label={`Edit ${row.original.name}`}
+            aria-label={`Edit ${productLabel(row.original)}`}
             className={cn(buttonVariants({ variant: "outline", size: "tap" }), "whitespace-nowrap")}
           >
             Edit

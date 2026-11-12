@@ -28,7 +28,7 @@ correctly by construction. Do it by hand only for production:
    locally — database name `truestock` per spec). **It must be `utf8mb4`:**
 
    ```sql
-   CREATE DATABASE truestock CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+   CREATE DATABASE truestock CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci;
    ```
 
    Nothing in `db/schema.ts` or the migrations declares a charset, so every
@@ -40,10 +40,13 @@ correctly by construction. Do it by hand only for production:
    charset dropdown rather than accepting its default. Schema audit
    2026-07-27, finding F3.
 
-   `utf8mb4_0900_ai_ci` is a MySQL collation name and works on MariaDB 11.x,
-   which accepts it as an alias for `utf8mb4_uca1400_ai_ci` — verified on
-   11.8.8. It is spelled the MySQL way deliberately, so one name covers this
-   file, the schema audit and `docker-compose.yml`.
+   The collation is `utf8mb4_uca1400_ai_ci` (PAD SPACE: `'Acme'` and
+   `'Acme '` are the same name in a unique index), the same as CI and
+   `docker-compose.yml`. **Not `utf8mb4_0900_ai_ci`:** on MariaDB 11.8.8 that
+   MySQL name is the NO PAD variant, and a database created with it accepts a
+   trailing-space duplicate vendor (open item #51, owner decision 2026-11-12).
+   After creating it, `SELECT 'a' = 'a ' COLLATE utf8mb4_uca1400_ai_ci;` must
+   return 1 and `SHOW CREATE DATABASE truestock;` must name this collation.
 2. Copy `.env.example` to `.env.local` and fill in `DATABASE_URL`.
 3. Generate/apply migrations and seed:
 
@@ -289,7 +292,7 @@ not silently erase real data entered later through the app.
 
 What it seeds:
 - 5 locations with sort order and notes
-- 97 products (name, category, subcategory, unit_type, size_ml, active)
+- 100 products (name, category, subcategory, unit_type, size_ml, active)
 - `waste_factor` = 0.100 for the 9 keg products, 0.000 for everything else
 - real wholesale cost for the 9 draft kegs, from `draft-economics.csv`
 

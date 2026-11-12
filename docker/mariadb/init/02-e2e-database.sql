@@ -8,7 +8,7 @@
 -- `bash scripts/e2e-rig.sh db` instead - it executes this same statement.
 CREATE DATABASE IF NOT EXISTS `truestock_e2e`
   CHARACTER SET utf8mb4
-  COLLATE utf8mb4_0900_ai_ci;
+  COLLATE utf8mb4_uca1400_ai_ci;
 
 GRANT ALL PRIVILEGES ON `truestock_e2e`.* TO 'truestock'@'%';
 FLUSH PRIVILEGES;

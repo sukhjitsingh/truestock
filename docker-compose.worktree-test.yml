@@ -27,7 +27,7 @@ services:
     container_name: truestock-slice5-test-mariadb
     command:
       - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_0900_ai_ci
+      - --collation-server=utf8mb4_uca1400_ai_ci # = docker-compose.yml, PAD SPACE (open item #51)
       - --default-time-zone=+00:00
       - --max-connections=100
       - --innodb-buffer-pool-size=256M

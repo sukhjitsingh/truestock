@@ -913,7 +913,7 @@ async function officeEditChecks(context, route, noun) {
 async function invoicePreview(context, sql, ctx) {
   console.log("\n--- invoice preview (desktop) ---");
   const [rows] = await sql.query(
-    "SELECT id, status FROM invoice WHERE organization_id = ? AND status NOT IN ('uploaded','processing') ORDER BY id LIMIT 1",
+    "SELECT id, status FROM invoice WHERE organization_id = ? AND status NOT IN ('uploaded','processing') AND file_path IS NOT NULL ORDER BY id LIMIT 1",
     [ctx.orgId],
   );
   if (rows.length === 0) {
@@ -923,7 +923,7 @@ async function invoicePreview(context, sql, ctx) {
     } else {
       notRun(
         "invoice preview: no reviewable invoice in DB, not exercised",
-        `${n} invoice(s) exist but all are uploaded/processing, which render no review form or iframe; the iframe and Content-Disposition were NOT checked`,
+        `${n} invoice(s) exist but none is both reviewable and backed by a stored file (uploaded/processing render no review form; a NULL file_path 404s — the Slice 4 harness inserts those); the iframe and Content-Disposition were NOT checked`,
       );
     }
     return;

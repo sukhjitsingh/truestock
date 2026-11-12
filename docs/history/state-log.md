@@ -11,6 +11,13 @@ When a feature ships, its one-line entry goes here (AGENTS.md, "Planning workflo
 
 ---
 
+- **2026-11-12** — **Pre-Phase-2.9 blockers closed in code.** Closing a count over
+  sections with no lines needs a second tap and the server re-checks (#52, A20/DB-4).
+  The local databases moved to PAD SPACE `utf8mb4_uca1400_ai_ci` (#51). The 1 L
+  rows for Black Velvet, Maker's Mark and Grey Goose were added (#47), and catalog
+  controls now name the size. The standalone `server.js` ran locally from the
+  packaged zip (#48). `e2e:phone` passed 41/41 on the Pixel, close guard
+  included. The #46 hand-driven network drills are still owed.
 - **2026-11-09** — **Count-queue guards and office accessibility proven in a
   browser (open items #46, #29).** Two new mutation-checked `count-flow` e2e
   specs prove the Finish-section warning and the disabled Submit while a count

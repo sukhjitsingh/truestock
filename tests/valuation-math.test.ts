@@ -97,7 +97,7 @@ describe("computeLineUnits — the spec formula", () => {
   });
 
   test("zero cases with a NULL case size is NOT indeterminate (liquor has no case size)", () => {
-    // The catalog's 62 spirits, 2 liqueurs, 5 wines and 3 NA all have a NULL
+    // The catalog's 65 spirits, 2 liqueurs, 5 wines and 3 NA all have a NULL
     // case_size on purpose (AGENTS.md "The catalog"). If this started returning
     // null, every liquor line in every count would drop out of valuation.
     const r = computeLineUnits(
