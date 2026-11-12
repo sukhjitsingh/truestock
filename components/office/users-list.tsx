@@ -148,7 +148,7 @@ export function UsersList({ users }: { users: UserSummary[] }) {
                         disabled={busy}
                         aria-label={`${u.active ? "Deactivate" : "Activate"} ${u.name}`}
                         onClick={() => handleActiveChange(u.id, !u.active)}
-                        className={`inline-flex min-h-tap-min items-center rounded-lg border px-3 py-1.5 text-caption font-semibold uppercase transition-all active:scale-95 disabled:opacity-50 ${
+                        className={`inline-flex min-h-tap-min items-center rounded-lg border px-3 py-1.5 text-caption font-semibold uppercase transition-colors active:scale-95 disabled:opacity-50 ${
                           u.active
                             ? "border-destructive/30 text-destructive hover:bg-destructive/10"
                             : "border-success/30 text-success hover:bg-success/10"
