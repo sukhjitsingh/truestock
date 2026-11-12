@@ -224,7 +224,7 @@ PORT=3206 bun run phone:rig down
   itself. Never point it at a database you care about (the suite refuses any
   name not ending `_e2e`).
 - Office-only specs (`office-catalog`, `vendors-retire`) are not run on the
-  phone, as in the emulated mobile project. The phone runs the same 39 tests
+  phone, as in the emulated mobile project. The phone runs the same 41 tests
   as `e2e:mobile`.
 - The soft keyboard is neutralised for the phone project only: each test
   context sets `navigator.virtualKeyboard.overlaysContent = true`
@@ -241,6 +241,10 @@ PORT=3206 bun run phone:rig down
 39/39 passed in 2.9 min**, including all of `count-flow` (the #46a
 Finish-section warning, the #46b Submit gate, the queue draining without an
 `online` event). Desktop 33/33 and emulated mobile 39/39 on the same build.
+
+**Result, 2026-11-12 (same phone, over USB, `fix/pre-29-blockers`): 41/41 in
+4.1 min**, including the two new close-guard tests (open item #52). The
+suite grew to 41 with those two tests.
 
 ### #29 — accessibility on the counting screens
 

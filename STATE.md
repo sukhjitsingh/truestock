@@ -287,8 +287,8 @@ only, not on a phone: a refused write should be dropped and named on screen.
   if it were a value) and DB-4 (a count can close with locations never visited).
   **A20 (Close) and DB-4 are fixed in code 2026-11-12 (open item #52):** closing
   over sections with no lines now needs a second, explicit tap and the server
-  re-checks. Submit was already held back while a save is unsynced. The phone
-  check is still owed.
+  re-checks. Submit was already held back while a save is unsynced. Both
+  close-guard tests pass on the real phone (`e2e:phone` 41/41, 2026-11-12).
 - **The counting app on a phone, AT SCALE.** Scan, tenths, sealed quantities,
   scan-to-enroll and the locked-location leg have each now run on a handset
   (2026-08-12) — so this entry is no longer "does it work" but "does it hold
@@ -623,7 +623,7 @@ suite proves the software contract, not the operating claims.
    queued writes, a correction arriving in the right order, falling over to
    mobile data, and the flush after the app is killed. Second, fix or accept the
    pre-count findings V1, A18, DB-1 (A20's Close half and DB-4 are fixed in
-   code, #52; phone check owed). Then enter data through real invoices (the
+   code and passing on the phone by e2e, #52). Then enter data through real invoices (the
    1 L product rows were added 2026-11-12, #47). (Vision with a real key is
    deferred past go-live, 2026-11-08.)
    The status of each item is in ROADMAP.md, Phase 2.9.

@@ -2301,6 +2301,11 @@ OPEN for the retry-timer bullet and the phone proof (#48).
   setup (MariaDB 10.11), not the owner's phone. **Item stays OPEN**: the phone drills above (Wi-Fi off with mobile
   data on, app killed with writes queued) are owed before the first real count,
   and only the owner can run them.
+- 2026-11-12, phone run: `bun run e2e:phone` passed **41/41** in 4.1 min
+  (Pixel 10 Pro XL over USB, a fresh production build of `fix/pre-29-blockers` served by `phone:rig` against `truestock_e2e`). That includes all 11 `count-flow` tests: the queue ordering, retry
+  without an `online` event, a write waiting behind a blocked queue, 46a, 46b,
+  and the two new close-guard tests (#52). This is the same automated proof as
+  2026-11-10 on the current code. The hand-driven drills above are still owed.
 
 ## 47. Eight invoice failures from the 2026-11-06 QA run
 
@@ -2426,7 +2431,7 @@ and items #45, #46 and #47.
 | Standalone `server.js` | Done locally (2026-11-12) | The packaged zip ran with `node server.js` on macOS: e2e desktop and mobile all passing, `verify-browser` 93/93, `verify-ui-redesign` 74/0/0. Not proven: `pdf-inspector` from a Linux-built zip (a Mac zip carries only the darwin stub; the Linux binary works in the Linux container). `BETTER_AUTH_URL` must equal the serving origin or sign-in is 403. Go-live keeps the Hostinger half. |
 | Known barcode resolving on a device | Partial | Not recorded. Second scans, SET vs ADD and #45 are unverified. |
 | Phase 2.5 field metric and Vision | Not started | One real text invoice approved. Vision never run (#47). The 1 L product rows exist since 2026-11-12. |
-| Redesigned UI on a phone (§6 bets) | Partial | On a phone twice, with no verdict on any bet. V1, A18, A19 and DB-1 to fix or accept; A20 (Close) and DB-4 fixed in code 2026-11-12 (#52), phone check owed. |
+| Redesigned UI on a phone (§6 bets) | Partial | On a phone twice, with no verdict on any bet. V1, A18, A19 and DB-1 to fix or accept; A20 (Close) and DB-4 fixed 2026-11-12 (#52), passing on the phone by e2e. |
 
 **Suggested order.** First the two things that would quietly corrupt the first
 real count: prove the #46 fix on the phone, and fix or accept the pre-count
@@ -2569,7 +2574,7 @@ rebuilt.
 - Production: `docs/go-live.md` now has a checkbox that the Hostinger
   database is created with this collation and passes the same check.
 
-## 52. A count can be closed over sections nobody counted (A20 / DB-4) — **FIXED IN CODE 2026-11-12; phone check owed**
+## 52. A count can be closed over sections nobody counted (A20 / DB-4) — **FIXED 2026-11-12; proven on the phone by e2e**
 
 **Found 2026-10-25** (phone recording, `docs/phone-test-2026-10-25-findings.md`
 A20, DB-4) and again by an outside QA run on 2026-11-12: a count with 3 of 6
@@ -2600,8 +2605,11 @@ the first tap → both e2e tests red. Three existing DB tests that close
 deliberately over empty sections now pass the confirmed ids explicitly
 (`reports-write-path`, `count-summary-roles`, `location-write-path`).
 
-**Not proven / still open.** The panel on a physical phone and in dark mode;
-its height with many empty sections on a small screen. Submit count has no
+**On the phone, 2026-11-12:** both close-guard tests passed in `bun run e2e:phone`
+(41/41; Pixel 10 Pro XL over USB, a fresh production build of `fix/pre-29-blockers` served by `phone:rig` against `truestock_e2e`).
+
+**Not proven / still open.** The panel in dark mode, and its height with many
+empty sections on a small screen. Nobody has looked at it by eye. Submit count has no
 empty-section check (only the pending-write gate, #46b) — by design the
 warning sits at Close, the irreversible step.
 **Trigger:** the phone pass before the six-location walk (#48).
