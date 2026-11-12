@@ -23,6 +23,7 @@
 import { requireRole } from "@/lib/authz";
 import { runAction, type ActionResult } from "@/lib/action-result";
 import * as counts from "@/lib/domain/counts";
+import { EmptySectionsError } from "@/lib/domain/errors";
 import {
   openCountSchema,
   incrementCountLineSchema,
@@ -165,25 +166,48 @@ export async function reopenCountAction(
  * stored on `count.total_value` regardless of who closed it.
  */
 export async function closeCountAction(input: unknown): Promise<
-  ActionResult<{
-    count: counts.CountSummaryRow;
-    totalUnits: number;
-    pricedLineCount: number;
-    excludedLineCount: number;
-    totalValue?: number;
-  }>
+  ActionResult<
+    | {
+        closed: true;
+        count: counts.CountSummaryRow;
+        totalUnits: number;
+        pricedLineCount: number;
+        excludedLineCount: number;
+        totalValue?: number;
+      }
+    | {
+        /** Refused, nothing written: these sections have no lines (see closeCount). */
+        closed: false;
+        emptyLocations: { id: number; name: string }[];
+        sectionCount: number;
+      }
+  >
 > {
   return runAction(async () => {
     const actor = await requireRole("owner", "manager");
     const parsed = closeCountSchema.parse(input);
-    const { count: closedCount, totals } = await counts.closeCount(actor, parsed.countId);
-    return {
-      count: closedCount,
-      totalUnits: totals.totalUnits,
-      pricedLineCount: totals.pricedLineCount,
-      excludedLineCount: totals.excludedLineCount,
-      ...(actor.role === "owner" ? { totalValue: totals.totalValue } : {}),
-    };
+    try {
+      const { count: closedCount, totals } = await counts.closeCount(actor, parsed.countId, {
+        confirmedEmptyLocationIds: parsed.confirmedEmptyLocationIds,
+      });
+      return {
+        closed: true as const,
+        count: closedCount,
+        totalUnits: totals.totalUnits,
+        pricedLineCount: totals.pricedLineCount,
+        excludedLineCount: totals.excludedLineCount,
+        ...(actor.role === "owner" ? { totalValue: totals.totalValue } : {}),
+      };
+    } catch (err) {
+      if (err instanceof EmptySectionsError) {
+        return {
+          closed: false as const,
+          emptyLocations: err.emptyLocations,
+          sectionCount: err.sectionCount,
+        };
+      }
+      throw err;
+    }
   });
 }
 

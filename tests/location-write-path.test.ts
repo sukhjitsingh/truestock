@@ -44,7 +44,7 @@ import {
   closeCount,
 } from "@/lib/domain/counts";
 import { NotFoundError, DomainError } from "@/lib/domain/errors";
-import { migrateTestDatabase, resetDatabase, createFixtures, newClientLineId, type Fixtures } from "./helpers/test-db";
+import { allLocationIds, migrateTestDatabase, resetDatabase, createFixtures, newClientLineId, type Fixtures } from "./helpers/test-db";
 
 let fx: Fixtures;
 
@@ -260,7 +260,7 @@ describe("updateLocation", () => {
     });
     await submitCount(fx.owner, c.id);
     await reviewCount(fx.owner, c.id);
-    await closeCount(fx.owner, c.id);
+    await closeCount(fx.owner, c.id, { confirmedEmptyLocationIds: await allLocationIds(fx.owner) });
 
     // Sanity: the line really is on a closed count before asserting the guard lets it through.
     const [closedCount] = await db.select({ status: count.status }).from(count).where(eq(count.id, c.id));
@@ -360,7 +360,7 @@ describe("deactivateLocation", () => {
     });
     await submitCount(fx.owner, c.id);
     await reviewCount(fx.owner, c.id);
-    await closeCount(fx.owner, c.id);
+    await closeCount(fx.owner, c.id, { confirmedEmptyLocationIds: await allLocationIds(fx.owner) });
 
     await deactivateLocation(fx.owner, fx.locationId);
 

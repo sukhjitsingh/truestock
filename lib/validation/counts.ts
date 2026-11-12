@@ -160,7 +160,14 @@ export const countIdSchema = z.object({
 export const submitCountSchema = countIdSchema;
 export const reviewCountSchema = countIdSchema;
 export const reopenCountSchema = countIdSchema;
-export const closeCountSchema = countIdSchema;
+export const closeCountSchema = countIdSchema.extend({
+  /**
+   * Sections (location ids) the person has been shown as empty and chose to
+   * close over. The server recomputes the empty set and refuses unless every
+   * empty section is listed here; extra/foreign ids are harmless (ignored).
+   */
+  confirmedEmptyLocationIds: z.array(z.number().int().positive()).max(500).optional().default([]),
+});
 export const getCountSchema = countIdSchema;
 export const getCountTotalsSchema = countIdSchema;
 

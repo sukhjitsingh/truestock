@@ -516,6 +516,20 @@ export async function createFixtures(): Promise<Fixtures> {
   };
 }
 
+/**
+ * Every location id in the actor's org, for tests that close a count without
+ * having visited every section. closeCount refuses a close over sections with
+ * no lines unless they are named (confirmedEmptyLocationIds), so a test that
+ * closes deliberately on a partial count says so with this.
+ */
+export async function allLocationIds(actor: Actor): Promise<number[]> {
+  const rows = await db
+    .select({ id: locationTable.id })
+    .from(locationTable)
+    .where(sql`${locationTable.organizationId} = ${actor.organizationId}`);
+  return rows.map((r) => r.id);
+}
+
 /** A fresh idempotency key. One per WRITE ATTEMPT — never one per line. */
 export function newClientLineId(): string {
   return crypto.randomUUID();
