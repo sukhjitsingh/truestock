@@ -2571,6 +2571,8 @@ rebuilt.
 - The running container keeps the old *server* default until it is
   recreated (`docker compose up -d db`); that only affects databases created
   afterwards without an explicit collation, and every init script names one.
+  **Recreated the same day** from this branch's compose (volume kept):
+  `@@collation_server` is `utf8mb4_uca1400_ai_ci`, and every database kept its rows.
 - Production: `docs/go-live.md` now has a checkbox that the Hostinger
   database is created with this collation and passes the same check.
 
